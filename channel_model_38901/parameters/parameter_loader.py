@@ -1,10 +1,10 @@
-
 import json
 from typing import Dict, Any
 
 class ParameterTables:
     """A data class to hold all parameter tables loaded from the standard."""
-    def __init__(self):
+    def __init__(self, file_path: str):
+        self.param_file_path = file_path
         self.data: Dict[str, Any] = {}
 
     def get_scenario_params(self, scenario_name: str) -> Dict[str, Any]:
@@ -25,7 +25,7 @@ class ParameterLoader:
         Returns:
             A ParameterTables object filled with the standard's data.
         """
-        tables = ParameterTables()
+        tables = ParameterTables(file_path)
         with open(file_path, 'r') as f:
             tables.data = json.load(f)
         # Basic validation

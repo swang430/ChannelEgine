@@ -1,4 +1,4 @@
-
+import numpy as np
 from abc import ABC, abstractmethod
 from channel_model_38901.common.data_models import ScenarioConfig, LargeScaleParameters
 

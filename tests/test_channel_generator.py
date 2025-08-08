@@ -1,4 +1,3 @@
-
 import unittest
 import os
 import numpy as np
@@ -30,7 +29,8 @@ class TestChannelGenerator(unittest.TestCase):
     def test_channel_generator_execution(self):
         """Test that the channel generator runs without critical errors."""
         generator = ChannelGenerator(self.config, self.param_tables)
-        channel_matrix = generator.generate_channel_realization()
+        results = generator.generate_channel_realization()
+        channel_matrix = results[0]
         
         self.assertIsNotNone(channel_matrix)
         self.assertEqual(channel_matrix.shape, (1, 1))

@@ -1,11 +1,16 @@
-
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import numpy as np
 
 class AntennaArray(BaseModel):
-    # Using BaseModel for nested structures
-    pass
+    """Defines the configuration of an antenna array."""
+    num_tx_antennas: int = Field(1, gt=0, description="Number of transmitter antennas")
+    num_rx_antennas: int = Field(1, gt=0, description="Number of receiver antennas")
+    tx_positions: np.ndarray = Field(np.zeros((1, 3)), description="Numpy array of transmitter antenna positions")
+    rx_positions: np.ndarray = Field(np.zeros((1, 3)), description="Numpy array of receiver antenna positions")
+
+    class Config:
+        arbitrary_types_allowed = True
 
 class ScenarioConfig(BaseModel):
     """
@@ -16,7 +21,7 @@ class ScenarioConfig(BaseModel):
     bs_positions: np.ndarray = Field(..., description="Numpy array of base station positions")
     ue_positions: np.ndarray = Field(..., description="Numpy array of user equipment positions")
     ue_velocities: np.ndarray = Field(..., description="Numpy array of user equipment velocities")
-    antenna_config: Optional[AntennaArray] = Field(None, description="Antenna array configuration")
+    antenna_config: AntennaArray = Field(AntennaArray(), description="Antenna array configuration")
 
     class Config:
         arbitrary_types_allowed = True
@@ -32,4 +37,3 @@ class LargeScaleParameters(BaseModel):
     arrival_zenith_spread_deg: float = Field(..., description="Arrival Zenith Spread in degrees")
     k_factor_linear: float = Field(..., description="K-factor in linear scale")
     shadow_fade_db: float = Field(..., description="Shadow Fading in dB")
-

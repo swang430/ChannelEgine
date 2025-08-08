@@ -8,8 +8,10 @@ from channel_model_38901.parameters.parameter_loader import ParameterTables
 class SMa_ChannelCondition(ABC_ChannelConditionModel):
     """Implementation of the SMa channel condition model."""
     def get_condition(self, distance_2d: float, h_ut: float) -> bool:
-        # TODO: Implement SMa LOS probability
-        return super().get_condition(distance_2d, h_ut)
+        if distance_2d <= 10:
+            return True
+        prob_los = np.exp(-(distance_2d - 10) / 1000)
+        return np.random.rand() < prob_los
 
 class SMa_Pathloss(ABC_PathlossModel):
     """Implementation of the SMa pathloss model."""

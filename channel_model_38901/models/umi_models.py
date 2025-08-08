@@ -32,7 +32,8 @@ class UMi_Pathloss(ABC_PathlossModel):
             'd_bp': d_bp,
             'h_bs': h_bs,
             'h_ut': h_ut,
-            'max': max
+            'max': max,
+            'np': np
         }
 
         if is_los:

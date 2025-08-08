@@ -1,4 +1,4 @@
-
+from typing import Optional
 from .common.data_models import ScenarioConfig
 from .parameters.parameter_loader import ParameterLoader
 from .channel_generator import ChannelGenerator
@@ -28,13 +28,20 @@ class ChannelSimulator:
         
         self.generator = ChannelGenerator(self.config, self.params)
 
-    def run(self):
+    def run(self, force_condition: Optional[str] = None):
         """
-        Runs a single channel realization and returns the channel matrix.
+        Runs a single channel realization and returns a dictionary of results.
         """
         print(f"Running simulation for scenario: {self.config.scenario_name}")
-        channel_matrix = self.generator.generate_channel_realization()
-        return channel_matrix
+        H_final, clusters, lsps, pathloss_db, is_los = self.generator.generate_channel_realization(force_condition=force_condition)
+        
+        return {
+            'channel_matrix': H_final,
+            'clusters': clusters,
+            'lsps': lsps,
+            'pathloss_db': pathloss_db,
+            'is_los': is_los
+        }
 
     def set_bs_ue_positions(self, bs_positions: np.ndarray, ue_positions: np.ndarray):
         """Allows user to update BS and UE positions."""

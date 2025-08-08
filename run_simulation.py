@@ -1,10 +1,12 @@
-
-
 import numpy as np
 from channel_model_38901.simulator import ChannelSimulator
 
 if __name__ == "__main__":
     print("--- 3GPP TR 38.901 Channel Simulator ---")
+
+    # Set a fixed random seed for reproducibility
+    np.random.seed(42)
+    print("Using fixed random seed: 42")
     
     # 1. Create a simulator instance for the UMa scenario at 3.5 GHz
     simulator = ChannelSimulator(scenario_name='UMa', center_frequency_hz=3.5e9)
@@ -16,7 +18,8 @@ if __name__ == "__main__":
     # )
     
     # 3. Run the simulation
-    channel_matrix = simulator.run()
+    results = simulator.run()
+    channel_matrix = results['channel_matrix']
     
     # 4. Print the results
     print("\n--- Simulation Results ---")
@@ -24,4 +27,3 @@ if __name__ == "__main__":
     print(channel_matrix)
     print(f"Matrix Shape: {channel_matrix.shape}")
     print("--------------------------")
-

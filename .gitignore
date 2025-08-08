@@ -4,3 +4,10 @@ __pycache__/
 
 # Virtualenv
 .venv/
+
+# OS-specific
+.DS_Store
+
+# Test artifacts
+*.npz
+*.png
