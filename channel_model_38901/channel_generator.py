@@ -10,6 +10,7 @@ from .models.inh_models import InH_ChannelCondition, InH_Pathloss, InH_Fading
 from .models.sma_models import SMa_ChannelCondition, SMa_Pathloss, SMa_Fading
 from .models.umi_open_area_models import UMi_OpenArea_ChannelCondition, UMi_OpenArea_Pathloss, UMi_OpenArea_Fading
 from .models.inf_models import InF_ChannelCondition, InF_Pathloss, InF_Fading
+from .models.spatial_correlation import calculate_correlation_matrix
 
 class ChannelGenerator:
     """
@@ -162,62 +163,64 @@ class ChannelGenerator:
         return np.random.uniform(-np.pi, np.pi, size=(num_clusters, 4))
 
     def _synthesize_channel(self, clusters, lsps):
-        """Synthesizes the channel matrix H from cluster data (Step 11)."""
+        """Synthesizes the channel matrix H from cluster data, including spatial correlation."""
         print("  - Synthesizing channel coefficients...")
         num_rx = self.config.antenna_config.num_rx_antennas
         num_tx = self.config.antenna_config.num_tx_antennas
-        H = np.zeros((num_rx, num_tx), dtype=np.complex128)
+        
+        # Generate an uncorrelated channel matrix first
+        H_uncorrelated = np.zeros((num_rx, num_tx), dtype=np.complex128)
 
         c = 3e8 # Speed of light
         lambda_0 = c / self.config.center_frequency_hz
-        
         num_rays_per_cluster = 20 # As per standard
 
         for u in range(num_rx):
             for s in range(num_tx):
                 for cluster in clusters:
-                    # For each ray in the cluster
                     for m in range(num_rays_per_cluster):
-                        # Simplified field patterns (assuming isotropic antennas)
-                        F_rx_u_theta = 1.0
-                        F_rx_u_phi = 1.0
-                        F_tx_s_theta = 1.0
-                        F_tx_s_phi = 1.0
-
-                        # Polarization matrix
+                        F_rx_u_theta, F_rx_u_phi = 1.0, 1.0
+                        F_tx_s_theta, F_tx_s_phi = 1.0, 1.0
                         phi_theta_theta, phi_theta_phi, phi_phi_theta, phi_phi_phi = cluster['initial_phases']
                         polarization_matrix = np.array([
                             [np.exp(1j * phi_theta_theta), np.sqrt(1/cluster['k_n']) * np.exp(1j * phi_theta_phi)],
                             [np.sqrt(1/cluster['k_n']) * np.exp(1j * phi_phi_theta), np.exp(1j * phi_phi_phi)]
                         ])
-
-                        # Spherical unit vectors (simplified)
-                        r_rx = np.array([1, 0, 0])
-                        r_tx = np.array([1, 0, 0])
-
-                        # Doppler component (simplified, assuming static)
+                        r_rx, r_tx = np.array([1, 0, 0]), np.array([1, 0, 0])
                         v = self.config.ue_velocities[0]
-                        doppler_term = np.exp(1j * 2 * np.pi * (np.dot(r_rx, v)) / lambda_0 * 0) # t=0
-
-                        # Antenna element location vectors
+                        doppler_term = np.exp(1j * 2 * np.pi * (np.dot(r_rx, v)) / lambda_0 * 0)
                         d_rx_u = self.config.antenna_config.rx_positions[u]
                         d_tx_s = self.config.antenna_config.tx_positions[s]
-
-                        # Spatial signatures
                         spatial_sig_rx = np.array([F_rx_u_theta, F_rx_u_phi])
                         spatial_sig_tx = np.array([F_tx_s_theta, F_tx_s_phi])
-
-                        # Phase term due to spatial separation
                         phase_term = np.exp(1j * 2 * np.pi * (np.dot(r_rx, d_rx_u) + np.dot(r_tx, d_tx_s)) / lambda_0)
-
-                        # Combine everything for this ray
                         ray_contribution = np.sqrt(cluster['power'] / num_rays_per_cluster) * \
                                            np.dot(spatial_sig_rx, np.dot(polarization_matrix, spatial_sig_tx.T)) * \
                                            doppler_term * phase_term
+                        H_uncorrelated[u, s] += ray_contribution
 
-                        H[u, s] += ray_contribution
+        # Normalize the uncorrelated channel matrix
+        H_uncorrelated /= np.sqrt(np.mean(np.abs(H_uncorrelated)**2))
 
-        # Normalize the channel matrix to have unit power
-        H /= np.sqrt(np.mean(np.abs(H)**2))
+        if num_rx == 1 and num_tx == 1:
+            return H_uncorrelated
 
-        return H
+        # --- Apply Spatial Correlation ---
+        print("  - Applying spatial correlation...")
+        # For now, we use the mean AOA/AOD of the first cluster as the mean angle for correlation calculation
+        # A more advanced implementation could average over all clusters.
+        mean_aoa = clusters[0]['aoa_phi']
+        mean_aod = clusters[0]['aod_phi']
+
+        R_rx = calculate_correlation_matrix(num_rx, mean_aoa, lsps.arrival_azimuth_spread_deg, self.config.antenna_config.rx_element_spacing)
+        R_tx = calculate_correlation_matrix(num_tx, mean_aod, lsps.departure_azimuth_spread_deg, self.config.antenna_config.tx_element_spacing)
+
+        try:
+            L_rx = np.linalg.cholesky(R_rx)
+            L_tx = np.linalg.cholesky(R_tx)
+        except np.linalg.LinAlgError as e:
+            print(f"Warning: Cholesky decomposition failed for correlation matrix ({e}). Using uncorrelated antennas.")
+            return H_uncorrelated
+
+        H_correlated = L_rx @ H_uncorrelated @ L_tx.conj().T
+        return H_correlated

@@ -8,6 +8,11 @@ class AntennaArray(BaseModel):
     num_rx_antennas: int = Field(1, gt=0, description="Number of receiver antennas")
     tx_positions: np.ndarray = Field(np.zeros((1, 3)), description="Numpy array of transmitter antenna positions")
     rx_positions: np.ndarray = Field(np.zeros((1, 3)), description="Numpy array of receiver antenna positions")
+    # New fields for spatial correlation
+    tx_array_type: str = Field('ULA', description="TX array type, e.g., 'ULA' for Uniform Linear Array")
+    rx_array_type: str = Field('ULA', description="RX array type, e.g., 'ULA' for Uniform Linear Array")
+    tx_element_spacing: float = Field(0.5, description="TX element spacing in multiples of wavelength")
+    rx_element_spacing: float = Field(0.5, description="RX element spacing in multiples of wavelength")
 
     class Config:
         arbitrary_types_allowed = True
