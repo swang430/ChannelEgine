@@ -40,6 +40,7 @@ class ChannelSimGUI:
         self.seed_entry = ttk.Entry(input_frame, textvariable=self.seed_var)
         self.deterministic_label = ttk.Label(input_frame, text="", foreground="blue")
 
+        # --- Antenna Parameters ---
         self.label_num_tx = ttk.Label(input_frame, text="Num TX Antennas:")
         self.num_tx_var = tk.StringVar(value='1')
         self.num_tx_entry = ttk.Entry(input_frame, textvariable=self.num_tx_var)
@@ -48,6 +49,10 @@ class ChannelSimGUI:
         self.tx_spacing_var = tk.StringVar(value='0.5')
         self.tx_spacing_entry = ttk.Entry(input_frame, textvariable=self.tx_spacing_var)
 
+        self.label_tx_pattern = ttk.Label(input_frame, text="TX Element Pattern:")
+        self.tx_pattern_var = tk.StringVar(value='Isotropic')
+        self.tx_pattern_menu = ttk.Combobox(input_frame, textvariable=self.tx_pattern_var, values=['Isotropic', 'TR38.901'])
+
         self.label_num_rx = ttk.Label(input_frame, text="Num RX Antennas:")
         self.num_rx_var = tk.StringVar(value='1')
         self.num_rx_entry = ttk.Entry(input_frame, textvariable=self.num_rx_var)
@@ -55,6 +60,10 @@ class ChannelSimGUI:
         self.label_rx_spacing = ttk.Label(input_frame, text="RX Spacing (λ):")
         self.rx_spacing_var = tk.StringVar(value='0.5')
         self.rx_spacing_entry = ttk.Entry(input_frame, textvariable=self.rx_spacing_var)
+
+        self.label_rx_pattern = ttk.Label(input_frame, text="RX Element Pattern:")
+        self.rx_pattern_var = tk.StringVar(value='Isotropic')
+        self.rx_pattern_menu = ttk.Combobox(input_frame, textvariable=self.rx_pattern_var, values=['Isotropic', 'TR38.901'])
 
         self.run_button = ttk.Button(master, text="Run Simulation", command=self.run_simulation)
         
@@ -77,15 +86,19 @@ class ChannelSimGUI:
         self.notebook.add(self.canvas_widget, text='Plots')
 
         # --- Layout ---
-        self.label_scenario.grid(row=0, column=0, sticky=tk.W); self.scenario_menu.grid(row=0, column=1, sticky=tk.EW)
-        self.label_freq.grid(row=1, column=0, sticky=tk.W); self.freq_entry.grid(row=1, column=1, sticky=tk.EW)
-        self.label_dist.grid(row=2, column=0, sticky=tk.W); self.dist_entry.grid(row=2, column=1, sticky=tk.EW)
-        self.label_condition.grid(row=3, column=0, sticky=tk.W); self.condition_menu.grid(row=3, column=1, sticky=tk.EW)
+        self.label_scenario.grid(row=0, column=0, sticky=tk.W); self.scenario_menu.grid(row=0, column=1, columnspan=2, sticky=tk.EW)
+        self.label_freq.grid(row=1, column=0, sticky=tk.W); self.freq_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW)
+        self.label_dist.grid(row=2, column=0, sticky=tk.W); self.dist_entry.grid(row=2, column=1, columnspan=2, sticky=tk.EW)
+        self.label_condition.grid(row=3, column=0, sticky=tk.W); self.condition_menu.grid(row=3, column=1, columnspan=2, sticky=tk.EW)
         self.label_seed.grid(row=4, column=0, sticky=tk.W); self.seed_entry.grid(row=4, column=1, sticky=tk.EW); self.deterministic_label.grid(row=4, column=2, sticky=tk.W, padx=5)
-        self.label_num_tx.grid(row=5, column=0, sticky=tk.W); self.num_tx_entry.grid(row=5, column=1, sticky=tk.EW)
-        self.label_tx_spacing.grid(row=6, column=0, sticky=tk.W); self.tx_spacing_entry.grid(row=6, column=1, sticky=tk.EW)
-        self.label_num_rx.grid(row=7, column=0, sticky=tk.W); self.num_rx_entry.grid(row=7, column=1, sticky=tk.EW)
-        self.label_rx_spacing.grid(row=8, column=0, sticky=tk.W); self.rx_spacing_entry.grid(row=8, column=1, sticky=tk.EW)
+        ttk.Separator(input_frame, orient='horizontal').grid(row=5, columnspan=3, sticky='ew', pady=5)
+        self.label_num_tx.grid(row=6, column=0, sticky=tk.W); self.num_tx_entry.grid(row=6, column=1, columnspan=2, sticky=tk.EW)
+        self.label_tx_spacing.grid(row=7, column=0, sticky=tk.W); self.tx_spacing_entry.grid(row=7, column=1, columnspan=2, sticky=tk.EW)
+        self.label_tx_pattern.grid(row=8, column=0, sticky=tk.W); self.tx_pattern_menu.grid(row=8, column=1, columnspan=2, sticky=tk.EW)
+        ttk.Separator(input_frame, orient='horizontal').grid(row=9, columnspan=3, sticky='ew', pady=5)
+        self.label_num_rx.grid(row=10, column=0, sticky=tk.W); self.num_rx_entry.grid(row=10, column=1, columnspan=2, sticky=tk.EW)
+        self.label_rx_spacing.grid(row=11, column=0, sticky=tk.W); self.rx_spacing_entry.grid(row=11, column=1, columnspan=2, sticky=tk.EW)
+        self.label_rx_pattern.grid(row=12, column=0, sticky=tk.W); self.rx_pattern_menu.grid(row=12, column=1, columnspan=2, sticky=tk.EW)
         for widget in input_frame.winfo_children(): widget.grid_configure(pady=3)
 
         self.run_button.grid(row=1, column=0, padx=10, pady=10, sticky=tk.EW)
@@ -130,8 +143,10 @@ class ChannelSimGUI:
             condition = self.condition_var.get()
             num_tx = int(self.num_tx_var.get())
             tx_spacing = float(self.tx_spacing_var.get())
+            tx_pattern = self.tx_pattern_var.get()
             num_rx = int(self.num_rx_var.get())
             rx_spacing = float(self.rx_spacing_var.get())
+            rx_pattern = self.rx_pattern_var.get()
             seed_str = self.seed_var.get()
         except ValueError:
             self.results_text.config(state=tk.NORMAL); self.results_text.delete(1.0, tk.END)
@@ -155,13 +170,13 @@ class ChannelSimGUI:
             simulator = ChannelSimulator(scenario_name=scenario, center_frequency_hz=freq_ghz * 1e9)
             simulator.set_bs_ue_positions(np.array([[0, 0, 25]]), np.array([[dist_m, 0, 1.5]]))
             
-            # Update antenna config from GUI
             ant_config = simulator.config.antenna_config
             ant_config.num_tx_antennas = num_tx
             ant_config.tx_element_spacing = tx_spacing
+            ant_config.tx_element_pattern = tx_pattern
             ant_config.num_rx_antennas = num_rx
             ant_config.rx_element_spacing = rx_spacing
-            # For now, we assume ULA along y-axis, so positions are simple
+            ant_config.rx_element_pattern = rx_pattern
             ant_config.tx_positions = np.array([[0, i * tx_spacing, 0] for i in range(num_tx)])
             ant_config.rx_positions = np.array([[0, i * rx_spacing, 0] for i in range(num_rx)])
 
@@ -175,7 +190,7 @@ class ChannelSimGUI:
             self.results_text.config(state=tk.DISABLED)
 
     def update_results(self, results):
-        self.results_text.insert(tk.END, "\n--- Simulation Complete ---")
+        self.results_text.insert(tk.END, "\n--- Simulation Complete ---\n")
         self.results_text.insert(tk.END, f"Generated Channel Matrix H:\n{results['channel_matrix']}\n")
         self.plot_pdp(results['clusters'])
         self.plot_aps(results['clusters'])

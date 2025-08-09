@@ -11,6 +11,7 @@ from .models.sma_models import SMa_ChannelCondition, SMa_Pathloss, SMa_Fading
 from .models.umi_open_area_models import UMi_OpenArea_ChannelCondition, UMi_OpenArea_Pathloss, UMi_OpenArea_Fading
 from .models.inf_models import InF_ChannelCondition, InF_Pathloss, InF_Fading
 from .models.spatial_correlation import calculate_correlation_matrix
+from .models.antenna_pattern import calculate_element_gain, spherical_to_cartesian
 
 class ChannelGenerator:
     """
@@ -165,55 +166,73 @@ class ChannelGenerator:
     def _synthesize_channel(self, clusters, lsps):
         """Synthesizes the channel matrix H from cluster data, including spatial correlation."""
         print("  - Synthesizing channel coefficients...")
-        num_rx = self.config.antenna_config.num_rx_antennas
-        num_tx = self.config.antenna_config.num_tx_antennas
-        
-        # Generate an uncorrelated channel matrix first
+        ant_config = self.config.antenna_config
+        num_rx, num_tx = ant_config.num_rx_antennas, ant_config.num_tx_antennas
         H_uncorrelated = np.zeros((num_rx, num_tx), dtype=np.complex128)
 
-        c = 3e8 # Speed of light
+        c = 3e8
         lambda_0 = c / self.config.center_frequency_hz
-        num_rays_per_cluster = 20 # As per standard
+        num_rays_per_cluster = 20
+
+        scenario_params = self.params.get_scenario_params(self.config.scenario_name)
+        ray_offsets = scenario_params['ray_angle_offsets_deg']
 
         for u in range(num_rx):
             for s in range(num_tx):
-                for cluster in clusters:
+                for n, cluster in enumerate(clusters):
                     for m in range(num_rays_per_cluster):
-                        F_rx_u_theta, F_rx_u_phi = 1.0, 1.0
-                        F_tx_s_theta, F_tx_s_phi = 1.0, 1.0
+                        ray_aod_phi = cluster['aod_phi'] + ray_offsets[m]
+                        ray_aoa_phi = cluster['aoa_phi'] + ray_offsets[m]
+                        ray_zod_theta = cluster['zod_theta'] + ray_offsets[m]
+                        ray_zoa_theta = cluster['zoa_theta'] + ray_offsets[m]
+
+                        if ant_config.rx_element_pattern == 'TR38.901':
+                            gain_rx_db = calculate_element_gain(ray_aoa_phi, ray_zoa_theta)
+                            F_rx_u_theta = 10**(gain_rx_db / 20)
+                            F_rx_u_phi = 10**(gain_rx_db / 20)
+                        else:
+                            F_rx_u_theta, F_rx_u_phi = 1.0, 1.0
+
+                        if ant_config.tx_element_pattern == 'TR38.901':
+                            gain_tx_db = calculate_element_gain(ray_aod_phi, ray_zod_theta)
+                            F_tx_s_theta = 10**(gain_tx_db / 20)
+                            F_tx_s_phi = 10**(gain_tx_db / 20)
+                        else:
+                            F_tx_s_theta, F_tx_s_phi = 1.0, 1.0
+
                         phi_theta_theta, phi_theta_phi, phi_phi_theta, phi_phi_phi = cluster['initial_phases']
                         polarization_matrix = np.array([
                             [np.exp(1j * phi_theta_theta), np.sqrt(1/cluster['k_n']) * np.exp(1j * phi_theta_phi)],
                             [np.sqrt(1/cluster['k_n']) * np.exp(1j * phi_phi_theta), np.exp(1j * phi_phi_phi)]
                         ])
-                        r_rx, r_tx = np.array([1, 0, 0]), np.array([1, 0, 0])
+                        
+                        # Correctly calculate spherical unit vectors for ray angles
+                        r_tx = spherical_to_cartesian(ray_aod_phi, ray_zod_theta)
+                        r_rx = spherical_to_cartesian(ray_aoa_phi, ray_zoa_theta)
+
                         v = self.config.ue_velocities[0]
                         doppler_term = np.exp(1j * 2 * np.pi * (np.dot(r_rx, v)) / lambda_0 * 0)
-                        d_rx_u = self.config.antenna_config.rx_positions[u]
-                        d_tx_s = self.config.antenna_config.tx_positions[s]
+                        d_rx_u = ant_config.rx_positions[u]
+                        d_tx_s = ant_config.tx_positions[s]
                         spatial_sig_rx = np.array([F_rx_u_theta, F_rx_u_phi])
                         spatial_sig_tx = np.array([F_tx_s_theta, F_tx_s_phi])
                         phase_term = np.exp(1j * 2 * np.pi * (np.dot(r_rx, d_rx_u) + np.dot(r_tx, d_tx_s)) / lambda_0)
-                        ray_contribution = np.sqrt(cluster['power'] / num_rays_per_cluster) * \
-                                           np.dot(spatial_sig_rx, np.dot(polarization_matrix, spatial_sig_tx.T)) * \
-                                           doppler_term * phase_term
+                        ray_contribution = (np.sqrt(cluster['power'] / num_rays_per_cluster) * 
+                                           np.dot(spatial_sig_rx, np.dot(polarization_matrix, spatial_sig_tx.T)) * 
+                                           doppler_term * phase_term)
                         H_uncorrelated[u, s] += ray_contribution
 
-        # Normalize the uncorrelated channel matrix
         H_uncorrelated /= np.sqrt(np.mean(np.abs(H_uncorrelated)**2))
 
         if num_rx == 1 and num_tx == 1:
             return H_uncorrelated
 
-        # --- Apply Spatial Correlation ---
         print("  - Applying spatial correlation...")
-        # For now, we use the mean AOA/AOD of the first cluster as the mean angle for correlation calculation
-        # A more advanced implementation could average over all clusters.
         mean_aoa = clusters[0]['aoa_phi']
         mean_aod = clusters[0]['aod_phi']
 
-        R_rx = calculate_correlation_matrix(num_rx, mean_aoa, lsps.arrival_azimuth_spread_deg, self.config.antenna_config.rx_element_spacing)
-        R_tx = calculate_correlation_matrix(num_tx, mean_aod, lsps.departure_azimuth_spread_deg, self.config.antenna_config.tx_element_spacing)
+        R_rx = calculate_correlation_matrix(num_rx, mean_aoa, lsps.arrival_azimuth_spread_deg, ant_config.rx_element_spacing)
+        R_tx = calculate_correlation_matrix(num_tx, mean_aod, lsps.departure_azimuth_spread_deg, ant_config.tx_element_spacing)
 
         try:
             L_rx = np.linalg.cholesky(R_rx)
