@@ -158,10 +158,53 @@
 
 *   **第三阶段（未来扩展）: 高级天线与仿真功能**
     *   **目标**: 支持更复杂的天线阵列形态，并增强仿真灵活性。
+    .
     *   **实现**:
         1.  **扩展天线阵列模型**: 支持URA（均匀矩形阵列）等更复杂的阵列几何。
         2.  **实现多普勒效应**: 基于 `ue_velocities` 实现完整的多普勒频移计算。
         3.  **多用户/多基站支持**: 扩展框架以支持更复杂的网络拓扑。
+
+## 4.2 API 使用模式与实现说明
+
+为了确保模块的灵活性和封装性，`ChannelSimulator` 外观类提供了一个特定的API使用模式。高层设计意图是将所有配置封装在`ScenarioConfig`中，但在目前的具体实现中，配置过程分为几个独立的步骤。
+
+**正确的使用流程如下:**
+
+1.  **实例化**: 构造函数仅使用最核心的 `scenario_name` 和 `center_frequency_hz` 来初始化仿真器对象。此时，仿真器内部会创建一个包含默认值的配置。
+    ```python
+    simulator = ChannelSimulator(
+        scenario_name='UMa',
+        center_frequency_hz=3.5e9
+    )
+    ```
+
+2.  **参数配置**: 手动修改 `simulator` 实例内部的 `config` 对象，以设定详细的仿真参数，例如基站/用户位置、天线阵列和用户速度。
+    ```python
+    # 设置位置和速度
+    simulator.config.bs_positions = np.array([[0, 0, 25]])
+    simulator.config.ue_positions = np.array([[100, 0, 1.5]])
+    simulator.config.ue_velocities = np.array([[3.0, 0, 0]])
+
+    # 设置天线
+    ant_config = AntennaArray(num_tx_antennas=2, num_rx_antennas=2)
+    simulator.config.antenna_config = ant_config
+    ```
+
+3.  **重新初始化生成器 (关键步骤)**: 对 `simulator.config` 的修改**不会**自动传递给核心的 `ChannelGenerator` 引擎。因此，在配置完成后，**必须**手动用更新后的 `config` 来重新初始化 `simulator.generator`。
+    ```python
+    from channel_model_38901.channel_generator import ChannelGenerator
+
+    # 应用配置变更
+    simulator.generator = ChannelGenerator(simulator.config, simulator.params)
+    ```
+
+4.  **运行仿真**: 调用 `run()` 方法来执行仿真。
+    ```python
+    # force_condition 是一个可选参数
+    results = simulator.run(force_condition='LOS')
+    ```
+
+遵循以上步骤是确保仿真器按预期工作的关键。
 
 ## 5. 测试与验证策略
 

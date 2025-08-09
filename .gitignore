@@ -11,3 +11,6 @@ __pycache__/
 # Test artifacts
 *.npz
 *.png
+
+# Log files
+gui_log.txt
