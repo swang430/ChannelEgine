@@ -8,6 +8,7 @@ import queue
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.channel_generator import ChannelGenerator
 from channel_model_38901.common.data_models import AntennaArray
+from channel_model_38901.common.geometry import get_antenna_positions
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -19,6 +20,7 @@ class ChannelModelApp(tk.Tk):
         self.geometry("1200x900")
 
         self.simulation_queue = queue.Queue()
+        self.controls = {}
         self.after(100, self.process_queue)
 
         self._create_widgets()
@@ -27,23 +29,22 @@ class ChannelModelApp(tk.Tk):
         top_frame = ttk.Frame(self, padding="10")
         top_frame.pack(fill=tk.X, side=tk.TOP)
 
-        self.param_frame = ttk.Frame(top_frame)
-        self.param_frame.pack(fill=tk.X)
-        
-        self.general_param_frame = ttk.LabelFrame(self.param_frame, text="通用参数", padding="10")
-        self.general_param_frame.grid(row=0, column=0, padx=5, pady=5, sticky=tk.NSEW)
+        param_frame = ttk.Frame(top_frame)
+        param_frame.pack(fill=tk.X)
+        param_frame.grid_columnconfigure(0, weight=1)
+        param_frame.grid_columnconfigure(1, weight=1)
+        param_frame.grid_columnconfigure(2, weight=1)
 
-        self.tx_param_frame = ttk.LabelFrame(self.param_frame, text="发射端 (Tx) 参数", padding="10")
-        self.tx_param_frame.grid(row=0, column=1, padx=5, pady=5, sticky=tk.NSEW)
+        general_param_frame = ttk.LabelFrame(param_frame, text="通用参数", padding="10")
+        general_param_frame.grid(row=0, column=0, padx=5, pady=5, sticky=tk.NSEW)
 
-        self.rx_param_frame = ttk.LabelFrame(self.param_frame, text="接收端 (Rx) 参数", padding="10")
-        self.rx_param_frame.grid(row=0, column=2, padx=5, pady=5, sticky=tk.NSEW)
-        
-        self.param_frame.grid_columnconfigure(0, weight=1)
-        self.param_frame.grid_columnconfigure(1, weight=1)
-        self.param_frame.grid_columnconfigure(2, weight=1)
+        tx_param_frame = ttk.LabelFrame(param_frame, text="发射端 (Tx) 参数", padding="10")
+        tx_param_frame.grid(row=0, column=1, padx=5, pady=5, sticky=tk.NSEW)
 
-        self._create_parameter_widgets()
+        rx_param_frame = ttk.LabelFrame(param_frame, text="接收端 (Rx) 参数", padding="10")
+        rx_param_frame.grid(row=0, column=2, padx=5, pady=5, sticky=tk.NSEW)
+
+        self._create_parameter_widgets(general_param_frame, tx_param_frame, rx_param_frame)
         self._create_control_buttons(top_frame)
         
         bottom_frame = ttk.Frame(self, padding="10")
@@ -53,65 +54,61 @@ class ChannelModelApp(tk.Tk):
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self._create_log_display()
-        self._create_plots()
+        self._create_results_tabs()
+        
+        self.update_antenna_ui('tx')
+        self.update_antenna_ui('rx')
 
-    def _create_parameter_widgets(self):
-        self.entries = {}
+    def _create_parameter_widgets(self, general_frame, tx_frame, rx_frame):
         all_scenarios = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF']
         general_params = {
             "scenario_name": ("Scenario:", "UMa", all_scenarios),
             "center_frequency_ghz": ("Center Freq (GHz):", "3.5", None),
             "los_condition": ("LOS Condition:", "Automatic", ["Automatic", "LOS", "NLOS"]),
-            "random_seed": ("Random Seed:", "", None)
+            "random_seed": ("Random Seed:", "", None),
+            "simulation_time_s": ("Simulation Time (s):", "0.0", None)
         }
         for i, (key, (text, default, values)) in enumerate(general_params.items()):
-            label = ttk.Label(self.general_param_frame, text=text)
-            label.grid(row=i, column=0, sticky=tk.W, pady=2)
-            var = tk.StringVar(value=default)
-            if values:
-                widget = ttk.Combobox(self.general_param_frame, textvariable=var, values=values, width=18)
-            else:
-                widget = ttk.Entry(self.general_param_frame, textvariable=var, width=20)
-            widget.grid(row=i, column=1, sticky=tk.EW, pady=2, padx=5)
-            self.entries[key] = var
-        self.general_param_frame.grid_columnconfigure(1, weight=1)
+            self._create_entry(general_frame, key, text, default, values, i)
 
-        tx_params = {
-            "bs_position": ("BS Position (x,y,z):", "0,0,25", None),
-            "num_tx_antennas": ("Num Antennas:", "2", None),
-            "tx_element_spacing": ("Spacing (lambda):", "0.5", None),
-            "tx_element_pattern": ("Element Pattern:", "Isotropic", ["Isotropic", "TR38.901"])
-        }
-        for i, (key, (text, default, values)) in enumerate(tx_params.items()):
-            label = ttk.Label(self.tx_param_frame, text=text)
-            label.grid(row=i, column=0, sticky=tk.W, pady=2)
-            var = tk.StringVar(value=default)
-            if values:
-                widget = ttk.Combobox(self.tx_param_frame, textvariable=var, values=values, width=18)
-            else:
-                widget = ttk.Entry(self.tx_param_frame, textvariable=var, width=20)
-            widget.grid(row=i, column=1, sticky=tk.EW, pady=2, padx=5)
-            self.entries[key] = var
-        self.tx_param_frame.grid_columnconfigure(1, weight=1)
+        self._create_antenna_widgets('tx', tx_frame)
+        self._create_antenna_widgets('rx', rx_frame)
 
-        rx_params = {
-            "ue_position": ("UE Position (x,y,z):", "100,0,1.5", None),
-            "num_rx_antennas": ("Num Antennas:", "2", None),
-            "rx_element_spacing": ("Spacing (lambda):", "0.5", None),
-            "rx_element_pattern": ("Element Pattern:", "Isotropic", ["Isotropic", "TR38.901"]),
-            "ue_velocity_kph": ("UE Velocity (km/h):", "3", None)
-        }
-        for i, (key, (text, default, values)) in enumerate(rx_params.items()):
-            label = ttk.Label(self.rx_param_frame, text=text)
-            label.grid(row=i, column=0, sticky=tk.W, pady=2)
-            var = tk.StringVar(value=default)
-            if values:
-                widget = ttk.Combobox(self.rx_param_frame, textvariable=var, values=values, width=18)
-            else:
-                widget = ttk.Entry(self.rx_param_frame, textvariable=var, width=20)
-            widget.grid(row=i, column=1, sticky=tk.EW, pady=2, padx=5)
-            self.entries[key] = var
-        self.rx_param_frame.grid_columnconfigure(1, weight=1)
+    def _create_antenna_widgets(self, prefix, parent_frame):
+        self._create_entry(parent_frame, f'{prefix}_position', "Position (x,y,z):", "0,0,25" if prefix == 'tx' else "100,0,1.5", None, 0)
+        array_type_var = self._create_entry(parent_frame, f'{prefix}_array_type', "Array Type:", 'ULA', ['ULA', 'URA'], 1)
+        array_type_var.trace_add('write', lambda *args, p=prefix: self.update_antenna_ui(p))
+        self._create_entry(parent_frame, f'{prefix}_num_rows', "Num Rows:", "1", None, 2)
+        self._create_entry(parent_frame, f'{prefix}_num_cols', "Num Cols (ULA: Num Ant):", "2", None, 3)
+        self._create_entry(parent_frame, f'{prefix}_spacing_h', "Spacing H (lambda):", "0.5", None, 4)
+        self._create_entry(parent_frame, f'{prefix}_spacing_v', "Spacing V (lambda):", "0.5", None, 5)
+        self._create_entry(parent_frame, f'{prefix}_element_pattern', "Element Pattern:", 'Isotropic', ['Isotropic', 'TR38.901'], 6)
+        if prefix == 'rx':
+            self._create_entry(parent_frame, 'ue_velocity_kph', "UE Velocity (km/h):", "3", None, 7)
+
+    def _create_entry(self, parent, key, text, default, values, row):
+        label = ttk.Label(parent, text=text)
+        label.grid(row=row, column=0, sticky=tk.W, pady=2)
+        var = tk.StringVar(value=default)
+        if values:
+            widget = ttk.Combobox(parent, textvariable=var, values=values, width=18)
+        else:
+            widget = ttk.Entry(parent, textvariable=var, width=20)
+        widget.grid(row=row, column=1, sticky=tk.EW, pady=2, padx=5)
+        parent.grid_columnconfigure(1, weight=1)
+        self.controls[key] = {'var': var, 'widget': widget, 'label': label}
+        return var
+
+    def update_antenna_ui(self, prefix):
+        array_type = self.controls[f'{prefix}_array_type']['var'].get()
+        is_ura = (array_type == 'URA')
+        state = tk.NORMAL if is_ura else tk.DISABLED
+        self.controls[f'{prefix}_num_rows']['label'].config(state=state)
+        self.controls[f'{prefix}_num_rows']['widget'].config(state=state)
+        self.controls[f'{prefix}_spacing_v']['label'].config(state=state)
+        self.controls[f'{prefix}_spacing_v']['widget'].config(state=state)
+        if not is_ura:
+            self.controls[f'{prefix}_num_rows']['var'].set("1")
 
     def _create_control_buttons(self, parent_frame):
         control_frame = ttk.Frame(parent_frame)
@@ -132,71 +129,68 @@ class ChannelModelApp(tk.Tk):
         self.log_text.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self.notebook.add(log_frame, text='Log')
 
-    def _create_plots(self):
+    def _create_results_tabs(self):
         # PDP Tab
-        pdp_frame = ttk.Frame(self.notebook)
-        self.notebook.add(pdp_frame, text='PDP')
-        pdp_frame.grid_rowconfigure(0, weight=1)
-        pdp_frame.grid_columnconfigure(0, weight=1)
-        self.fig_pdp, self.ax_pdp = plt.subplots(1, 1)
+        pdp_frame = ttk.Frame(self.notebook); self.notebook.add(pdp_frame, text='PDP')
+        self.fig_pdp, self.ax_pdp, self.pdp_tree = self._create_plot_and_table(pdp_frame, ["Cluster #", "Delay (s)", "Power (dB)"])
         self.canvas_pdp = FigureCanvasTkAgg(self.fig_pdp, master=pdp_frame)
         self.canvas_pdp.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-        self.pdp_tree, pdp_copy_btn = self._create_plot_table(pdp_frame, ["Cluster #", "Delay (s)", "Power (dB)"])
-        self.pdp_tree.grid(row=1, column=0, sticky="ew", pady=(5, 0))
-        pdp_copy_btn.grid(row=2, column=0, sticky="e", pady=5, padx=5)
 
         # AoA Tab
-        aoa_frame = ttk.Frame(self.notebook)
-        self.notebook.add(aoa_frame, text='AoA')
-        aoa_frame.grid_rowconfigure(0, weight=1)
-        aoa_frame.grid_columnconfigure(0, weight=1)
-        self.fig_aoa, self.ax_aoa = plt.subplots(1, 1)
+        aoa_frame = ttk.Frame(self.notebook); self.notebook.add(aoa_frame, text='AoA')
+        self.fig_aoa, self.ax_aoa, self.aoa_tree = self._create_plot_and_table(aoa_frame, ["Cluster #", "AoA (deg)", "Power (dB)"])
         self.canvas_aoa = FigureCanvasTkAgg(self.fig_aoa, master=aoa_frame)
         self.canvas_aoa.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-        self.aoa_tree, aoa_copy_btn = self._create_plot_table(aoa_frame, ["Cluster #", "AoA (deg)", "Power (dB)"])
-        self.aoa_tree.grid(row=1, column=0, sticky="ew", pady=(5, 0))
-        aoa_copy_btn.grid(row=2, column=0, sticky="e", pady=5, padx=5)
 
         # ZoA Tab
-        zoa_frame = ttk.Frame(self.notebook)
-        self.notebook.add(zoa_frame, text='ZoA')
-        zoa_frame.grid_rowconfigure(0, weight=1)
-        zoa_frame.grid_columnconfigure(0, weight=1)
-        self.fig_zoa, self.ax_zoa = plt.subplots(1, 1)
+        zoa_frame = ttk.Frame(self.notebook); self.notebook.add(zoa_frame, text='ZoA')
+        self.fig_zoa, self.ax_zoa, self.zoa_tree = self._create_plot_and_table(zoa_frame, ["Cluster #", "ZoA (deg)", "Power (dB)"])
         self.canvas_zoa = FigureCanvasTkAgg(self.fig_zoa, master=zoa_frame)
         self.canvas_zoa.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-        self.zoa_tree, zoa_copy_btn = self._create_plot_table(zoa_frame, ["Cluster #", "ZoA (deg)", "Power (dB)"])
-        self.zoa_tree.grid(row=1, column=0, sticky="ew", pady=(5, 0))
-        zoa_copy_btn.grid(row=2, column=0, sticky="e", pady=5, padx=5)
+        
+        # CDL Tab
+        cdl_frame = ttk.Frame(self.notebook); self.notebook.add(cdl_frame, text='CDL')
+        cdl_cols = ["#", "Delay(s)", "Pwr(dB)", "AoA(d)", "ZoA(d)", "AoD(d)", "ZoD(d)", "XPR(dB)"]
+        self.cdl_tree, cdl_copy_btn = self._create_table_with_copy(cdl_frame, cdl_cols, height=15)
+        self.cdl_tree.grid(row=0, column=0, sticky="nsew"); cdl_copy_btn.grid(row=1, column=0, sticky="e", pady=5, padx=5)
+        cdl_frame.grid_rowconfigure(0, weight=1); cdl_frame.grid_columnconfigure(0, weight=1)
 
-        self.clear_plots()
+        # TDL Tab
+        tdl_frame = ttk.Frame(self.notebook); self.notebook.add(tdl_frame, text='TDL')
+        tdl_cols = ["Tap #", "Delay (s)", "Power (dB)"]
+        self.tdl_tree, tdl_copy_btn = self._create_table_with_copy(tdl_frame, tdl_cols, height=15)
+        self.tdl_tree.grid(row=0, column=0, sticky="nsew"); tdl_copy_btn.grid(row=1, column=0, sticky="e", pady=5, padx=5)
+        tdl_frame.grid_rowconfigure(0, weight=1); tdl_frame.grid_columnconfigure(0, weight=1)
 
-    def _create_plot_table(self, parent, columns):
-        tree = ttk.Treeview(parent, columns=columns, show='headings', height=4)
+        self.clear_results()
+
+    def _create_plot_and_table(self, parent, columns):
+        parent.grid_rowconfigure(0, weight=1); parent.grid_columnconfigure(0, weight=1)
+        fig, ax = plt.subplots(1, 1)
+        tree, copy_btn = self._create_table_with_copy(parent, columns)
+        tree.grid(row=1, column=0, sticky="ew", pady=(5,0))
+        copy_btn.grid(row=2, column=0, sticky="e", pady=5, padx=5)
+        return fig, ax, tree
+
+    def _create_table_with_copy(self, parent, columns, height=4):
+        tree = ttk.Treeview(parent, columns=columns, show='headings', height=height)
         for col in columns:
             tree.heading(col, text=col)
-            tree.column(col, anchor=tk.CENTER, width=150)
+            tree.column(col, anchor=tk.CENTER, width=100)
         copy_btn = ttk.Button(parent, text="Copy Data", command=lambda t=tree: self.copy_tree_data(t))
         return tree, copy_btn
 
-    def clear_plots(self):
+    def clear_results(self):
         for ax, title, xlabel in [(self.ax_pdp, "Power Delay Profile (PDP)", "Delay (s)"),
                                   (self.ax_aoa, "Azimuth of Arrival (AoA) vs. Power", "Angle (degrees)"),
                                   (self.ax_zoa, "Zenith of Arrival (ZoA) vs. Power", "Angle (degrees)")]:
-            ax.clear()
-            ax.set_title(title)
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Relative Power (dB)")
-            ax.grid(True)
-
-        for fig in [self.fig_pdp, self.fig_aoa, self.fig_zoa]:
-            fig.tight_layout()
-        for canvas in [self.canvas_pdp, self.canvas_aoa, self.canvas_zoa]:
-            canvas.draw()
-
-        for tree in [self.pdp_tree, self.aoa_tree, self.zoa_tree]:
-            for item in tree.get_children():
-                tree.delete(item)
+            ax.clear(); ax.set_title(title); ax.set_xlabel(xlabel); ax.set_ylabel("Relative Power (dB)"); ax.grid(True)
+        
+        for fig in [self.fig_pdp, self.fig_aoa, self.fig_zoa]: fig.tight_layout()
+        for canvas in [self.canvas_pdp, self.canvas_aoa, self.canvas_zoa]: canvas.draw()
+        
+        for tree in [self.pdp_tree, self.aoa_tree, self.zoa_tree, self.cdl_tree, self.tdl_tree]:
+            for item in tree.get_children(): tree.delete(item)
 
     def log(self, message):
         self.log_text.config(state=tk.NORMAL)
@@ -206,21 +200,19 @@ class ChannelModelApp(tk.Tk):
 
     def start_simulation_thread(self):
         self.run_button.config(state=tk.DISABLED)
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.config(state=tk.DISABLED)
-        self.clear_plots()
+        self.log_text.config(state=tk.NORMAL); self.log_text.delete(1.0, tk.END); self.log_text.config(state=tk.DISABLED)
+        self.clear_results()
         thread = threading.Thread(target=self.run_simulation)
         thread.daemon = True
         thread.start()
 
     def run_simulation(self):
         try:
-            params = {key: var.get() for key, var in self.entries.items()}
+            params = {key: control['var'].get() for key, control in self.controls.items()}
             scenario_name = params["scenario_name"]
             center_frequency_hz = float(params["center_frequency_ghz"]) * 1e9
-            bs_pos = np.array([[float(p) for p in params["bs_position"].split(',')]])
-            ue_pos = np.array([[float(p) for p in params["ue_position"].split(',')]])
+            bs_pos = np.array([[float(p) for p in params["tx_position"].split(',')]])
+            ue_pos = np.array([[float(p) for p in params["rx_position"].split(',')]])
             ue_velocity_kph = float(params["ue_velocity_kph"])
             ue_velocity_mps = ue_velocity_kph * 1000 / 3600
             ue_vel_vector = np.array([[ue_velocity_mps, 0, 0]])
@@ -228,34 +220,32 @@ class ChannelModelApp(tk.Tk):
             seed = int(seed_str) if seed_str else None
             los_condition_str = params["los_condition"]
             force_los_condition = None if los_condition_str == "Automatic" else los_condition_str
+            time_s = float(params["simulation_time_s"])
 
             c = 3e8
             lambda_meters = c / center_frequency_hz
-            num_tx = int(params["num_tx_antennas"])
-            tx_spacing_m = float(params["tx_element_spacing"]) * lambda_meters
-            tx_positions = np.array([[0, i * tx_spacing_m, 0] for i in range(num_tx)])
-            num_rx = int(params["num_rx_antennas"])
-            rx_spacing_m = float(params["rx_element_spacing"]) * lambda_meters
-            rx_positions = np.array([[0, i * rx_spacing_m, 0] for i in range(num_rx)])
-
-            ant_config = AntennaArray(
-                num_tx_antennas=num_tx,
-                tx_element_spacing=float(params["tx_element_spacing"]),
-                tx_element_pattern=params["tx_element_pattern"],
-                tx_positions=tx_positions,
-                num_rx_antennas=num_rx,
-                rx_element_spacing=float(params["rx_element_spacing"]),
-                rx_element_pattern=params["rx_element_pattern"],
-                rx_positions=rx_positions
+            
+            tx_positions = get_antenna_positions(
+                array_type=params['tx_array_type'],
+                num_rows=int(params['tx_num_rows']),
+                num_cols=int(params['tx_num_cols']),
+                spacing_h_m=float(params['tx_spacing_h']) * lambda_meters,
+                spacing_v_m=float(params['tx_spacing_v']) * lambda_meters
+            )
+            rx_positions = get_antenna_positions(
+                array_type=params['rx_array_type'],
+                num_rows=int(params['rx_num_rows']),
+                num_cols=int(params['rx_num_cols']),
+                spacing_h_m=float(params['rx_spacing_h']) * lambda_meters,
+                spacing_v_m=float(params['rx_spacing_v']) * lambda_meters
             )
 
+            ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
+            
             log_msg = f"Starting simulation for {scenario_name}..."
-            if force_los_condition:
-                log_msg += f" (Condition Forced to: {force_los_condition})"
-            elif seed is not None:
-                log_msg += f" (Condition Determined by Seed: {seed})"
-            else:
-                log_msg += f" (Condition is Probabilistic)"
+            if force_los_condition: log_msg += f" (Condition Forced to: {force_los_condition})"
+            elif seed is not None: log_msg += f" (Condition Determined by Seed: {seed})"
+            else: log_msg += f" (Condition is Probabilistic)"
             self.simulation_queue.put(("log", log_msg))
 
             np.random.seed(seed)
@@ -265,7 +255,7 @@ class ChannelModelApp(tk.Tk):
             simulator.config.ue_velocities = ue_vel_vector
             simulator.config.antenna_config = ant_config
             simulator.generator = ChannelGenerator(simulator.config, simulator.params)
-            results = simulator.run(force_condition=force_los_condition)
+            results = simulator.run(force_condition=force_los_condition, time_s=time_s)
             self.simulation_queue.put(("results", results))
 
         except Exception as e:
@@ -278,8 +268,7 @@ class ChannelModelApp(tk.Tk):
         try:
             while True:
                 msg_type, data = self.simulation_queue.get_nowait()
-                if msg_type == "log":
-                    self.log(data)
+                if msg_type == "log": self.log(data)
                 elif msg_type == "results":
                     self.log("\n--- Simulation Successful ---")
                     self.log(f"Final Channel Condition: {'LOS' if data['is_los'] else 'NLOS'}")
@@ -288,7 +277,7 @@ class ChannelModelApp(tk.Tk):
                     self.log("\n--- Large Scale Parameters (LSPs) ---")
                     lsp_text = json.dumps(data['lsps'].model_dump(), indent=2)
                     self.log(lsp_text)
-                    self._update_plots(data['clusters'])
+                    self._update_results_display(data['clusters'])
                     self.log("\nPlots and data tables updated.")
                 elif msg_type == "error":
                     self.log(data)
@@ -298,51 +287,34 @@ class ChannelModelApp(tk.Tk):
         except queue.Empty:
             self.after(100, self.process_queue)
 
-    def _update_plots(self, clusters):
-        self.clear_plots()
-        if not clusters:
-            self.log("No clusters generated, cannot plot.")
-            return
-
-        delays = [c['delay'] for c in clusters]
-        powers_linear = np.array([c['power'] for c in clusters])
-
-        if not np.any(powers_linear):
-            self.log("All cluster powers are zero, cannot plot relative power.")
-            return
+    def _update_results_display(self, clusters):
+        self.clear_results()
+        if not clusters: self.log("No clusters generated, cannot plot."); return
+        delays = [c['delay'] for c in clusters]; powers_linear = np.array([c['power'] for c in clusters])
+        if not np.any(powers_linear): self.log("All cluster powers are zero, cannot plot relative power."); return
 
         max_power = np.max(powers_linear)
         powers_db_relative = 10 * np.log10(powers_linear / max_power) if max_power > 0 else np.full_like(powers_linear, -np.inf)
-
+        
         min_finite_power = powers_db_relative[np.isfinite(powers_db_relative)]
         y_min = -50.0
-        if min_finite_power.size > 0:
-            y_min = max(-80.0, np.floor(np.min(min_finite_power) / 10) * 10 - 10)
+        if min_finite_power.size > 0: y_min = max(-80.0, np.floor(np.min(min_finite_power) / 10) * 10 - 10)
         y_max = 5.0
 
-        aoa_azimuth = [c['aoa_phi'] for c in clusters]
-        aoa_zenith = [c['zoa_theta'] for c in clusters]
+        # Update Plots
+        self.ax_pdp.stem(delays, powers_db_relative, bottom=y_min); self.ax_pdp.set_ylim(bottom=y_min, top=y_max)
+        self.ax_aoa.stem([c['aoa_phi'] for c in clusters], powers_db_relative, bottom=y_min); self.ax_aoa.set_ylim(bottom=y_min, top=y_max)
+        self.ax_zoa.stem([c['zoa_theta'] for c in clusters], powers_db_relative, bottom=y_min); self.ax_zoa.set_ylim(bottom=y_min, top=y_max)
+        for fig in [self.fig_pdp, self.fig_aoa, self.fig_zoa]: fig.tight_layout()
+        for canvas in [self.canvas_pdp, self.canvas_aoa, self.canvas_zoa]: canvas.draw()
 
-        # PDP Plot and Table
-        self.ax_pdp.stem(delays, powers_db_relative, bottom=y_min)
-        self.ax_pdp.set_ylim(bottom=y_min, top=y_max)
+        # Update Tables
         for i, cluster in enumerate(clusters):
-            self.pdp_tree.insert("", "end", values=(i + 1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}"))
-        self.canvas_pdp.draw()
-
-        # AoA Plot and Table
-        self.ax_aoa.stem(aoa_azimuth, powers_db_relative, bottom=y_min)
-        self.ax_aoa.set_ylim(bottom=y_min, top=y_max)
-        for i, cluster in enumerate(clusters):
-            self.aoa_tree.insert("", "end", values=(i + 1, f"{cluster['aoa_phi']:.2f}", f"{powers_db_relative[i]:.2f}"))
-        self.canvas_aoa.draw()
-
-        # ZoA Plot and Table
-        self.ax_zoa.stem(aoa_zenith, powers_db_relative, bottom=y_min)
-        self.ax_zoa.set_ylim(bottom=y_min, top=y_max)
-        for i, cluster in enumerate(clusters):
-            self.zoa_tree.insert("", "end", values=(i + 1, f"{cluster['zoa_theta']:.2f}", f"{powers_db_relative[i]:.2f}"))
-        self.canvas_zoa.draw()
+            self.pdp_tree.insert("", "end", values=(i+1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}"))
+            self.aoa_tree.insert("", "end", values=(i+1, f"{cluster['aoa_phi']:.2f}", f"{powers_db_relative[i]:.2f}"))
+            self.zoa_tree.insert("", "end", values=(i+1, f"{cluster['zoa_theta']:.2f}", f"{powers_db_relative[i]:.2f}"))
+            self.tdl_tree.insert("", "end", values=(i+1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}"))
+            self.cdl_tree.insert("", "end", values=(i+1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}", f"{cluster['aoa_phi']:.2f}", f"{cluster['zoa_theta']:.2f}", f"{cluster['aod_phi']:.2f}", f"{cluster['zod_theta']:.2f}", f"{10*np.log10(cluster['k_n']):.2f}"))
 
     def copy_tree_data(self, tree):
         headings = tree["columns"]
@@ -350,30 +322,25 @@ class ChannelModelApp(tk.Tk):
         for item_id in tree.get_children():
             values = tree.item(item_id, "values")
             text_to_copy += "\t".join(map(str, values)) + "\n"
-        self.clipboard_clear()
-        self.clipboard_append(text_to_copy)
+        self.clipboard_clear(); self.clipboard_append(text_to_copy)
         self.log(f"Table data for '{tree.heading(headings[0])['text']}' copied to clipboard.")
 
     def save_config(self):
-        config_data = {key: var.get() for key, var in self.entries.items()}
+        config_data = {key: control['var'].get() for key, control in self.controls.items()}
         from tkinter.filedialog import asksaveasfilename
         filepath = asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json"), ("All files", "*.*")], title="Save Simulation Configuration")
-        if not filepath:
-            return
-        with open(filepath, 'w') as f:
-            json.dump(config_data, f, indent=4)
+        if not filepath: return
+        with open(filepath, 'w') as f: json.dump(config_data, f, indent=4)
         self.log(f"Configuration saved to {filepath}")
 
     def load_config(self):
         from tkinter.filedialog import askopenfilename
         filepath = askopenfilename(filetypes=[("JSON files", "*.json"), ("All files", "*.*")], title="Load Simulation Configuration")
-        if not filepath:
-            return
-        with open(filepath, 'r') as f:
-            config_data = json.load(f)
+        if not filepath: return
+        with open(filepath, 'r') as f: config_data = json.load(f)
         for key, value in config_data.items():
-            if key in self.entries:
-                self.entries[key].set(value)
+            if key in self.controls:
+                self.controls[key]['var'].set(value)
         self.log(f"Configuration loaded from {filepath}")
 
 if __name__ == '__main__':
