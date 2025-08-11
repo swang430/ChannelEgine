@@ -1,0 +1,6 @@
+[project]
+name = "mimo_ota_simulator"
+version = "0.1.0"
+
+[tool.setuptools]
+packages = ["mimo_ota_simulator"]

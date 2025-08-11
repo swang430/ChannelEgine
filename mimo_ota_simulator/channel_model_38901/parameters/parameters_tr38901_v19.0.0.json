@@ -1,0 +1,317 @@
+{
+  "standard_version": "19.0.0",
+  "scenarios": {
+    "UMa": {
+      "pathloss_los": {
+        "formula_1": "28.0 + 22 * log10(d_3d) + 20 * log10(fc_ghz)",
+        "formula_2": "28.0 + 40 * log10(d_3d) + 20 * log10(fc_ghz) - 9 * log10((d_bp**2 + (h_bs - h_ut)**2))",
+        "shadow_fading_std_db": 4.0
+      },
+      "pathloss_nlos": {
+        "formula": "max(pathloss_los, 13.54 + 39.08 * log10(d_3d) + 20 * log10(fc_ghz) - 0.6 * (h_ut - 1.5))",
+        "shadow_fading_std_db": 6.0
+      },
+      "los_probability": {
+        "formula": "[18/d_2d + exp(-d_2d/63) * (1 - 18/d_2d)] * [1 + C(d_2d, h_ut) * (5/4) * (d_2d/100)**3 * exp(-d_2d/150)]",
+        "params": {
+          "C_h_ut_less_13": "0",
+          "C_h_ut_13_23": "((h_ut-13)/10)**1.5"
+        }
+      },
+      "lsp_parameters_los": {
+        "mu_log10_DS": "-7.067 - 0.0794 * log10(fc_ghz)", "sigma_log10_DS": "0.57 + 0.026 * log10(fc_ghz)",
+        "mu_log10_ASD": "0.92", "sigma_log10_ASD": "0.31",
+        "mu_log10_ASA": "1.76", "sigma_log10_ASA": "0.19",
+        "mu_log10_ZSA": "0.96", "sigma_log10_ZSA": "0.15",
+        "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+        "mu_log10_K": "9.0", "sigma_log10_K": "3.5",
+        "correlations": {
+          "DS_vs_SF": -0.4, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": -0.4,
+          "K_vs_DS": -0.2, "K_vs_SF": 0.5, "ASD_vs_DS": 0.4, "ASA_vs_SF": -0.4,
+          "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.5, "ZSA_vs_ASA": -0.1
+        }
+      },
+      "lsp_parameters_nlos": {
+        "mu_log10_DS": "-6.47 - 0.134 * log10(fc_ghz)", "sigma_log10_DS": "0.39",
+        "mu_log10_ASD": "1.09", "sigma_log10_ASD": "0.44",
+        "mu_log10_ASA": "2.04 - 0.25 * log10(fc_ghz)", "sigma_log10_ASA": "0.17 - 0.03 * log10(fc_ghz)",
+        "mu_log10_ZSA": "-0.2856 * log10(fc_ghz) + 1.445", "sigma_log10_ZSA": "0.17",
+        "mu_log10_SF": "0", "sigma_log10_SF": "6.0",
+        "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+        "correlations": {
+            "DS_vs_SF": -0.5, "ASA_vs_DS": 0.6, "ASD_vs_SF": -0.8, "ZSA_vs_SF": -0.5,
+            "ASD_vs_DS": 0.4, "ASA_vs_SF": -0.6, "ZSA_vs_DS": 0.4, "ZSA_vs_ASD": 0.2,
+            "ZSA_vs_ASA": 0
+        }
+      },
+      "num_clusters_los": 12,
+      "num_clusters_nlos": 20,
+      "delay_scaling_factor": 2.3,
+      "xpr_mu_los": 8, "xpr_sigma_los": 4,
+      "xpr_mu_nlos": 7, "xpr_sigma_nlos": 3,
+      "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "UMi-StreetCanyon": {
+        "pathloss_los": {
+        "formula_1": "32.4 + 21 * log10(d_3d) + 20 * log10(fc_ghz)",
+        "formula_2": "32.4 + 40 * log10(d_3d) + 20 * log10(fc_ghz) - 9.5 * log10((d_bp**2 + (h_bs - h_ut)**2))",
+        "shadow_fading_std_db": 4.0
+      },
+      "pathloss_nlos": {
+        "formula": "max(pathloss_los, 35.3 * log10(d_3d) + 22.4 + 21.3 * log10(fc_ghz) - 0.3 * (h_ut - 1.5))",
+        "shadow_fading_std_db": 7.82
+      },
+      "los_probability": {
+        "formula": "18/d_2d + exp(-d_2d/36) * (1 - 18/d_2d)",
+        "params": {}
+      },
+      "lsp_parameters_los": {
+        "mu_log10_DS": "-0.18 * log10(1 + fc_ghz) - 7.28", "sigma_log10_DS": "0.39",
+        "mu_log10_ASD": "-0.05 * log10(1 + fc_ghz) + 1.21", "sigma_log10_ASD": "0.08 * log10(1 + fc_ghz) + 0.29",
+        "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.66", "sigma_log10_ASA": "0.021 * log10(1 + fc_ghz) + 0.26",
+        "mu_log10_ZSA": "-0.11 * log10(1 + fc_ghz) + 0.81", "sigma_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.29",
+        "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+        "mu_log10_K": "9.0", "sigma_log10_K": "5.0",
+        "correlations": {
+          "DS_vs_SF": -0.4, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": 0.0,
+          "K_vs_DS": -0.7, "K_vs_SF": 0.5, "ASD_vs_DS": 0.5, "ASA_vs_SF": -0.4,
+          "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.5, "ZSA_vs_ASA": 0.0
+        }
+      },
+      "lsp_parameters_nlos": {
+        "mu_log10_DS": "-0.22 * log10(1 + fc_ghz) - 6.87", "sigma_log10_DS": "0.19 * log10(1 + fc_ghz) + 0.22",
+        "mu_log10_ASD": "-0.24 * log10(1 + fc_ghz) + 1.54", "sigma_log10_ASD": "0.10 * log10(1 + fc_ghz) + 0.33",
+        "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.76", "sigma_log10_ASA": "0.05 * log10(1 + fc_ghz) + 0.27",
+        "mu_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.92", "sigma_log10_ZSA": "-0.05 * log10(1 + fc_ghz) + 0.35",
+        "mu_log10_SF": "0", "sigma_log10_SF": "7.82",
+        "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+        "correlations": {
+            "DS_vs_SF": -0.4, "ASA_vs_DS": 0.4, "ASD_vs_SF": -0.7, "ZSA_vs_SF": 0.0,
+            "ASD_vs_DS": 0.0, "ASA_vs_SF": -0.4, "ZSA_vs_DS": 0.5, "ZSA_vs_ASD": 0.5,
+            "ZSA_vs_ASA": 0.2
+        }
+      },
+      "num_clusters_los": 12,
+      "num_clusters_nlos": 19,
+      "delay_scaling_factor": 2.1,
+      "xpr_mu_los": 9, "xpr_sigma_los": 3,
+      "xpr_mu_nlos": 8, "xpr_sigma_nlos": 3,
+      "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "UMi-OpenArea": {
+        "pathloss_los": {
+            "formula_1": "32.4 + 21 * log10(d_3d) + 20 * log10(fc_ghz)",
+            "formula_2": "32.4 + 40 * log10(d_3d) + 20 * log10(fc_ghz) - 9.5 * log10((d_bp**2 + (h_bs - h_ut)**2))",
+            "shadow_fading_std_db": 4.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 35.3 * log10(d_3d) + 22.4 + 21.3 * log10(fc_ghz) - 0.3 * (h_ut - 1.5))",
+            "shadow_fading_std_db": 7.82
+        },
+        "los_probability": {
+            "formula": "1.0",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-0.18 * log10(1 + fc_ghz) - 7.28", "sigma_log10_DS": "0.39",
+            "mu_log10_ASD": "-0.05 * log10(1 + fc_ghz) + 1.21", "sigma_log10_ASD": "0.08 * log10(1 + fc_ghz) + 0.29",
+            "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.66", "sigma_log10_ASA": "0.021 * log10(1 + fc_ghz) + 0.26",
+            "mu_log10_ZSA": "-0.11 * log10(1 + fc_ghz) + 0.81", "sigma_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.29",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+            "mu_log10_K": "9.0", "sigma_log10_K": "5.0",
+            "correlations": {
+              "DS_vs_SF": -0.4, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": 0.0,
+              "K_vs_DS": -0.7, "K_vs_SF": 0.5, "ASD_vs_DS": 0.5, "ASA_vs_SF": -0.4,
+              "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.5, "ZSA_vs_ASA": 0.0
+            }
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-0.22 * log10(1 + fc_ghz) - 6.87", "sigma_log10_DS": "0.19 * log10(1 + fc_ghz) + 0.22",
+            "mu_log10_ASD": "-0.24 * log10(1 + fc_ghz) + 1.54", "sigma_log10_ASD": "0.10 * log10(1 + fc_ghz) + 0.33",
+            "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.76", "sigma_log10_ASA": "0.05 * log10(1 + fc_ghz) + 0.27",
+            "mu_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.92", "sigma_log10_ZSA": "-0.05 * log10(1 + fc_ghz) + 0.35",
+            "mu_log10_SF": "0", "sigma_log10_SF": "7.82",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {
+                "DS_vs_SF": -0.4, "ASA_vs_DS": 0.4, "ASD_vs_SF": -0.7, "ZSA_vs_SF": 0.0,
+                "ASD_vs_DS": 0.0, "ASA_vs_SF": -0.4, "ZSA_vs_DS": 0.5, "ZSA_vs_ASD": 0.5,
+                "ZSA_vs_ASA": 0.2
+            }
+        },
+        "num_clusters_los": 12,
+        "num_clusters_nlos": 19,
+        "delay_scaling_factor": 2.1,
+        "xpr_mu_los": 9, "xpr_sigma_los": 3,
+        "xpr_mu_nlos": 8, "xpr_sigma_nlos": 3,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "RMa": {
+        "pathloss_los": {
+            "formula_1": "20 * log10(40 * np.pi * d_3d * fc_ghz / 3) + min(0.03 * h_bs**1.72, 10) * log10(d_3d) - min(0.044 * h_bs**1.72, 14.77) + 0.002 * log10(h_bs) * d_3d",
+            "formula_2": "20 * log10(40 * np.pi * d_bp * fc_ghz / 3) + 40 * log10(d_3d / d_bp)",
+            "shadow_fading_std_db": 4.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 161.04 - 7.1 * log10(W) + 7.5 * log10(h) - (24.37 - 3.7 * (h / h_bs)**2) * log10(h_bs) + (43.42 - 3.1 * log10(h_bs)) * (log10(d_3d) - 3) + 20 * log10(fc_ghz) - (3.2 * (log10(11.75 * h_ut))**2 - 4.97))",
+            "shadow_fading_std_db": 8.0
+        },
+        "los_probability": {
+            "formula": "exp(-(d_2d - 10) / 1000)",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-7.49", "sigma_log10_DS": "0.55",
+            "mu_log10_ASD": "0.90", "sigma_log10_ASD": "0.38",
+            "mu_log10_ASA": "1.52", "sigma_log10_ASA": "0.24",
+            "mu_log10_ZSA": "0.47", "sigma_log10_ZSA": "0.40",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+            "mu_log10_K": "7.0", "sigma_log10_K": "4.0",
+            "correlations": {
+                "DS_vs_SF": -0.5, "ASA_vs_DS": 0.0, "ASD_vs_SF": 0.6, "ZSA_vs_SF": -0.04,
+                "K_vs_DS": 0.0, "K_vs_SF": 0.0, "ASD_vs_DS": 0.0, "ASA_vs_SF": 0.0,
+                "ZSA_vs_DS": -0.05, "ZSA_vs_ASD": 0.73, "ZSA_vs_ASA": -0.20
+            }
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-7.43", "sigma_log10_DS": "0.48",
+            "mu_log10_ASD": "0.95", "sigma_log10_ASD": "0.45",
+            "mu_log10_ASA": "1.52", "sigma_log10_ASA": "0.13",
+            "mu_log10_ZSA": "0.58", "sigma_log10_ZSA": "0.37",
+            "mu_log10_SF": "0", "sigma_log10_SF": "6.0",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {
+                "DS_vs_SF": -0.4, "ASA_vs_DS": 0.0, "ASD_vs_SF": 0.6, "ZSA_vs_SF": -0.25,
+                "ASD_vs_DS": -0.4, "ASA_vs_SF": 0.0, "ZSA_vs_DS": -0.10, "ZSA_vs_ASD": 0.42,
+                "ZSA_vs_ASA": 0.26
+            }
+        },
+        "num_clusters_los": 11,
+        "num_clusters_nlos": 10,
+        "delay_scaling_factor": 3.8,
+        "xpr_mu_los": 12, "xpr_sigma_los": 4,
+        "xpr_mu_nlos": 7, "xpr_sigma_nlos": 3,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "InH-Office": {
+        "pathloss_los": {
+            "formula_1": "32.4 + 17.3 * log10(d_3d) + 20 * log10(fc_ghz)",
+            "shadow_fading_std_db": 3.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 38.3 * log10(d_3d) + 17.30 + 24.9 * log10(fc_ghz))",
+            "shadow_fading_std_db": 8.03
+        },
+        "los_probability": {
+            "formula": "1.0 if d_2d <= 1.2 else (1.2 / d_2d) * (1 - exp(-d_2d / 4.7)) + exp(-d_2d / 4.7) if d_2d <= 6.5 else 0.32 * exp(-(d_2d - 6.5) / 32.6)",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-0.01 * log10(1 + fc_ghz) - 7.692", "sigma_log10_DS": "0.18",
+            "mu_log10_ASD": "1.60", "sigma_log10_ASD": "0.18",
+            "mu_log10_ASA": "-0.19 * log10(1 + fc_ghz) + 1.781", "sigma_log10_ASA": "0.12 * log10(1 + fc_ghz) + 0.119",
+            "mu_log10_ZSA": "-0.26 * log10(1 + fc_ghz) + 1.44", "sigma_log10_ZSA": "-0.04 * log10(1 + fc_ghz) + 0.264",
+            "mu_log10_SF": "0", "sigma_log10_SF": "3.0",
+            "mu_log10_K": "7.0", "sigma_log10_K": "4.0",
+            "correlations": {
+                "DS_vs_SF": -0.8, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": 0.2,
+                "K_vs_DS": 0.0, "K_vs_SF": 0.0, "ASD_vs_DS": 0.0, "ASA_vs_SF": -0.5,
+                "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.0, "ZSA_vs_ASA": 0.5
+            }
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-0.28 * log10(1 + fc_ghz) - 7.173", "sigma_log10_DS": "0.10 * log10(1 + fc_ghz) + 0.055",
+            "mu_log10_ASD": "1.62", "sigma_log10_ASD": "0.25",
+            "mu_log10_ASA": "-0.11 * log10(1 + fc_ghz) + 1.863", "sigma_log10_ASA": "0.12 * log10(1 + fc_ghz) + 0.059",
+            "mu_log10_ZSA": "-0.15 * log10(1 + fc_ghz) + 1.387", "sigma_log10_ZSA": "-0.09 * log10(1 + fc_ghz) + 0.746",
+            "mu_log10_SF": "0", "sigma_log10_SF": "8.03",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {
+                "DS_vs_SF": -0.5, "ASA_vs_DS": 0.0, "ASD_vs_SF": -0.4, "ZSA_vs_SF": 0.3,
+                "ASD_vs_DS": 0.5, "ASA_vs_SF": -0.4, "ZSA_vs_DS": 0.08, "ZSA_vs_ASD": 0.35,
+                "ZSA_vs_ASA": 0.43
+            }
+        },
+        "num_clusters_los": 15,
+        "num_clusters_nlos": 19,
+        "delay_scaling_factor": 3.6,
+        "xpr_mu_los": 11, "xpr_sigma_los": 4,
+        "xpr_mu_nlos": 10, "xpr_sigma_nlos": 4,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "SMa": {
+        "pathloss_los": {
+            "formula_1": "20 * log10(40 * np.pi * d_3d * fc_ghz / 3) + min(0.03 * h_bs**1.72, 10) * log10(d_3d) - min(0.044 * h_bs**1.72, 14.77) + 0.002 * log10(h_bs) * d_3d",
+            "formula_2": "20 * log10(40 * np.pi * d_bp * fc_ghz / 3) + 40 * log10(d_3d / d_bp)",
+            "shadow_fading_std_db": 4.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 161.04 - 7.1 * log10(W) + 7.5 * log10(h) - (24.37 - 3.7 * (h / h_bs)**2) * log10(h_bs) + (43.42 - 3.1 * log10(h_bs)) * (log10(d_3d) - 3) + 20 * log10(fc_ghz) - (3.2 * (log10(11.75 * h_ut))**2 - 4.97))",
+            "shadow_fading_std_db": 8.0
+        },
+        "los_probability": {},
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-7.42", "sigma_log10_DS": "0.60",
+            "mu_log10_ASD": "0.48", "sigma_log10_ASD": "0.27",
+            "mu_log10_ASA": "1.43", "sigma_log10_ASA": "0.12",
+            "mu_log10_ZSA": "1.18", "sigma_log10_ZSA": "0.05",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+            "mu_log10_K": "9.0", "sigma_log10_K": "7.0",
+            "correlations": {}
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-7.20", "sigma_log10_DS": "0.58",
+            "mu_log10_ASD": "0.51", "sigma_log10_ASD": "0.33",
+            "mu_log10_ASA": "1.63", "sigma_log10_ASA": "0.26",
+            "mu_log10_ZSA": "1.16", "sigma_log10_ZSA": "0.14",
+            "mu_log10_SF": "0", "sigma_log10_SF": "6.0",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {}
+        },
+        "num_clusters_los": 15,
+        "num_clusters_nlos": 14,
+        "delay_scaling_factor": 2.4,
+        "xpr_mu_los": 8, "xpr_sigma_los": 4,
+        "xpr_mu_nlos": 4, "xpr_sigma_nlos": 3,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "InF": {
+        "pathloss_los": {
+            "formula_1": "31.84 + 21.5 * log10(d_3d) + 19.0 * log10(fc_ghz)",
+            "shadow_fading_std_db": 4.3
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 33.0 + 25.5 * log10(d_3d) + 20.0 * log10(fc_ghz))",
+            "shadow_fading_std_db": 5.7
+        },
+        "los_probability": {
+            "formula": "1.0 if d_2d <= 5 else exp(-(d_2d - 5) / 70.8) if d_2d <= 49 else 0.54 * exp(-(d_2d - 49) / 211.7)",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "log10(26*(V/S)+14)-9.35", "sigma_log10_DS": "0.15",
+            "mu_log10_ASD": "1.56", "sigma_log10_ASD": "0.25",
+            "mu_log10_ASA": "-0.18 * log10(1 + fc_ghz) + 1.78", "sigma_log10_ASA": "0.12 * log10(1 + fc_ghz) + 0.2",
+            "mu_log10_ZSA": "-0.2 * log10(1 + fc_ghz) + 1.5", "sigma_log10_ZSA": "0.35",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.3",
+            "mu_log10_K": "7.0", "sigma_log10_K": "8.0",
+            "correlations": {}
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "log10(30*(V/S)+32)-9.44", "sigma_log10_DS": "0.19",
+            "mu_log10_ASD": "1.57", "sigma_log10_ASD": "0.2",
+            "mu_log10_ASA": "1.72", "sigma_log10_ASA": "0.3",
+            "mu_log10_ZSA": "-0.13 * log10(1 + fc_ghz) + 1.45", "sigma_log10_ZSA": "0.45",
+            "mu_log10_SF": "0", "sigma_log10_SF": "5.7",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {}
+        },
+        "num_clusters_los": 25,
+        "num_clusters_nlos": 25,
+        "delay_scaling_factor": 2.7,
+        "xpr_mu_los": 12, "xpr_sigma_los": 6,
+        "xpr_mu_nlos": 11, "xpr_sigma_nlos": 6,
+        "V": 10000, "S": 1000,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    }
+  }
+}
