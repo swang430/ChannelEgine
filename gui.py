@@ -7,7 +7,7 @@ import queue
 
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.channel_generator import ChannelGenerator
-from channel_model_38901.common.data_models import AntennaArray
+from channel_model_38901.common.data_models import AntennaArray, EngineCluster # Import EngineCluster
 from channel_model_38901.common.geometry import get_antenna_positions
 
 import matplotlib.pyplot as plt
@@ -255,7 +255,7 @@ class ChannelModelApp(tk.Tk):
             simulator.config.ue_velocities = ue_vel_vector
             simulator.config.antenna_config = ant_config
             simulator.generator = ChannelGenerator(simulator.config, simulator.params)
-            results = simulator.run(force_condition=force_los_condition, time_s=time_s)
+            results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
             self.simulation_queue.put(("results", results))
 
         except Exception as e:
@@ -290,7 +290,7 @@ class ChannelModelApp(tk.Tk):
     def _update_results_display(self, clusters):
         self.clear_results()
         if not clusters: self.log("No clusters generated, cannot plot."); return
-        delays = [c['delay'] for c in clusters]; powers_linear = np.array([c['power'] for c in clusters])
+        delays = [c.delay for c in clusters]; powers_linear = np.array([c.power for c in clusters])
         if not np.any(powers_linear): self.log("All cluster powers are zero, cannot plot relative power."); return
 
         max_power = np.max(powers_linear)
@@ -303,18 +303,18 @@ class ChannelModelApp(tk.Tk):
 
         # Update Plots
         self.ax_pdp.stem(delays, powers_db_relative, bottom=y_min); self.ax_pdp.set_ylim(bottom=y_min, top=y_max)
-        self.ax_aoa.stem([c['aoa_phi'] for c in clusters], powers_db_relative, bottom=y_min); self.ax_aoa.set_ylim(bottom=y_min, top=y_max)
-        self.ax_zoa.stem([c['zoa_theta'] for c in clusters], powers_db_relative, bottom=y_min); self.ax_zoa.set_ylim(bottom=y_min, top=y_max)
+        self.ax_aoa.stem([c.aoa_phi for c in clusters], powers_db_relative, bottom=y_min); self.ax_aoa.set_ylim(bottom=y_min, top=y_max)
+        self.ax_zoa.stem([c.zoa_theta for c in clusters], powers_db_relative, bottom=y_min); self.ax_zoa.set_ylim(bottom=y_min, top=y_max)
         for fig in [self.fig_pdp, self.fig_aoa, self.fig_zoa]: fig.tight_layout()
         for canvas in [self.canvas_pdp, self.canvas_aoa, self.canvas_zoa]: canvas.draw()
 
         # Update Tables
         for i, cluster in enumerate(clusters):
-            self.pdp_tree.insert("", "end", values=(i+1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}"))
-            self.aoa_tree.insert("", "end", values=(i+1, f"{cluster['aoa_phi']:.2f}", f"{powers_db_relative[i]:.2f}"))
-            self.zoa_tree.insert("", "end", values=(i+1, f"{cluster['zoa_theta']:.2f}", f"{powers_db_relative[i]:.2f}"))
-            self.tdl_tree.insert("", "end", values=(i+1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}"))
-            self.cdl_tree.insert("", "end", values=(i+1, f"{cluster['delay']:.3e}", f"{powers_db_relative[i]:.2f}", f"{cluster['aoa_phi']:.2f}", f"{cluster['zoa_theta']:.2f}", f"{cluster['aod_phi']:.2f}", f"{cluster['zod_theta']:.2f}", f"{10*np.log10(cluster['k_n']):.2f}"))
+            self.pdp_tree.insert("", "end", values=(i+1, f"{cluster.delay:.3e}", f"{powers_db_relative[i]:.2f}"))
+            self.aoa_tree.insert("", "end", values=(i+1, f"{cluster.aoa_phi:.2f}", f"{powers_db_relative[i]:.2f}"))
+            self.zoa_tree.insert("", "end", values=(i+1, f"{cluster.zoa_theta:.2f}", f"{powers_db_relative[i]:.2f}"))
+            self.tdl_tree.insert("", "end", values=(i+1, f"{cluster.delay:.3e}", f"{powers_db_relative[i]:.2f}"))
+            self.cdl_tree.insert("", "end", values=(i+1, f"{cluster.delay:.3e}", f"{powers_db_relative[i]:.2f}", f"{cluster.aoa_phi:.2f}", f"{cluster.zoa_theta:.2f}", f"{cluster.aod_phi:.2f}", f"{cluster.zod_theta:.2f}", f"{10*np.log10(cluster.k_n):.2f}"))
 
     def copy_tree_data(self, tree):
         headings = tree["columns"]

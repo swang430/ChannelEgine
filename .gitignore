@@ -70,4 +70,7 @@ venv.bak/
 .vscode/
 
 # macOS
-.DS_Store.DS_Store
+.DS_Store
+
+# Specific to this project
+mimo_ota_simulator/channel_model_38901/
