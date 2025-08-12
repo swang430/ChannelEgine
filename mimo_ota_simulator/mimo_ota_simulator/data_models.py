@@ -40,10 +40,11 @@ class ChamberConfig(BaseModel):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    num_probes: int = Field(..., description="Number of probes in the chamber.")
+    num_probes: int = Field(..., description="Number of physical probes in the chamber.")
+    dual_polarized: bool = Field(False, description="Whether each probe is dual-polarized.")
     distribution: Literal['ring', 'multi-ring'] = Field(..., description="Arrangement of the probes.")
     radius_m: float = Field(..., description="The radius of the probe ring in meters.")
-    calibration_matrix_B: np.ndarray = Field(..., description="The chamber's calibration matrix B (Nr x Np).")
+    calibration_matrix_B: np.ndarray = Field(..., description="The chamber's calibration matrix B (Nr x Np_eff).")
 
 class Cluster(BaseModel):
     """

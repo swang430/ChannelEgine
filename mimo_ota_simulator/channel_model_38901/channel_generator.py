@@ -1,6 +1,6 @@
 import numpy as np
-from typing import Optional, Callable
-from .common.data_models import ScenarioConfig, LargeScaleParameters
+from typing import Optional, Callable, List
+from .common.data_models import ScenarioConfig, LargeScaleParameters, EngineCluster
 from .parameters.parameter_loader import ParameterTables
 from .models.abc_models import ABC_ChannelConditionModel, ABC_PathlossModel, ABC_FadingModel
 from .models.uma_models import UMa_ChannelCondition, UMa_Pathloss, UMa_Fading
@@ -51,7 +51,7 @@ class ChannelGenerator:
         else:
             raise NotImplementedError(f"Scenario '{scenario}' is not yet supported.")
 
-    def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print):
+    def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> tuple:
         if logger: logger("Executing 12-step channel generation...")
         h_ut = self.config.ue_positions[0, 2]
         d_2d = np.linalg.norm(self.config.bs_positions[0, :2] - self.config.ue_positions[0, :2])
@@ -64,19 +64,17 @@ class ChannelGenerator:
         lsps = self.fading_model.generate_lsps(is_los, fc_ghz)
         clusters = self._generate_clusters(lsps, is_los, logger)
         H_normalized = self._synthesize_channel(clusters, lsps, time_s, logger)
-        
         total_loss_db = pathloss_db + lsps.shadow_fade_db
         H_final = H_normalized * 10**(-total_loss_db / 20)
 
         if logger:
             logger(f"  - Condition: {'LOS' if is_los else 'NLOS'}")
             logger(f"  - Pathloss: {pathloss_db:.2f} dB")
-            logger(f"  - LSPs: {lsps}")
             logger("Channel generation complete.")
 
         return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
 
-    def _generate_clusters(self, lsps: LargeScaleParameters, is_los: bool, logger: Optional[Callable[[str], None]]):
+    def _generate_clusters(self, lsps: LargeScaleParameters, is_los: bool, logger: Optional[Callable[[str], None]]) -> List[EngineCluster]:
         if logger: logger("  - Generating small-scale parameters (clusters)...")
         scenario_params = self.params.get_scenario_params(self.config.scenario_name)
         num_clusters = scenario_params['num_clusters_los'] if is_los else scenario_params['num_clusters_nlos']
@@ -85,14 +83,15 @@ class ChannelGenerator:
         angles = self._generate_angles(P_n, lsps, num_clusters)
         k_n = self._generate_xpr(scenario_params, is_los, num_clusters)
         initial_phases = self._generate_initial_phases(num_clusters)
+        
         clusters = []
         for i in range(num_clusters):
-            clusters.append({
-                'delay': tau_n[i], 'power': P_n[i],
-                'aod_phi': angles['aod_phi'][i], 'aoa_phi': angles['aoa_phi'][i],
-                'zod_theta': angles['zod_theta'][i], 'zoa_theta': angles['zoa_theta'][i],
-                'k_n': k_n[i], 'initial_phases': initial_phases[i]
-            })
+            clusters.append(EngineCluster(
+                delay=tau_n[i], power=P_n[i],
+                aod_phi=angles['aod_phi'][i], aoa_phi=angles['aoa_phi'][i],
+                zod_theta=angles['zod_theta'][i], zoa_theta=angles['zoa_theta'][i],
+                k_n=k_n[i], initial_phases=initial_phases[i]
+            ))
         return clusters
 
     def _generate_cluster_delays(self, lsps, num_clusters, is_los, scenario_params):
@@ -128,38 +127,38 @@ class ChannelGenerator:
     def _generate_initial_phases(self, num_clusters):
         return np.random.uniform(-np.pi, np.pi, size=(num_clusters, 4))
 
-    def _synthesize_channel(self, clusters, lsps, time_s: float, logger: Optional[Callable[[str], None]]):
+    def _synthesize_channel(self, clusters: List[EngineCluster], lsps: LargeScaleParameters, time_s: float, logger: Optional[Callable[[str], None]]) -> np.ndarray:
         if logger: logger("  - Synthesizing channel coefficients...")
         ant_config = self.config.antenna_config
         num_rx = ant_config.num_rx_rows * ant_config.num_rx_cols
         num_tx = ant_config.num_tx_rows * ant_config.num_tx_cols
         
-        mean_aoa = clusters[0]['aoa_phi']; mean_zoa = clusters[0]['zoa_theta']
-        mean_aod = clusters[0]['aod_phi']; mean_zod = clusters[0]['zod_theta']
-        R_rx = get_spatial_correlation_matrix(ant_config.rx_array_type, ant_config.num_rx_rows, ant_config.num_rx_cols, ant_config.rx_spacing_v, ant_config.rx_spacing_h, mean_zoa, mean_aoa, lsps.arrival_zenith_spread_deg, lsps.arrival_azimuth_spread_deg)
+        mean_aoa = clusters[0].aoa_phi; mean_zoa = clusters[0].zoa_theta
+        mean_aod = clusters[0].aod_phi; mean_zod = clusters[0].zod_theta
+        R_rx = get_spatial_correlation_matrix(ant_config.rx_array_type, ant_config.num_rx_rows, ant_config.num_rx_cols, ant_config.rx_spacing_v, ant_config.rx_spacing_h, mean_zoa, mean_aoa, lsps.arrival_azimuth_spread_deg, lsps.arrival_azimuth_spread_deg)
         R_tx = get_spatial_correlation_matrix(ant_config.tx_array_type, ant_config.num_tx_rows, ant_config.num_tx_cols, ant_config.tx_spacing_v, ant_config.tx_spacing_h, mean_zod, mean_aod, lsps.departure_zenith_spread_deg, lsps.departure_azimuth_spread_deg)
         
         try:
             L_rx = np.linalg.cholesky(R_rx)
             L_tx = np.linalg.cholesky(R_tx)
-        except np.linalg.LinAlgError as e:
-            if logger: logger(f"Warning: Cholesky decomposition failed ({e}). Using uncorrelated antennas.")
+        except np.linalg.LinAlgError:
             L_rx = np.eye(num_rx)
             L_tx = np.eye(num_tx)
 
-        H_normalized = np.zeros((num_rx, num_tx), dtype=np.complex128)
+        H_total_normalized = np.zeros((num_rx, num_tx), dtype=np.complex128)
         c = 3e8
         lambda_0 = c / self.config.center_frequency_hz
 
-        for n, cluster in enumerate(clusters):
+        for cluster in clusters:
             H_iid = (np.random.randn(num_rx, num_tx) + 1j * np.random.randn(num_rx, num_tx)) / np.sqrt(2)
             H_corr = L_rx @ H_iid @ L_tx.conj().T
+            cluster.h_matrix = H_corr
             v = self.config.ue_velocities[0]
-            r_rx_mean = np.array([np.cos(np.deg2rad(cluster['zoa_theta'])) * np.cos(np.deg2rad(cluster['aoa_phi'])),
-                                  np.cos(np.deg2rad(cluster['zoa_theta'])) * np.sin(np.deg2rad(cluster['aoa_phi'])),
-                                  np.sin(np.deg2rad(cluster['zoa_theta']))])
+            r_rx_mean = np.array([np.cos(np.deg2rad(cluster.zoa_theta)) * np.cos(np.deg2rad(cluster.aoa_phi)),
+                                  np.cos(np.deg2rad(cluster.zoa_theta)) * np.sin(np.deg2rad(cluster.aoa_phi)),
+                                  np.sin(np.deg2rad(cluster.zoa_theta))])
             doppler_shift_hz = np.dot(r_rx_mean, v) / lambda_0
             doppler_term = np.exp(1j * 2 * np.pi * doppler_shift_hz * time_s)
-            H_normalized += np.sqrt(cluster['power']) * H_corr * doppler_term
+            H_total_normalized += np.sqrt(cluster.power) * H_corr * doppler_term
 
-        return H_normalized
+        return H_total_normalized

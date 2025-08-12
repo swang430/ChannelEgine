@@ -13,21 +13,25 @@ st.set_page_config(
 )
 
 # --- Backend Functions ---
-def run_simulation(target_config_dict, num_probes, radius_m):
+def run_simulation(target_config_dict, num_probes, radius_m, dual_polarized, synthesis_method):
     target_config = TargetChannelConfig.parse_obj(target_config_dict)
     simulator = MIMO_OTA_Simulator()
     num_rx_antennas = target_config.rx_antenna.num_rows * target_config.rx_antenna.num_cols
-    B = np.zeros((num_rx_antennas, num_probes))
-    for i in range(min(num_rx_antennas, num_probes)):
+    num_effective_probes = num_probes * 2 if dual_polarized else num_probes
+    
+    B = np.zeros((num_rx_antennas, num_effective_probes))
+    for i in range(min(num_rx_antennas, num_effective_probes)):
         B[i, i] = 1
+        
     chamber_config = ChamberConfig(
         num_probes=num_probes,
+        dual_polarized=dual_polarized,
         distribution='ring',
         radius_m=radius_m,
         calibration_matrix_B=B
     )
     try:
-        return simulator.run(chamber_config=chamber_config, channel_config=target_config)
+        return simulator.run(chamber_config=chamber_config, channel_config=target_config, synthesis_method=synthesis_method)
     except Exception as e:
         st.error(f"Simulation Failed: {e}")
         return None
@@ -50,7 +54,7 @@ def antenna_panel(antenna_type: str):
         return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v)
 
 # --- UI Layout ---
-st.title("MIMO OTA Simulator V4.0 - Final")
+st.title("MIMO OTA Simulator V4.1")
 
 with st.sidebar:
     st.header("Simulation Control")
@@ -62,6 +66,7 @@ with st.sidebar:
     with st.expander("2. Chamber Configuration", expanded=True):
         num_probes = st.slider('Number of Probes', 1, 64, 16, 1, key="num_probes")
         radius_m = st.number_input('Probe Ring Radius (m)', 0.5, 5.0, 1.5, 0.1, key='radius')
+        dual_polarized = st.checkbox('Dual Polarized Probes', value=True)
 
     with st.expander("3. Antenna Configuration", expanded=True):
         tx_antenna_config = antenna_panel("Tx")
@@ -69,6 +74,8 @@ with st.sidebar:
         rx_antenna_config = antenna_panel("Rx")
 
     with st.expander("4. Channel & Run Control", expanded=True):
+        synthesis_method = st.selectbox('Synthesis Method', ('pinv', 'cluster'), key='synthesis')
+        max_hw_clusters = st.slider('Max Hardware Clusters', 1, 24, 24, 1, key='max_hw_clusters')
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
         random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
 
@@ -86,7 +93,7 @@ if run_button:
     )
 
     with st.spinner('Running simulation...'):
-        results = run_simulation(target_config.dict(), num_probes, radius_m)
+        results = run_simulation(target_config.model_dump(), num_probes, radius_m, dual_polarized, synthesis_method)
     
     if results:
         st.success('Simulation finished successfully!')
@@ -94,8 +101,7 @@ if run_button:
         H_target = results['target_H_matrix']
         clusters = results['clusters']
         
-        # CORRECT WAY to get the number of probes for plotting
-        num_probes_actual = A_matrix.shape[0]
+        num_effective_probes = A_matrix.shape[0]
 
         st.header("Simulation Results")
         st.metric("H_target Shape", f"{H_target.shape[0]} x {H_target.shape[1]} (Rx, Tx)")
@@ -107,20 +113,21 @@ if run_button:
             im = ax.imshow(np.abs(A_matrix), cmap='viridis', aspect='auto')
             ax.set_title("Transmit Mapping Matrix A (Magnitude)")
             ax.set_xlabel("Transmit Antenna Index (Nt)")
-            ax.set_ylabel("Probe Index (Np)")
+            ax.set_ylabel("Effective Probe Index (Np_eff)")
             fig.colorbar(im, ax=ax, label="Weight")
             st.pyplot(fig)
 
         with col2:
             st.subheader("Angular Distribution")
-            probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes_actual, endpoint=False)
-            cluster_aods_rad = np.deg2rad([c['aod_phi'] for c in clusters])
-            cluster_powers_lin = [c['power'] for c in clusters]
+            # Always use the physical number of probes for plotting positions
+            probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
+            cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters])
+            cluster_powers_lin = [10**(c.power / 10.0) for c in clusters]
             norm_powers = np.array(cluster_powers_lin) / np.max(cluster_powers_lin)
 
             fig_polar = plt.figure()
             ax_polar = fig_polar.add_subplot(111, polar=True)
-            ax_polar.scatter(probe_angles_rad, np.ones(num_probes_actual) * 1.1, s=100, c='blue', marker='X', label='Probes')
+            ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
             for i, (angle, power) in enumerate(zip(cluster_aods_rad, norm_powers)):
                 ax_polar.plot([angle, angle], [0, 1], color=plt.cm.autumn(power), linewidth=2, label=f'Cluster {i+1}' if i < 5 else "")
             ax_polar.set_title("Probe and Cluster Angles")
@@ -130,8 +137,10 @@ if run_button:
             st.pyplot(fig_polar)
 
         with st.expander("Show Raw Matrix Data"):
-            st.write("A-Matrix")
-            st.dataframe(A_matrix)
+            st.write("A-Matrix (Magnitude)")
+            st.dataframe(np.abs(A_matrix))
+            st.write("A-Matrix (Phase)")
+            st.dataframe(np.angle(A_matrix))
             st.write("H_target Matrix")
             st.dataframe(H_target)
 else:

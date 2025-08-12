@@ -1,5 +1,5 @@
-from typing import Optional, Callable
-from .common.data_models import ScenarioConfig
+from typing import Optional, Callable, Dict
+from .common.data_models import ScenarioConfig, EngineCluster, LargeScaleParameters
 from .parameters.parameter_loader import ParameterLoader
 from .channel_generator import ChannelGenerator
 import numpy as np
@@ -22,13 +22,15 @@ class ChannelSimulator:
         
         self.generator = ChannelGenerator(self.config, self.params)
 
-    def run(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print):
+    def run(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> Dict:
         """
         Runs a single channel realization and returns a dictionary of results.
+        The 'clusters' entry in the dictionary is now a list of EngineCluster objects.
         """
         if logger:
             logger(f"Running simulation for scenario: {self.config.scenario_name} at time t={time_s}s")
         
+        # The generator now returns a list of rich EngineCluster objects
         H_final, H_normalized, clusters, lsps, pathloss_db, is_los = self.generator.generate_channel_realization(
             force_condition=force_condition, time_s=time_s, logger=logger
         )
@@ -36,7 +38,7 @@ class ChannelSimulator:
         return {
             'channel_matrix': H_final,
             'channel_matrix_normalized': H_normalized,
-            'clusters': clusters,
+            'clusters': clusters, # This is now a List[EngineCluster]
             'lsps': lsps,
             'pathloss_db': pathloss_db,
             'is_los': is_los
@@ -46,4 +48,6 @@ class ChannelSimulator:
         """Allows user to update BS and UE positions."""
         self.config.bs_positions = bs_positions
         self.config.ue_positions = ue_positions
+        # Re-initialization of the generator is implicitly handled by config changes if needed
+        # For simplicity, we can assume the generator is re-initialized before the next run if config changes.
         self.generator = ChannelGenerator(self.config, self.params)

@@ -47,37 +47,50 @@
     *   **必须输出：等效H矩阵 (`H_effective`)**。
     *   **不予实现：反推物理参数**。
 
-## 4. API与数据流定义 (V1.2)
+## 4. V4.1: 最终系统设计与GUI
 
-*   **输入对象**:
-    *   `ChamberConfig(num_probes: int, distribution: Literal['ring', 'multi-ring'], radius_m: float, calibration_matrix_B: np.ndarray)`
-    *   `TargetChannelConfig(model_name: str, mimo_config: str, ue_speed_kph: float)`
+### 4.1 核心架构：分层式物理信道合成
 
-*   **核心类**: `class MIMO_OTA_Simulator`
+我们最终采用“分层式”的物理合成模型，以精确地模拟真实世界的物理过程。
 
-*   **核心方法**: `run(chamber_config: ChamberConfig, channel_config: TargetChannelConfig) -> Dict`
+**第一步: 目标物理信道定义**
+*   用户通过GUI定义一个高层级的“目标物理信道”（如3GPP UMa），信道引擎 (`ChannelEngine`) 负责生成一组带有角度扩展（AS）的**物理簇**。
 
-*   **输出字典**: 
-    *   `target_H_matrix: np.ndarray`
-    *   `transmit_mapping_matrix: np.ndarray` (即`A`矩阵)
-    *   `effective_H_matrix: np.ndarray` (即`B @ A`的结果)
-    *   `probe_signals: Dict[int, np.ndarray]`
+**第二步: 物理到硬件的映射**
+*   `MIMO_OTA_Simulator` 将物理簇映射为一组（最多24个）没有AS的**硬件簇**。此过程将模拟AS，并管理信道仿真器的硬件资源。
 
-## 5. 分阶段测试计划 (新增)
+**第三步: 硬件到探头的映射**
+*   `MIMO_OTA_Simulator` 将硬件簇的精确AOA，映射为一组探头权重，通过多个物理探头的加权激励，在空间中“虚拟”出该AOA。
 
-我们将遵循测试驱动开发（TDD）的模式，创建一个新的测试文件 `tests/test_mimo_ota_simulator.py`，并按以下阶段进行开发与测试：
+### 4.2 最终数据模型
 
-### 阶段一：数据模型与配置解析测试
-*   **目标**: 确保所有输入（暗室配置、目标信道）和中间数据（信道剖面）都能被正确地创建和解析。
-*   **测试用例 1.1 (暗室配置)**: 创建一个`ChamberConfig`对象，并验证其所有属性都被正确设置。
-*   **测试用例 1.2 (CDL解析器)**: 创建一个简单的CDL-A模型定义文件作为测试资产。验证`CDL_Parser`能否正确读取该文件，并生成一个包含正确簇数量和参数的`ChannelProfile`对象。
+*   **`ChamberConfig`**:
+    *   `num_probes: int`: 物理探头的数量。
+    *   `dual_polarized: bool`: 探头是否为双极化。
+    *   `distribution: Literal['ring']`: 探头分布。
+    *   `radius_m: float`: 探头环的半径。
+    *   `calibration_matrix_B: np.ndarray`: 暗室校准矩阵，形状为 `(Nr, Np_eff)`。
 
-### 阶段二：核心算法单元测试 (簇到探头的映射)
-*   **目标**: 在隔离的环境下，对最核心的`A`矩阵（发射端映射矩阵）生成算法进行测试。
-*   **测试用例 2.1 (最邻近匹配)**: 在一个简化的4探头暗室中，输入一个来自88度的单簇。断言算法生成的`A`矩阵，应将此簇的能量100%分配给位于90度的那个探头。
-*   **测试用例 2.2 (插值合成)**: 在同一个4探头暗室中，输入一个来自45度的单簇。断言`A`矩阵应根据我们设定的插值逻辑，将能量大致平均地分配给0度和90度的两个探头。
+*   **`TargetChannelConfig`**:
+    *   包含所有V2.0版本的详细配置，如场景、几何、天线阵列、信道状态等。
 
-### 阶段三：端到端集成与验证测试
-*   **目标**: 对完整的`run()`方法和最终的`H_effective`计算进行测试。
-*   **测试用例 3.1 (理想暗室验证)**: 在一个理想暗室中（校准矩阵`B`为单位阵），最终的`H_effective`应该等于我们计算出的`A`矩阵（在维度匹配时）。本测试将验证 `H_effective = I @ A`。
-*   **测试用例 3.2 (与目标信道对比)**: 在理想暗室中，最终合成的`H_effective`应该非常接近引擎生成的`H_target`。本测试将断言 `H_effective` 和 `H_target` 之间的误差低于某个设定的阈值。
+### 4.3 核心算法
+
+*   **`_calculate_probe_weights_for_aoa`**: 根据AOA，使用环形空间中的线性插值算法，计算探头权重。
+*   **`_get_g_tx_from_h_matrix`**: 从每个簇的 `h_matrix` 中，提取出发射端的信道分量。
+*   **`_map_physical_to_hardware_clusters`**: 将物理簇映射为硬件簇，并根据功率进行排序和筛选。
+
+### 4.4 GUI 功能
+
+最终的GUI (`app.py`) 提供了对所有关键参数的完全控制：
+*   **场景与几何**: 模型、频率、速度等。
+*   **暗室配置**: 物理探头数、半径、双极化开关。
+*   **天线配置**: Tx和Rx的独立配置。
+*   **运行控制**:
+    *   **合成方法**: 可在 `pinv` 和 `cluster` 之间选择。
+    *   **最大硬件簇**: 控制用于合成的硬件簇数量。
+    *   LOS/NLOS强制、随机种子等。
+*   **可视化**:
+    *   A矩阵的热力图。
+    *   探头与簇的极坐标图。
+    *   原始矩阵数据（幅度和相位）。
