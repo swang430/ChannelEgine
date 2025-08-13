@@ -1,5 +1,7 @@
 import numpy as np
 from typing import Dict, Literal, List
+import os
+import channel_model_38901
 
 from .data_models import ChamberConfig, TargetChannelConfig
 from channel_model_38901.common.data_models import ScenarioConfig as EngineScenarioConfig, EngineCluster, AntennaArray as EngineAntennaArray
@@ -89,13 +91,18 @@ class MIMO_OTA_Simulator:
         )
         engine_scenario_config = EngineScenarioConfig(
             scenario_name=channel_config.model_name,
+            cluster_model_name=channel_config.cluster_model_name,
             center_frequency_hz=channel_config.center_frequency_hz,
             bs_positions=np.array([channel_config.bs_position]),
             ue_positions=np.array([channel_config.ue_position]),
             ue_velocities=np.array([channel_config.ue_velocity]),
             antenna_config=engine_antenna_config
         )
-        param_file = 'channel_model_38901/parameters/parameters_tr38901_v19.0.0.json'
+        
+        # Dynamically find the parameter file path
+        lib_path = os.path.dirname(channel_model_38901.__file__)
+        param_file = os.path.join(lib_path, 'parameters', 'parameters_tr38901_v19.0.0.json')
+        
         params = ParameterLoader.load_parameters(param_file)
         generator = ChannelGenerator(engine_scenario_config, params)
         target_H_matrix, _, physical_clusters, _, _, _ = generator.generate_channel_realization(
