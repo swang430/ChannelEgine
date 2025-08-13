@@ -7,7 +7,7 @@ import queue
 
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.channel_generator import ChannelGenerator
-from channel_model_38901.common.data_models import AntennaArray, EngineCluster # Import EngineCluster
+from channel_model_38901.common.data_models import AntennaArray, EngineCluster
 from channel_model_38901.common.geometry import get_antenna_positions
 
 import matplotlib.pyplot as plt
@@ -16,7 +16,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 class ChannelModelApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("3GPP TR 38.901 Channel Simulator")
+        self.title("3GPP TR 38.901 Hybrid Channel Simulator")
         self.geometry("1200x900")
 
         self.simulation_queue = queue.Queue()
@@ -60,13 +60,16 @@ class ChannelModelApp(tk.Tk):
         self.update_antenna_ui('rx')
 
     def _create_parameter_widgets(self, general_frame, tx_frame, rx_frame):
-        all_scenarios = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME-UMa']
+        environments = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF']
+        cluster_models = ['Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME']
+        
         general_params = {
-            "scenario_name": ("Scenario:", "UMa", all_scenarios),
-            "center_frequency_ghz": ("Center Freq (GHz):", "3.5", None),
-            "los_condition": ("LOS Condition:", "Automatic", ["Automatic", "LOS", "NLOS"]),
-            "random_seed": ("Random Seed:", "", None),
-            "simulation_time_s": ("Simulation Time (s):", "0.0", None)
+            "scenario_name": ("大尺度环境:", "UMa", environments),
+            "cluster_model_name": ("小尺度簇模型:", "Stochastic", cluster_models),
+            "center_frequency_ghz": ("中心频率 (GHz):", "3.5", None),
+            "los_condition": ("LOS 条件:", "Automatic", ["Automatic", "LOS", "NLOS"]),
+            "random_seed": ("随机种子:", "", None),
+            "simulation_time_s": ("仿真时间 (s):", "0.0", None)
         }
         for i, (key, (text, default, values)) in enumerate(general_params.items()):
             self._create_entry(general_frame, key, text, default, values, i)
@@ -130,37 +133,26 @@ class ChannelModelApp(tk.Tk):
         self.notebook.add(log_frame, text='Log')
 
     def _create_results_tabs(self):
-        # PDP Tab
         pdp_frame = ttk.Frame(self.notebook); self.notebook.add(pdp_frame, text='PDP')
         self.fig_pdp, self.ax_pdp, self.pdp_tree = self._create_plot_and_table(pdp_frame, ["Cluster #", "Delay (s)", "Power (dB)"])
         self.canvas_pdp = FigureCanvasTkAgg(self.fig_pdp, master=pdp_frame)
         self.canvas_pdp.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        # AoA Tab
         aoa_frame = ttk.Frame(self.notebook); self.notebook.add(aoa_frame, text='AoA')
         self.fig_aoa, self.ax_aoa, self.aoa_tree = self._create_plot_and_table(aoa_frame, ["Cluster #", "AoA (deg)", "Power (dB)"])
         self.canvas_aoa = FigureCanvasTkAgg(self.fig_aoa, master=aoa_frame)
         self.canvas_aoa.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        # ZoA Tab
         zoa_frame = ttk.Frame(self.notebook); self.notebook.add(zoa_frame, text='ZoA')
         self.fig_zoa, self.ax_zoa, self.zoa_tree = self._create_plot_and_table(zoa_frame, ["Cluster #", "ZoA (deg)", "Power (dB)"])
         self.canvas_zoa = FigureCanvasTkAgg(self.fig_zoa, master=zoa_frame)
         self.canvas_zoa.get_tk_widget().grid(row=0, column=0, sticky="nsew")
         
-        # CDL Tab
-        cdl_frame = ttk.Frame(self.notebook); self.notebook.add(cdl_frame, text='CDL')
+        cdl_frame = ttk.Frame(self.notebook); self.notebook.add(cdl_frame, text='CDL/SCME')
         cdl_cols = ["#", "Delay(s)", "Pwr(dB)", "AoA(d)", "ZoA(d)", "AoD(d)", "ZoD(d)", "XPR(dB)"]
         self.cdl_tree, cdl_copy_btn = self._create_table_with_copy(cdl_frame, cdl_cols, height=15)
         self.cdl_tree.grid(row=0, column=0, sticky="nsew"); cdl_copy_btn.grid(row=1, column=0, sticky="e", pady=5, padx=5)
         cdl_frame.grid_rowconfigure(0, weight=1); cdl_frame.grid_columnconfigure(0, weight=1)
-
-        # TDL Tab
-        tdl_frame = ttk.Frame(self.notebook); self.notebook.add(tdl_frame, text='TDL')
-        tdl_cols = ["Tap #", "Delay (s)", "Power (dB)"]
-        self.tdl_tree, tdl_copy_btn = self._create_table_with_copy(tdl_frame, tdl_cols, height=15)
-        self.tdl_tree.grid(row=0, column=0, sticky="nsew"); tdl_copy_btn.grid(row=1, column=0, sticky="e", pady=5, padx=5)
-        tdl_frame.grid_rowconfigure(0, weight=1); tdl_frame.grid_columnconfigure(0, weight=1)
 
         self.clear_results()
 
@@ -189,7 +181,7 @@ class ChannelModelApp(tk.Tk):
         for fig in [self.fig_pdp, self.fig_aoa, self.fig_zoa]: fig.tight_layout()
         for canvas in [self.canvas_pdp, self.canvas_aoa, self.canvas_zoa]: canvas.draw()
         
-        for tree in [self.pdp_tree, self.aoa_tree, self.zoa_tree, self.cdl_tree, self.tdl_tree]:
+        for tree in [self.pdp_tree, self.aoa_tree, self.zoa_tree, self.cdl_tree]:
             for item in tree.get_children(): tree.delete(item)
 
     def log(self, message):
@@ -210,6 +202,9 @@ class ChannelModelApp(tk.Tk):
         try:
             params = {key: control['var'].get() for key, control in self.controls.items()}
             scenario_name = params["scenario_name"]
+            cluster_model_name = params["cluster_model_name"]
+            if cluster_model_name == 'Stochastic': cluster_model_name = None
+
             center_frequency_hz = float(params["center_frequency_ghz"]) * 1e9
             bs_pos = np.array([[float(p) for p in params["tx_position"].split(',')]])
             ue_pos = np.array([[float(p) for p in params["rx_position"].split(',')]])
@@ -226,35 +221,32 @@ class ChannelModelApp(tk.Tk):
             lambda_meters = c / center_frequency_hz
             
             tx_positions = get_antenna_positions(
-                array_type=params['tx_array_type'],
-                num_rows=int(params['tx_num_rows']),
-                num_cols=int(params['tx_num_cols']),
-                spacing_h_m=float(params['tx_spacing_h']) * lambda_meters,
+                array_type=params['tx_array_type'], num_rows=int(params['tx_num_rows']),
+                num_cols=int(params['tx_num_cols']), spacing_h_m=float(params['tx_spacing_h']) * lambda_meters,
                 spacing_v_m=float(params['tx_spacing_v']) * lambda_meters
             )
             rx_positions = get_antenna_positions(
-                array_type=params['rx_array_type'],
-                num_rows=int(params['rx_num_rows']),
-                num_cols=int(params['rx_num_cols']),
-                spacing_h_m=float(params['rx_spacing_h']) * lambda_meters,
+                array_type=params['rx_array_type'], num_rows=int(params['rx_num_rows']),
+                num_cols=int(params['rx_num_cols']), spacing_h_m=float(params['rx_spacing_h']) * lambda_meters,
                 spacing_v_m=float(params['rx_spacing_v']) * lambda_meters
             )
 
             ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
             
-            log_msg = f"Starting simulation for {scenario_name}..."
-            if force_los_condition: log_msg += f" (Condition Forced to: {force_los_condition})"
-            elif seed is not None: log_msg += f" (Condition Determined by Seed: {seed})"
-            else: log_msg += f" (Condition is Probabilistic)"
+            log_msg = f"Starting simulation for Environment: {scenario_name}, Cluster Model: {cluster_model_name if cluster_model_name else 'Stochastic'}"
             self.simulation_queue.put(("log", log_msg))
 
             np.random.seed(seed)
-            simulator = ChannelSimulator(scenario_name, center_frequency_hz)
+            simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name)
             simulator.config.bs_positions = bs_pos
             simulator.config.ue_positions = ue_pos
             simulator.config.ue_velocities = ue_vel_vector
             simulator.config.antenna_config = ant_config
-            simulator.generator = ChannelGenerator(simulator.config, simulator.params)
+            
+            # The generator is now created inside the simulator, so we don't create it here.
+            # We need to re-initialize it if config changes, which is handled in the simulator.
+            simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name)
+
             results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
             self.simulation_queue.put(("results", results))
 
@@ -301,19 +293,16 @@ class ChannelModelApp(tk.Tk):
         if min_finite_power.size > 0: y_min = max(-80.0, np.floor(np.min(min_finite_power) / 10) * 10 - 10)
         y_max = 5.0
 
-        # Update Plots
         self.ax_pdp.stem(delays, powers_db_relative, bottom=y_min); self.ax_pdp.set_ylim(bottom=y_min, top=y_max)
         self.ax_aoa.stem([c.aoa_phi for c in clusters], powers_db_relative, bottom=y_min); self.ax_aoa.set_ylim(bottom=y_min, top=y_max)
         self.ax_zoa.stem([c.zoa_theta for c in clusters], powers_db_relative, bottom=y_min); self.ax_zoa.set_ylim(bottom=y_min, top=y_max)
         for fig in [self.fig_pdp, self.fig_aoa, self.fig_zoa]: fig.tight_layout()
         for canvas in [self.canvas_pdp, self.canvas_aoa, self.canvas_zoa]: canvas.draw()
 
-        # Update Tables
         for i, cluster in enumerate(clusters):
             self.pdp_tree.insert("", "end", values=(i+1, f"{cluster.delay:.3e}", f"{powers_db_relative[i]:.2f}"))
             self.aoa_tree.insert("", "end", values=(i+1, f"{cluster.aoa_phi:.2f}", f"{powers_db_relative[i]:.2f}"))
             self.zoa_tree.insert("", "end", values=(i+1, f"{cluster.zoa_theta:.2f}", f"{powers_db_relative[i]:.2f}"))
-            self.tdl_tree.insert("", "end", values=(i+1, f"{cluster.delay:.3e}", f"{powers_db_relative[i]:.2f}"))
             self.cdl_tree.insert("", "end", values=(i+1, f"{cluster.delay:.3e}", f"{powers_db_relative[i]:.2f}", f"{cluster.aoa_phi:.2f}", f"{cluster.zoa_theta:.2f}", f"{cluster.aod_phi:.2f}", f"{cluster.zod_theta:.2f}", f"{10*np.log10(cluster.k_n):.2f}"))
 
     def copy_tree_data(self, tree):

@@ -27,6 +27,7 @@ class ScenarioConfig(BaseModel):
     """Holds all user-defined simulation parameters."""
     scenario_name: str
     center_frequency_hz: float
+    cluster_model_name: Optional[str] = None
     bs_positions: np.ndarray
     ue_positions: np.ndarray
     ue_velocities: np.ndarray

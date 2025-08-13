@@ -439,8 +439,8 @@
     }
   },
   "scme_models": {
-    "SCME-UMa": {
-      "name": "SCME-UMa",
+    "SCME": {
+      "name": "SCME",
       "condition": "NLOS",
       "num_tx_antennas": 2,
       "num_rx_antennas": 2,

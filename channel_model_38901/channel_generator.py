@@ -13,103 +13,80 @@ from .models.inf_models import InF_ChannelCondition, InF_Pathloss, InF_Fading
 from .models.spatial_correlation import get_spatial_correlation_matrix
 
 class ChannelGenerator:
-    def __init__(self, config: ScenarioConfig, params: ParameterTables):
+    def __init__(self, config: ScenarioConfig, params: ParameterTables, cluster_model_name: Optional[str] = None):
         self.config = config
         self.params = params
-        self.is_cdl = False
-        self.is_scme = False
+        self.cluster_model_name = cluster_model_name if cluster_model_name else 'Stochastic'
         self._select_models()
 
     def _select_models(self):
         scenario = self.config.scenario_name
-        if scenario.startswith('CDL-'):
-            self.is_cdl = True
-            self.deterministic_model_name = scenario
-            self.condition_model, self.pathloss_model, self.fading_model = None, None, None
-            return
-        elif scenario.startswith('SCME-'):
-            self.is_scme = True
-            self.deterministic_model_name = scenario
-            self.condition_model, self.pathloss_model, self.fading_model = None, None, None
-            return
-
-        self.is_cdl = False
-        self.is_scme = False
-        if scenario == 'UMa':
-            self.condition_model = UMa_ChannelCondition()
-            self.pathloss_model = UMa_Pathloss(self.params)
-            self.fading_model = UMa_Fading(self.params)
-        elif scenario == 'UMi-StreetCanyon':
-            self.condition_model = UMi_ChannelCondition()
-            self.pathloss_model = UMi_Pathloss(self.params)
-            self.fading_model = UMi_Fading(self.params)
-        elif scenario == 'UMi-OpenArea':
-            self.condition_model = UMi_OpenArea_ChannelCondition()
-            self.pathloss_model = UMi_OpenArea_Pathloss(self.params)
-            self.fading_model = UMi_OpenArea_Fading(self.params)
-        elif scenario == 'RMa':
-            self.condition_model = RMa_ChannelCondition()
-            self.pathloss_model = RMa_Pathloss(self.params)
-            self.fading_model = RMa_Fading(self.params)
-        elif scenario == 'InH-Office':
-            self.condition_model = InH_ChannelCondition()
-            self.pathloss_model = InH_Pathloss(self.params)
-            self.fading_model = InH_Fading(self.params)
-        elif scenario == 'SMa':
-            self.condition_model = SMa_ChannelCondition()
-            self.pathloss_model = SMa_Pathloss(self.params)
-            self.fading_model = SMa_Fading(self.params)
-        elif scenario == 'InF':
-            self.condition_model = InF_ChannelCondition()
-            self.pathloss_model = InF_Pathloss(self.params)
-            self.fading_model = InF_Fading(self.params)
+        model_map = {
+            'UMa': (UMa_ChannelCondition, UMa_Pathloss, UMa_Fading),
+            'UMi-StreetCanyon': (UMi_ChannelCondition, UMi_Pathloss, UMi_Fading),
+            'UMi-OpenArea': (UMi_OpenArea_ChannelCondition, UMi_OpenArea_Pathloss, UMi_OpenArea_Fading),
+            'RMa': (RMa_ChannelCondition, RMa_Pathloss, RMa_Fading),
+            'InH-Office': (InH_ChannelCondition, InH_Pathloss, InH_Fading),
+            'SMa': (SMa_ChannelCondition, SMa_Pathloss, SMa_Fading),
+            'InF': (InF_ChannelCondition, InF_Pathloss, InF_Fading),
+        }
+        if scenario in model_map:
+            cond_model, pl_model, fade_model = model_map[scenario]
+            self.condition_model = cond_model()
+            self.pathloss_model = pl_model(self.params)
+            self.fading_model = fade_model(self.params)
         else:
-            raise NotImplementedError(f"Scenario '{scenario}' is not yet supported.")
+            raise NotImplementedError(f"Scenario '{scenario}' is not yet supported for LSP generation.")
 
     def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> tuple:
-        if self.is_cdl or self.is_scme:
-            if logger: logger(f"Generating deterministic channel: {self.deterministic_model_name}...")
-            clusters = self._load_deterministic_clusters()
-            lsps = LargeScaleParameters(delay_spread_s=0, departure_azimuth_spread_deg=0, arrival_azimuth_spread_deg=0, departure_zenith_spread_deg=0, arrival_zenith_spread_deg=0, k_factor_linear=0, shadow_fade_db=0)
-            pathloss_db = 0.0
-            model_params = self.params.get_cdl_model_params(self.deterministic_model_name) if self.is_cdl else self.params.get_scme_model_params(self.deterministic_model_name)
-            is_los = model_params.get('condition', 'NLOS') == 'LOS'
-            H_normalized = self._synthesize_channel(clusters, lsps, time_s, logger)
-            H_final = H_normalized
-            if logger: logger("Deterministic channel generation complete.")
-            return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
-        else:
-            if logger: logger("Executing 12-step stochastic channel generation...")
-            h_ut = self.config.ue_positions[0, 2]
-            d_2d = np.linalg.norm(self.config.bs_positions[0, :2] - self.config.ue_positions[0, :2])
-            is_los = self.condition_model.get_condition(d_2d, h_ut)
-            if force_condition == 'LOS': is_los = True
-            if force_condition == 'NLOS': is_los = False
-            pathloss_db = self.pathloss_model.calculate_pathloss(self.config, is_los)
-            fc_ghz = self.config.center_frequency_hz / 1e9
-            lsps = self.fading_model.generate_lsps(is_los, fc_ghz)
-            clusters = self._generate_clusters(lsps, is_los, logger)
-            H_normalized = self._synthesize_channel(clusters, lsps, time_s, logger)
-            total_loss_db = pathloss_db + lsps.shadow_fade_db
-            H_final = H_normalized * 10**(-total_loss_db / 20)
-            if logger:
-                logger(f"  - Condition: {'LOS' if is_los else 'NLOS'}")
-                logger(f"  - Pathloss: {pathloss_db:.2f} dB")
-                logger("Channel generation complete.")
-            return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
+        if logger: logger(f"Executing channel generation for environment '{self.config.scenario_name}'...")
+        
+        # Step 1: Always generate Large-Scale Parameters (LSPs) based on the environment
+        h_ut = self.config.ue_positions[0, 2]
+        d_2d = np.linalg.norm(self.config.bs_positions[0, :2] - self.config.ue_positions[0, :2])
+        is_los = self.condition_model.get_condition(d_2d, h_ut)
+        if force_condition == 'LOS': is_los = True
+        if force_condition == 'NLOS': is_los = False
+        pathloss_db = self.pathloss_model.calculate_pathloss(self.config, is_los)
+        fc_ghz = self.config.center_frequency_hz / 1e9
+        lsps = self.fading_model.generate_lsps(is_los, fc_ghz)
 
-    def _load_deterministic_clusters(self) -> List[EngineCluster]:
-        if self.is_cdl:
-            model_params = self.params.get_cdl_model_params(self.deterministic_model_name)
-        elif self.is_scme:
-            model_params = self.params.get_scme_model_params(self.deterministic_model_name)
+        if logger: 
+            logger(f"  - Large-Scale Environment: {self.config.scenario_name}")
+            logger(f"  - Cluster Model: {self.cluster_model_name}")
+            logger(f"  - Condition: {'LOS' if is_los else 'NLOS'}")
+            logger(f"  - Pathloss: {pathloss_db:.2f} dB")
+
+        # Step 2: Generate/Load clusters based on the selected cluster model
+        is_deterministic_clusters = self.cluster_model_name.startswith('CDL-') or self.cluster_model_name == 'SCME' or self.cluster_model_name.startswith('SCME-')
+        if is_deterministic_clusters:
+            if logger: logger(f"  - Loading deterministic clusters for {self.cluster_model_name}...")
+            clusters = self._load_deterministic_clusters(self.cluster_model_name)
+        else:
+            if logger: logger("  - Generating stochastic clusters...")
+            clusters = self._generate_stochastic_clusters(lsps, is_los, logger)
+
+        # Step 3: Synthesize the channel and apply large-scale effects
+        H_normalized = self._synthesize_channel(clusters, lsps, time_s, is_deterministic_clusters, logger)
+        total_loss_db = pathloss_db + lsps.shadow_fade_db
+        H_final = H_normalized * 10**(-total_loss_db / 20)
+
+        if logger: logger("Channel generation complete.")
+        return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
+
+    def _load_deterministic_clusters(self, model_name: str) -> List[EngineCluster]:
+        if model_name.startswith('CDL-'):
+            model_params = self.params.get_cdl_model_params(model_name)
+        elif model_name == 'SCME' or model_name.startswith('SCME-'):
+            model_params = self.params.get_scme_model_params(model_name)
         else:
             return []
 
         if not model_params:
-            raise ValueError(f"Deterministic model '{self.deterministic_model_name}' not found in parameter file.")
+            raise ValueError(f"Deterministic model '{model_name}' not found in parameter file.")
 
         clusters = []
+        # For deterministic models, the power in the JSON is absolute. We normalize it for the engine.
         total_power_linear = sum(10**(c['power_db'] / 10) for c in model_params['clusters'])
         
         last_aod, last_aoa, last_zod, last_zoa = 0, 0, 90, 90
@@ -118,7 +95,6 @@ class ChannelGenerator:
             power_linear = 10**(c_data['power_db'] / 10)
             normalized_power = power_linear / total_power_linear
 
-            # Handle angle inheritance for SCME
             aod = c_data.get('aod_deg', last_aod)
             aoa = c_data.get('aoa_deg', last_aoa)
             zod = c_data.get('zod_deg', last_zod)
@@ -128,17 +104,13 @@ class ChannelGenerator:
             cluster = EngineCluster(
                 delay=c_data['delay_ns'] * 1e-9,
                 power=normalized_power,
-                aod_phi=aod,
-                aoa_phi=aoa,
-                zod_theta=zod,
-                zoa_theta=zoa,
-                k_n=10**(model_params.get('xpr_db', 11) / 10)
+                aod_phi=aod, aoa_phi=aoa, zod_theta=zod, zoa_theta=zoa,
+                k_n=10**(model_params.get('xpr_db', 11) / 10) # Use model-wide XPR
             )
             clusters.append(cluster)
         return clusters
 
-    def _generate_clusters(self, lsps: LargeScaleParameters, is_los: bool, logger: Optional[Callable[[str], None]]) -> List[EngineCluster]:
-        if logger: logger("  - Generating small-scale parameters (clusters)...")
+    def _generate_stochastic_clusters(self, lsps: LargeScaleParameters, is_los: bool, logger: Optional[Callable[[str], None]]) -> List[EngineCluster]:
         scenario_params = self.params.get_scenario_params(self.config.scenario_name)
         num_clusters = scenario_params['num_clusters_los'] if is_los else scenario_params['num_clusters_nlos']
         tau_n = self._generate_cluster_delays(lsps, num_clusters, is_los, scenario_params)
@@ -190,13 +162,13 @@ class ChannelGenerator:
     def _generate_initial_phases(self, num_clusters):
         return np.random.uniform(-np.pi, np.pi, size=(num_clusters, 4))
 
-    def _synthesize_channel(self, clusters: List[EngineCluster], lsps: LargeScaleParameters, time_s: float, logger: Optional[Callable[[str], None]]) -> np.ndarray:
+    def _synthesize_channel(self, clusters: List[EngineCluster], lsps: LargeScaleParameters, time_s: float, is_deterministic: bool, logger: Optional[Callable[[str], None]]) -> np.ndarray:
         if logger: logger("  - Synthesizing channel coefficients...")
         ant_config = self.config.antenna_config
         num_rx = ant_config.num_rx_rows * ant_config.num_rx_cols
         num_tx = ant_config.num_tx_rows * ant_config.num_tx_cols
         
-        if self.is_cdl or self.is_scme:
+        if is_deterministic:
             L_rx, L_tx = np.eye(num_rx), np.eye(num_tx)
         else:
             mean_aoa = clusters[0].aoa_phi; mean_zoa = clusters[0].zoa_theta

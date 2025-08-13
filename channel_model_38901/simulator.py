@@ -8,19 +8,20 @@ class ChannelSimulator:
     """
     Facade class providing a simple API for running channel simulations.
     """
-    def __init__(self, scenario_name: str, center_frequency_hz: float):
+    def __init__(self, scenario_name: str, center_frequency_hz: float, cluster_model_name: Optional[str] = None):
         param_file = 'channel_model_38901/parameters/parameters_tr38901_v19.0.0.json'
         self.params = ParameterLoader.load_parameters(param_file)
         
         self.config = ScenarioConfig(
             scenario_name=scenario_name,
             center_frequency_hz=center_frequency_hz,
+            cluster_model_name=cluster_model_name,
             bs_positions=np.array([[0, 0, 25]]),
             ue_positions=np.array([[100, 0, 1.5]]),
             ue_velocities=np.array([[0, 0, 0]])
         )
         
-        self.generator = ChannelGenerator(self.config, self.params)
+        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name)
 
     def run(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> Dict:
         """
@@ -28,7 +29,7 @@ class ChannelSimulator:
         The 'clusters' entry in the dictionary is now a list of EngineCluster objects.
         """
         if logger:
-            logger(f"Running simulation for scenario: {self.config.scenario_name} at time t={time_s}s")
+            logger(f"Running simulation for environment: {self.config.scenario_name} with cluster model: {self.config.cluster_model_name} at time t={time_s}s")
         
         # The generator now returns a list of rich EngineCluster objects
         H_final, H_normalized, clusters, lsps, pathloss_db, is_los = self.generator.generate_channel_realization(
@@ -48,6 +49,4 @@ class ChannelSimulator:
         """Allows user to update BS and UE positions."""
         self.config.bs_positions = bs_positions
         self.config.ue_positions = ue_positions
-        # Re-initialization of the generator is implicitly handled by config changes if needed
-        # For simplicity, we can assume the generator is re-initialized before the next run if config changes.
-        self.generator = ChannelGenerator(self.config, self.params)
+        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name)
