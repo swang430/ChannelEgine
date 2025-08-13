@@ -59,7 +59,8 @@ st.title("MIMO OTA Simulator V4.1")
 with st.sidebar:
     st.header("Simulation Control")
     with st.expander("1. Scenario & Geometry", expanded=True):
-        model_name = st.selectbox('Channel Model', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
+        model_name = st.selectbox('Large-Scale Environment', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
+        cluster_model_name = st.selectbox('Small-Scale Cluster Model', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
         center_frequency_hz = st.number_input('Frequency (GHz)', 0.5, 100.0, 2.4, 0.1, key='freq') * 1e9
         ue_velocity_kph = st.slider('UE Speed (km/h)', 0, 120, 3, key='speed')
 
@@ -84,6 +85,7 @@ with st.sidebar:
 if run_button:
     target_config = TargetChannelConfig(
         model_name=model_name,
+        cluster_model_name=cluster_model_name,
         center_frequency_hz=center_frequency_hz,
         ue_velocity=(ue_velocity_kph * 1000 / 3600, 0, 0),
         tx_antenna=tx_antenna_config,

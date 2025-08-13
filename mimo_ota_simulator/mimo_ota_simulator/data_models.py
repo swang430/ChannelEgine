@@ -18,7 +18,8 @@ class TargetChannelConfig(BaseModel):
     Comprehensive configuration for the target wireless channel to be emulated.
     """
     # Scenario & Geometry
-    model_name: str = Field('UMa', description="Name of the standard channel model")
+    model_name: str = Field('UMa', description="Name of the standard channel model (Large-Scale Environment)")
+    cluster_model_name: str = Field('Stochastic', description="Name of the small-scale cluster model")
     center_frequency_hz: float = Field(2.4e9, description="Center frequency in Hz")
     bs_position: Tuple[float, float, float] = Field((0, 0, 25), description="3D position of the Base Station")
     ue_position: Tuple[float, float, float] = Field((100, 0, 1.5), description="3D position of the User Equipment")
