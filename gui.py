@@ -60,7 +60,7 @@ class ChannelModelApp(tk.Tk):
         self.update_antenna_ui('rx')
 
     def _create_parameter_widgets(self, general_frame, tx_frame, rx_frame):
-        all_scenarios = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF']
+        all_scenarios = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME-UMa']
         general_params = {
             "scenario_name": ("Scenario:", "UMa", all_scenarios),
             "center_frequency_ghz": ("Center Freq (GHz):", "3.5", None),

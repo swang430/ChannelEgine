@@ -16,10 +16,25 @@ class ChannelGenerator:
     def __init__(self, config: ScenarioConfig, params: ParameterTables):
         self.config = config
         self.params = params
+        self.is_cdl = False
+        self.is_scme = False
         self._select_models()
 
     def _select_models(self):
         scenario = self.config.scenario_name
+        if scenario.startswith('CDL-'):
+            self.is_cdl = True
+            self.deterministic_model_name = scenario
+            self.condition_model, self.pathloss_model, self.fading_model = None, None, None
+            return
+        elif scenario.startswith('SCME-'):
+            self.is_scme = True
+            self.deterministic_model_name = scenario
+            self.condition_model, self.pathloss_model, self.fading_model = None, None, None
+            return
+
+        self.is_cdl = False
+        self.is_scme = False
         if scenario == 'UMa':
             self.condition_model = UMa_ChannelCondition()
             self.pathloss_model = UMa_Pathloss(self.params)
@@ -52,27 +67,75 @@ class ChannelGenerator:
             raise NotImplementedError(f"Scenario '{scenario}' is not yet supported.")
 
     def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> tuple:
-        if logger: logger("Executing 12-step channel generation...")
-        h_ut = self.config.ue_positions[0, 2]
-        d_2d = np.linalg.norm(self.config.bs_positions[0, :2] - self.config.ue_positions[0, :2])
-        is_los = self.condition_model.get_condition(d_2d, h_ut)
-        if force_condition == 'LOS': is_los = True
-        if force_condition == 'NLOS': is_los = False
+        if self.is_cdl or self.is_scme:
+            if logger: logger(f"Generating deterministic channel: {self.deterministic_model_name}...")
+            clusters = self._load_deterministic_clusters()
+            lsps = LargeScaleParameters(delay_spread_s=0, departure_azimuth_spread_deg=0, arrival_azimuth_spread_deg=0, departure_zenith_spread_deg=0, arrival_zenith_spread_deg=0, k_factor_linear=0, shadow_fade_db=0)
+            pathloss_db = 0.0
+            model_params = self.params.get_cdl_model_params(self.deterministic_model_name) if self.is_cdl else self.params.get_scme_model_params(self.deterministic_model_name)
+            is_los = model_params.get('condition', 'NLOS') == 'LOS'
+            H_normalized = self._synthesize_channel(clusters, lsps, time_s, logger)
+            H_final = H_normalized
+            if logger: logger("Deterministic channel generation complete.")
+            return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
+        else:
+            if logger: logger("Executing 12-step stochastic channel generation...")
+            h_ut = self.config.ue_positions[0, 2]
+            d_2d = np.linalg.norm(self.config.bs_positions[0, :2] - self.config.ue_positions[0, :2])
+            is_los = self.condition_model.get_condition(d_2d, h_ut)
+            if force_condition == 'LOS': is_los = True
+            if force_condition == 'NLOS': is_los = False
+            pathloss_db = self.pathloss_model.calculate_pathloss(self.config, is_los)
+            fc_ghz = self.config.center_frequency_hz / 1e9
+            lsps = self.fading_model.generate_lsps(is_los, fc_ghz)
+            clusters = self._generate_clusters(lsps, is_los, logger)
+            H_normalized = self._synthesize_channel(clusters, lsps, time_s, logger)
+            total_loss_db = pathloss_db + lsps.shadow_fade_db
+            H_final = H_normalized * 10**(-total_loss_db / 20)
+            if logger:
+                logger(f"  - Condition: {'LOS' if is_los else 'NLOS'}")
+                logger(f"  - Pathloss: {pathloss_db:.2f} dB")
+                logger("Channel generation complete.")
+            return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
+
+    def _load_deterministic_clusters(self) -> List[EngineCluster]:
+        if self.is_cdl:
+            model_params = self.params.get_cdl_model_params(self.deterministic_model_name)
+        elif self.is_scme:
+            model_params = self.params.get_scme_model_params(self.deterministic_model_name)
+        else:
+            return []
+
+        if not model_params:
+            raise ValueError(f"Deterministic model '{self.deterministic_model_name}' not found in parameter file.")
+
+        clusters = []
+        total_power_linear = sum(10**(c['power_db'] / 10) for c in model_params['clusters'])
         
-        pathloss_db = self.pathloss_model.calculate_pathloss(self.config, is_los)
-        fc_ghz = self.config.center_frequency_hz / 1e9
-        lsps = self.fading_model.generate_lsps(is_los, fc_ghz)
-        clusters = self._generate_clusters(lsps, is_los, logger)
-        H_normalized = self._synthesize_channel(clusters, lsps, time_s, logger)
-        total_loss_db = pathloss_db + lsps.shadow_fade_db
-        H_final = H_normalized * 10**(-total_loss_db / 20)
+        last_aod, last_aoa, last_zod, last_zoa = 0, 0, 90, 90
 
-        if logger:
-            logger(f"  - Condition: {'LOS' if is_los else 'NLOS'}")
-            logger(f"  - Pathloss: {pathloss_db:.2f} dB")
-            logger("Channel generation complete.")
+        for c_data in model_params['clusters']:
+            power_linear = 10**(c_data['power_db'] / 10)
+            normalized_power = power_linear / total_power_linear
 
-        return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
+            # Handle angle inheritance for SCME
+            aod = c_data.get('aod_deg', last_aod)
+            aoa = c_data.get('aoa_deg', last_aoa)
+            zod = c_data.get('zod_deg', last_zod)
+            zoa = c_data.get('zoa_deg', last_zoa)
+            last_aod, last_aoa, last_zod, last_zoa = aod, aoa, zod, zoa
+
+            cluster = EngineCluster(
+                delay=c_data['delay_ns'] * 1e-9,
+                power=normalized_power,
+                aod_phi=aod,
+                aoa_phi=aoa,
+                zod_theta=zod,
+                zoa_theta=zoa,
+                k_n=10**(model_params.get('xpr_db', 11) / 10)
+            )
+            clusters.append(cluster)
+        return clusters
 
     def _generate_clusters(self, lsps: LargeScaleParameters, is_los: bool, logger: Optional[Callable[[str], None]]) -> List[EngineCluster]:
         if logger: logger("  - Generating small-scale parameters (clusters)...")
@@ -133,17 +196,19 @@ class ChannelGenerator:
         num_rx = ant_config.num_rx_rows * ant_config.num_rx_cols
         num_tx = ant_config.num_tx_rows * ant_config.num_tx_cols
         
-        mean_aoa = clusters[0].aoa_phi; mean_zoa = clusters[0].zoa_theta
-        mean_aod = clusters[0].aod_phi; mean_zod = clusters[0].zod_theta
-        R_rx = get_spatial_correlation_matrix(ant_config.rx_array_type, ant_config.num_rx_rows, ant_config.num_rx_cols, ant_config.rx_spacing_v, ant_config.rx_spacing_h, mean_zoa, mean_aoa, lsps.arrival_azimuth_spread_deg, lsps.arrival_azimuth_spread_deg)
-        R_tx = get_spatial_correlation_matrix(ant_config.tx_array_type, ant_config.num_tx_rows, ant_config.num_tx_cols, ant_config.tx_spacing_v, ant_config.tx_spacing_h, mean_zod, mean_aod, lsps.departure_zenith_spread_deg, lsps.departure_azimuth_spread_deg)
-        
-        try:
-            L_rx = np.linalg.cholesky(R_rx)
-            L_tx = np.linalg.cholesky(R_tx)
-        except np.linalg.LinAlgError:
-            L_rx = np.eye(num_rx)
-            L_tx = np.eye(num_tx)
+        if self.is_cdl or self.is_scme:
+            L_rx, L_tx = np.eye(num_rx), np.eye(num_tx)
+        else:
+            mean_aoa = clusters[0].aoa_phi; mean_zoa = clusters[0].zoa_theta
+            mean_aod = clusters[0].aod_phi; mean_zod = clusters[0].zod_theta
+            R_rx = get_spatial_correlation_matrix(ant_config.rx_array_type, ant_config.num_rx_rows, ant_config.num_rx_cols, ant_config.rx_spacing_v, ant_config.rx_spacing_h, mean_zoa, mean_aoa, lsps.arrival_azimuth_spread_deg, lsps.arrival_azimuth_spread_deg)
+            R_tx = get_spatial_correlation_matrix(ant_config.tx_array_type, ant_config.num_tx_rows, ant_config.num_tx_cols, ant_config.tx_spacing_v, ant_config.tx_spacing_h, mean_zod, mean_aod, lsps.departure_zenith_spread_deg, lsps.departure_azimuth_spread_deg)
+            try:
+                L_rx = np.linalg.cholesky(R_rx)
+                L_tx = np.linalg.cholesky(R_tx)
+            except np.linalg.LinAlgError:
+                L_rx = np.eye(num_rx)
+                L_tx = np.eye(num_tx)
 
         H_total_normalized = np.zeros((num_rx, num_tx), dtype=np.complex128)
         c = 3e8

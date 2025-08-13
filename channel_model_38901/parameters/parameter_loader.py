@@ -10,6 +10,12 @@ class ParameterTables:
     def get_scenario_params(self, scenario_name: str) -> Dict[str, Any]:
         return self.data.get("scenarios", {}).get(scenario_name, {})
 
+    def get_cdl_model_params(self, model_name: str) -> Dict[str, Any]:
+        return self.data.get("cdl_models", {}).get(model_name, {})
+
+    def get_scme_model_params(self, model_name: str) -> Dict[str, Any]:
+        return self.data.get("scme_models", {}).get(model_name, {})
+
 class ParameterLoader:
     """
     Loads and parses the 3GPP TR 38.901 parameters from a JSON file.
