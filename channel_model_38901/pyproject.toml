@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "channel-model-38901"
+version = "1.0.0"
+description = "A high-fidelity implementation of the 3GPP TR 38.901 channel model."
+authors = [
+    {name = "Gemini AI"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pydantic",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["channel_model_38901*" ]

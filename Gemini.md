@@ -72,37 +72,63 @@
 
 通过这次重构，仿真器将从一个只能模拟孤立场景的工具，演进为一个能够灵活组合、生成高保真混合信道的高级研究平台。
 
-## 5. API 使用模式与实现说明
+## 5. 工程化实践：包管理与依赖
+
+### 5.1 独立打包
+
+*   **`channel_model_38901` (库)** 和 **`mimo_ota_simulator` (应用)** 都被定义为独立的Python包。这是通过在它们各自的目录中创建 `pyproject.toml` 文件来实现的。该文件定义了包的名称、版本、依赖项等元数据。
+
+### 5.2 可编辑模式安装 (Editable Install)
+
+我们通过“可编辑模式”将这两个包安装到当前的Python开发环境中。这只需要在项目根目录执行一次性命令：
+```bash
+pip install -e ./channel_model_38901
+pip install -e ./mimo_ota_simulator
+```
+这种方式的**核心优势**是，它不会复制包的代码，而是在环境中创建一个直接指向源代码的链接。这意味着任何对库代码的修改，都会**立即**被依赖它的应用程序感知到，无需重新安装。
+
+### 5.3 API契约的自动化
+
+这种打包方式建立了一个**自动化的API契约**。当 `mimo_ota_simulator` 的开发者（无论是人还是AI）工作时，其开发工具（IDE、Linter）能够：
+*   **自动发现** `channel_model_38901` 的API变化。
+*   提供**精确的代码补全和类型检查**。
+*   无需阅读任何额外的手动文档，就能在代码层面理解如何使用更新后的库。
+
+### 5.4 集成指南
+
+作为对自动化契约的补充，我们在 `mimo_ota_simulator/` 目录下创建了 `INTEGRATION_GUIDE.md` 文件。它的作用是提供更高层次的用例说明和代码示例，帮助开发者快速理解新功能的设计思想和推荐用法。
+
+## 6. API 使用模式与实现说明
 
 `ChannelSimulator` 的正确使用流程为：实例化 -> 手动配置 `simulator.config` -> 手动重新初始化 `simulator.generator` -> 运行。
 
-## 6. 测试与验证策略
+## 7. 测试与验证策略
 
 一个未经严格验证的信道模型是不可信的。我们实施了一个**四层验证策略**来确保模型的正确性、稳定性和准确性。
 
-### 6.1 单元测试 (Unit Testing)
+### 7.1 单元测试 (Unit Testing)
 *   **目标**: 从数学上确保最底层的、新增的核心算法单元的精确性。
 *   **实现**: `tests/test_synthesis.py` 和 `tests/test_geometry.py`
 *   **结论**: **核心算法模块已通过验证。**
 
-### 6.2 健全性检查 (Sanity Checks)
+### 7.2 健全性检查 (Sanity Checks)
 *   **目标**: 确保仿真结果在宏观上符合基本的物理直觉。
 *   **实现**: `tests/test_sanity_checks.py`
 *   **结论**: **模型的宏观表现符合物理规律。**
 
-### 6.3 统计验证 (Statistical Validation)
+### 7.3 统计验证 (Statistical Validation)
 *   **目标**: 通过大规模蒙特卡洛仿真，确保模型的输出在统计特性上与3GPP标准一致。这是**最高级别的验证**。
 *   **实现**: 为了处理大规模仿真产生的大量数据，验证流程被拆分为“生成-分析”两步：
     *   **数据生成脚本**: `tests/generate_lsp_data.py` 和 `tests/generate_h_matrix_data.py`。这些脚本的唯一职责是，在静默模式下运行上千次仿真，并将原始结果（LSP对象或H矩阵）保存到中间数据文件（`.pkl`）中。
     *   **数据分析脚本**: `tests/analyze_lsp_data.py` 和 `tests/analyze_h_matrix_data.py`。这些脚本负责读取中间数据文件，执行所有统计计算（均值、方差、相关性等），打印最终的对比报告，并生成可视化图表。
 *   **结论**: **模型的随机过程和核心物理实现在统计意义上是精确的。**
 
-### 6.4 回归测试 (Regression Testing)
+### 7.4 回归测试 (Regression Testing)
 *   **目标**: 确保未来的代码修改不会意外破坏已有功能。
 *   **实现**: `tests/create_golden_files.py` 和 `tests/test_regression.py`
 *   **结论**: **我们为当前稳定版的引擎建立了一个可靠的“代码安全网”。**
 
-## 7. 编码规范与开发环境
+## 8. 编码规范与开发环境
 
 * **语言**: Python 3.10+
 * **核心库**: `numpy`, `scipy`, `pydantic`, `pytest`, `tqdm`
