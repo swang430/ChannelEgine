@@ -66,7 +66,7 @@ class RMa_Fading(ABC_FadingModel):
     def __init__(self, params: ParameterTables):
         self.params = params.get_scenario_params('RMa')
 
-    def generate_lsps(self, is_los: bool, fc_ghz: float) -> LargeScaleParameters:
+    def generate_lsps(self, is_los: bool, fc_ghz: float, use_median_lsps: bool = False) -> LargeScaleParameters:
         lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
         lsp_params = self.params[lsp_set]
         correlations = lsp_params['correlations']
@@ -87,25 +87,29 @@ class RMa_Fading(ABC_FadingModel):
             mu.append(eval(mu_str, {"__builtins__": {}}, local_scope))
             sigma.append(eval(sigma_str, {"__builtins__": {}}, local_scope))
 
-        C = np.identity(len(param_order))
-        for i, p1 in enumerate(param_order):
-            for j, p2 in enumerate(param_order):
-                if i < j:
-                    key = f'{p1}_vs_{p2}'
-                    if key in correlations:
-                        C[i, j] = C[j, i] = correlations[key]
+        if use_median_lsps:
+            x = np.array(mu)
+        else:
+            C = np.identity(len(param_order))
+            for i, p1 in enumerate(param_order):
+                for j, p2 in enumerate(param_order):
+                    if i < j:
+                        key = f'{p1}_vs_{p2}'
+                        if key in correlations:
+                            C[i, j] = C[j, i] = correlations[key]
 
-        try:
-            L = np.linalg.cholesky(C)
-        except np.linalg.LinAlgError:
-            eigenvalues, eigenvectors = np.linalg.eigh(C)
-            eigenvalues[eigenvalues < 1e-12] = 1e-12
-            C_new = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
-            L = np.linalg.cholesky(C_new)
+            try:
+                L = np.linalg.cholesky(C)
+            except np.linalg.LinAlgError:
+                eigenvalues, eigenvectors = np.linalg.eigh(C)
+                eigenvalues[eigenvalues < 1e-12] = 1e-12
+                C_new = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+                L = np.linalg.cholesky(C_new)
+            
+            z = np.random.randn(len(param_order))
+            y = L @ z
+            x = np.array(mu) + y * np.array(sigma)
         
-        z = np.random.randn(len(param_order))
-        y = L @ z
-        x = np.array(mu) + y * np.array(sigma)
         lsp_dict = dict(zip(param_order, x))
 
         return LargeScaleParameters(

@@ -92,7 +92,7 @@ class UMa_Fading(ABC_FadingModel):
     def __init__(self, params: ParameterTables):
         self.params = params.get_scenario_params('UMa')
 
-    def generate_lsps(self, is_los: bool, fc_ghz: float) -> LargeScaleParameters:
+    def generate_lsps(self, is_los: bool, fc_ghz: float, use_median_lsps: bool = False) -> LargeScaleParameters:
         """Generates Large Scale Parameters for UMa scenario."""
         lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
         lsp_params = self.params[lsp_set]
@@ -114,31 +114,34 @@ class UMa_Fading(ABC_FadingModel):
             mu.append(eval(mu_str, {"__builtins__": {}}, local_scope))
             sigma.append(eval(sigma_str, {"__builtins__": {}}, local_scope))
 
-        # Build correlation matrix
-        C = np.identity(len(param_order))
-        for i, p1 in enumerate(param_order):
-            for j, p2 in enumerate(param_order):
-                if i < j:
-                    key = f'{p1}_vs_{p2}'
-                    if key in correlations:
-                        C[i, j] = C[j, i] = correlations[key]
+        if use_median_lsps:
+            x = np.array(mu)
+        else:
+            # Build correlation matrix
+            C = np.identity(len(param_order))
+            for i, p1 in enumerate(param_order):
+                for j, p2 in enumerate(param_order):
+                    if i < j:
+                        key = f'{p1}_vs_{p2}'
+                        if key in correlations:
+                            C[i, j] = C[j, i] = correlations[key]
 
-        # Cholesky decomposition - with eigenvalue correction for non-positive definite matrices
-        try:
-            L = np.linalg.cholesky(C)
-        except np.linalg.LinAlgError:
-            # Find the nearest positive-definite matrix
-            eigenvalues, eigenvectors = np.linalg.eigh(C)
-            eigenvalues[eigenvalues < 1e-12] = 1e-12 # Replace negative eigenvalues
-            C_new = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
-            L = np.linalg.cholesky(C_new)
-        
-        # Generate correlated random variables
-        z = np.random.randn(len(param_order))
-        y = L @ z
-        
-        # Apply mu and sigma
-        x = np.array(mu) + y * np.array(sigma)
+            # Cholesky decomposition - with eigenvalue correction for non-positive definite matrices
+            try:
+                L = np.linalg.cholesky(C)
+            except np.linalg.LinAlgError:
+                # Find the nearest positive-definite matrix
+                eigenvalues, eigenvectors = np.linalg.eigh(C)
+                eigenvalues[eigenvalues < 1e-12] = 1e-12 # Replace negative eigenvalues
+                C_new = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+                L = np.linalg.cholesky(C_new)
+            
+            # Generate correlated random variables
+            z = np.random.randn(len(param_order))
+            y = L @ z
+            
+            # Apply mu and sigma
+            x = np.array(mu) + y * np.array(sigma)
 
         # Create LSP object, converting log-normal params
         lsp_dict = dict(zip(param_order, x))

@@ -21,6 +21,6 @@ class ABC_FadingModel(ABC):
     """Abstract Base Class for large-scale fading models."""
 
     @abstractmethod
-    def generate_lsps(self, is_los: bool) -> LargeScaleParameters:
+    def generate_lsps(self, is_los: bool, fc_ghz: float, use_median_lsps: bool = False) -> LargeScaleParameters:
         """Generates a set of large-scale parameters."""
         pass

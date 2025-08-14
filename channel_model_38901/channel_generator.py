@@ -13,10 +13,11 @@ from .models.inf_models import InF_ChannelCondition, InF_Pathloss, InF_Fading
 from .models.spatial_correlation import get_spatial_correlation_matrix
 
 class ChannelGenerator:
-    def __init__(self, config: ScenarioConfig, params: ParameterTables, cluster_model_name: Optional[str] = None):
+    def __init__(self, config: ScenarioConfig, params: ParameterTables, cluster_model_name: Optional[str] = None, use_median_lsps: bool = False):
         self.config = config
         self.params = params
         self.cluster_model_name = cluster_model_name if cluster_model_name else 'Stochastic'
+        self.use_median_lsps = use_median_lsps
         self._select_models()
 
     def _select_models(self):
@@ -38,7 +39,7 @@ class ChannelGenerator:
         else:
             raise NotImplementedError(f"Scenario '{scenario}' is not yet supported for LSP generation.")
 
-    def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> tuple:
+    def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print, use_median_lsps: Optional[bool] = None) -> tuple:
         if logger: logger(f"Executing channel generation for environment '{self.config.scenario_name}'...")
         
         # Step 1: Always generate Large-Scale Parameters (LSPs) based on the environment
@@ -49,13 +50,21 @@ class ChannelGenerator:
         if force_condition == 'NLOS': is_los = False
         pathloss_db = self.pathloss_model.calculate_pathloss(self.config, is_los)
         fc_ghz = self.config.center_frequency_hz / 1e9
-        lsps = self.fading_model.generate_lsps(is_los, fc_ghz)
+        
+        # Determine whether to use median LSPs, prioritizing the method argument
+        use_median = use_median_lsps if use_median_lsps is not None else self.use_median_lsps
+        
+        lsps = self.fading_model.generate_lsps(is_los, fc_ghz, use_median_lsps=use_median)
 
         if logger: 
             logger(f"  - Large-Scale Environment: {self.config.scenario_name}")
             logger(f"  - Cluster Model: {self.cluster_model_name}")
             logger(f"  - Condition: {'LOS' if is_los else 'NLOS'}")
             logger(f"  - Pathloss: {pathloss_db:.2f} dB")
+            if use_median:
+                logger("  - LSP Generation: Using MEDIAN values (deterministic)")
+            else:
+                logger("  - LSP Generation: Using RANDOM sampling (stochastic)")
 
         # Step 2: Generate/Load clusters based on the selected cluster model
         is_deterministic_clusters = self.cluster_model_name.startswith('CDL-') or self.cluster_model_name == 'SCME' or self.cluster_model_name.startswith('SCME-')

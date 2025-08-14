@@ -8,7 +8,7 @@ class ChannelSimulator:
     """
     Facade class providing a simple API for running channel simulations.
     """
-    def __init__(self, scenario_name: str, center_frequency_hz: float, cluster_model_name: Optional[str] = None):
+    def __init__(self, scenario_name: str, center_frequency_hz: float, cluster_model_name: Optional[str] = None, use_median_lsps: bool = False):
         param_file = 'channel_model_38901/parameters/parameters_tr38901_v19.0.0.json'
         self.params = ParameterLoader.load_parameters(param_file)
         
@@ -21,9 +21,9 @@ class ChannelSimulator:
             ue_velocities=np.array([[0, 0, 0]])
         )
         
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name)
+        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=use_median_lsps)
 
-    def run(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print) -> Dict:
+    def run(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print, use_median_lsps: Optional[bool] = None) -> Dict:
         """
         Runs a single channel realization and returns a dictionary of results.
         The 'clusters' entry in the dictionary is now a list of EngineCluster objects.
@@ -33,7 +33,7 @@ class ChannelSimulator:
         
         # The generator now returns a list of rich EngineCluster objects
         H_final, H_normalized, clusters, lsps, pathloss_db, is_los = self.generator.generate_channel_realization(
-            force_condition=force_condition, time_s=time_s, logger=logger
+            force_condition=force_condition, time_s=time_s, logger=logger, use_median_lsps=use_median_lsps
         )
         
         return {
@@ -49,4 +49,4 @@ class ChannelSimulator:
         """Allows user to update BS and UE positions."""
         self.config.bs_positions = bs_positions
         self.config.ue_positions = ue_positions
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name)
+        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)

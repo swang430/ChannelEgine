@@ -68,6 +68,7 @@ class ChannelModelApp(tk.Tk):
             "cluster_model_name": ("小尺度簇模型:", "Stochastic", cluster_models),
             "center_frequency_ghz": ("中心频率 (GHz):", "3.5", None),
             "los_condition": ("LOS 条件:", "Automatic", ["Automatic", "LOS", "NLOS"]),
+            "use_median_lsps": ("使用LSP中值:", False, [True, False]),
             "random_seed": ("随机种子:", "", None),
             "simulation_time_s": ("仿真时间 (s):", "0.0", None)
         }
@@ -92,11 +93,15 @@ class ChannelModelApp(tk.Tk):
     def _create_entry(self, parent, key, text, default, values, row):
         label = ttk.Label(parent, text=text)
         label.grid(row=row, column=0, sticky=tk.W, pady=2)
-        var = tk.StringVar(value=default)
-        if values:
-            widget = ttk.Combobox(parent, textvariable=var, values=values, width=18)
+        if isinstance(default, bool):
+            var = tk.BooleanVar(value=default)
+            widget = ttk.Checkbutton(parent, variable=var)
         else:
-            widget = ttk.Entry(parent, textvariable=var, width=20)
+            var = tk.StringVar(value=default)
+            if values:
+                widget = ttk.Combobox(parent, textvariable=var, values=values, width=18)
+            else:
+                widget = ttk.Entry(parent, textvariable=var, width=20)
         widget.grid(row=row, column=1, sticky=tk.EW, pady=2, padx=5)
         parent.grid_columnconfigure(1, weight=1)
         self.controls[key] = {'var': var, 'widget': widget, 'label': label}
@@ -233,11 +238,12 @@ class ChannelModelApp(tk.Tk):
 
             ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
             
+            use_median_lsps = params["use_median_lsps"]
             log_msg = f"Starting simulation for Environment: {scenario_name}, Cluster Model: {cluster_model_name if cluster_model_name else 'Stochastic'}"
             self.simulation_queue.put(("log", log_msg))
 
             np.random.seed(seed)
-            simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name)
+            simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=use_median_lsps)
             simulator.config.bs_positions = bs_pos
             simulator.config.ue_positions = ue_pos
             simulator.config.ue_velocities = ue_vel_vector
@@ -245,7 +251,7 @@ class ChannelModelApp(tk.Tk):
             
             # The generator is now created inside the simulator, so we don't create it here.
             # We need to re-initialize it if config changes, which is handled in the simulator.
-            simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name)
+            simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=use_median_lsps)
 
             results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
             self.simulation_queue.put(("results", results))
