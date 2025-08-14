@@ -75,7 +75,7 @@ with st.sidebar:
         rx_antenna_config = antenna_panel("Rx")
 
     with st.expander("4. Channel & Run Control", expanded=True):
-        synthesis_method = st.selectbox('Synthesis Method', ('pinv', 'cluster'), key='synthesis')
+        synthesis_method = st.selectbox('Synthesis Method', ('pinv', 'cluster'), index=1, key='synthesis')
         max_hw_clusters = st.slider('Max Hardware Clusters', 1, 24, 24, 1, key='max_hw_clusters')
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
         random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
@@ -111,32 +111,93 @@ if run_button:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("A-Matrix Visualization")
+            
+            # --- Y-axis Centering Logic ---
+            num_rows = A_matrix.shape[0]
+            shift = num_rows // 2
+            
+            # Roll the matrix data for centered view
+            A_matrix_view = np.roll(A_matrix, shift=shift, axis=0)
+            
+            # Create new labels for the shifted y-axis
+            original_indices = np.arange(1, num_rows + 1)
+            shifted_indices = np.roll(original_indices, shift=shift)
+            
+            # Determine tick positions and labels
+            tick_positions = np.linspace(0, num_rows - 1, num=min(num_rows, 16), dtype=int)
+            tick_labels = shifted_indices[tick_positions]
+
+            # --- Plotting ---
             fig, ax = plt.subplots()
-            im = ax.imshow(np.abs(A_matrix), cmap='viridis', aspect='auto')
+            im = ax.imshow(np.abs(A_matrix_view), cmap='viridis', aspect='auto')
             ax.set_title("Transmit Mapping Matrix A (Magnitude)")
             ax.set_xlabel("Transmit Antenna Index (Nt)")
-            ax.set_ylabel("Effective Probe Index (Np_eff)")
+            ax.set_ylabel("Effective Probe Index (Np_eff) - Centered View")
+            
+            # Set the calculated ticks and labels
+            ax.set_yticks(tick_positions)
+            ax.set_yticklabels(tick_labels)
+
+            # Force integer ticks on x-axis
+            from matplotlib.ticker import MaxNLocator
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            
             fig.colorbar(im, ax=ax, label="Weight")
             st.pyplot(fig)
 
         with col2:
-            st.subheader("Angular Distribution")
-            # Always use the physical number of probes for plotting positions
+            st.subheader("Angular Distribution & Power")
+            # --- Data Preparation ---
             probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
-            cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters])
-            cluster_powers_lin = [10**(c.power / 10.0) for c in clusters]
-            norm_powers = np.array(cluster_powers_lin) / np.max(cluster_powers_lin)
+            clusters_sorted = sorted(clusters, key=lambda c: c.power, reverse=True)
+            cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters_sorted])
+            cluster_powers_db = np.array([c.power for c in clusters_sorted])
+            
+            # Normalize power for coloring, using a colormap
+            power_min, power_max = cluster_powers_db.min(), cluster_powers_db.max()
+            norm_powers = (cluster_powers_db - power_min) / (power_max - power_min) if (power_max - power_min) > 0 else np.ones_like(cluster_powers_db)
+            cmap = plt.get_cmap('plasma')
+            cluster_colors = cmap(norm_powers)
 
-            fig_polar = plt.figure()
-            ax_polar = fig_polar.add_subplot(111, polar=True)
-            ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
-            for i, (angle, power) in enumerate(zip(cluster_aods_rad, norm_powers)):
-                ax_polar.plot([angle, angle], [0, 1], color=plt.cm.autumn(power), linewidth=2, label=f'Cluster {i+1}' if i < 5 else "")
+            # --- Plotting Setup ---
+            fig = plt.figure(figsize=(8, 6))
+            gs = fig.add_gridspec(1, 2, width_ratios=[10, 1])
+            ax_polar = fig.add_subplot(gs[0, 0], polar=True)
+            ax_cbar = fig.add_subplot(gs[0, 1])
+
+            # --- Probe Plotting Logic ---
+            if dual_polarized:
+                v_angles, h_angles = probe_angles_rad - np.deg2rad(2), probe_angles_rad + np.deg2rad(2)
+                ax_polar.scatter(v_angles, np.ones(num_probes) * 1.1, s=80, c='blue', marker='o', label='V-Probes')
+                ax_polar.scatter(h_angles, np.ones(num_probes) * 1.1, s=80, c='red', marker='x', label='H-Probes')
+                for i in range(num_probes):
+                    ax_polar.text(v_angles[i], 1.2, str(2*i + 1), ha='center', va='center', fontsize=7, color='blue')
+                    ax_polar.text(h_angles[i], 1.2, str(2*i + 2), ha='center', va='center', fontsize=7, color='red')
+            else:
+                ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
+                for i, angle in enumerate(probe_angles_rad):
+                    ax_polar.text(angle, 1.2, str(i + 1), ha='center', va='center', fontsize=8, color='blue')
+
+            # --- Cluster Plotting Logic ---
+            for i, (angle, color) in enumerate(zip(cluster_aods_rad, cluster_colors)):
+                ax_polar.plot([angle, angle], [0, 1], color=color, linewidth=2)
+            
             ax_polar.set_title("Probe and Cluster Angles")
             ax_polar.set_yticklabels([])
             ax_polar.set_theta_zero_location('N')
             ax_polar.set_theta_direction(-1)
-            st.pyplot(fig_polar)
+            ax_polar.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize='small')
+
+            # --- Colorbar with Cluster Markers ---
+            sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=power_min, vmax=power_max))
+            cbar = fig.colorbar(sm, cax=ax_cbar)
+            cbar.set_label('Cluster Power (dB)', rotation=270, labelpad=15)
+            
+            # Add markers to the colorbar
+            cbar.ax.yaxis.set_ticks(cluster_powers_db, labels=[f"{i+1}" for i in range(len(clusters_sorted))])
+            cbar.ax.tick_params(axis='y', length=5, pad=2, labelsize='x-small')
+
+            st.pyplot(fig)
 
         with st.expander("Show Raw Matrix Data"):
             st.write("A-Matrix (Magnitude)")

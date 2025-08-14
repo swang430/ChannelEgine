@@ -122,7 +122,7 @@ class MIMO_OTA_Simulator:
             num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
             A_total = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
             for cluster in hardware_clusters:
-                w_map = self._calculate_probe_weights_for_aoa(cluster.aoa_phi, chamber_config)
+                w_map = self._calculate_probe_weights_for_aoa(cluster.aod_phi, chamber_config)
                 g_tx = self._get_g_tx_from_h_matrix(cluster.h_matrix)
                 cluster_power_linear = 10**(cluster.power / 10.0)
                 A_cluster = np.sqrt(cluster_power_linear) * (w_map @ g_tx)
