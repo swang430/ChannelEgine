@@ -54,7 +54,7 @@ def antenna_panel(antenna_type: str):
         return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v)
 
 # --- UI Layout ---
-st.title("MIMO OTA Simulator V4.1")
+st.title("MIMO OTA Simulator V4.2")
 
 with st.sidebar:
     st.header("Simulation Control")
@@ -78,6 +78,7 @@ with st.sidebar:
         synthesis_method = st.selectbox('Synthesis Method', ('pinv', 'cluster'), index=1, key='synthesis')
         max_hw_clusters = st.slider('Max Hardware Clusters', 1, 24, 24, 1, key='max_hw_clusters')
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
+        use_median_lsps = st.checkbox('Use Median LSPs', value=False, help="Bypass random sampling and use the median value for all Large-Scale Parameters.")
         random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
 
     run_button = st.button("Run Simulation", type="primary")
@@ -91,7 +92,8 @@ if run_button:
         tx_antenna=tx_antenna_config,
         rx_antenna=rx_antenna_config,
         force_condition=(None if force_condition == 'Default' else force_condition.split(' ')[-1]),
-        random_seed=random_seed
+        random_seed=random_seed,
+        use_median_lsps=use_median_lsps
     )
 
     with st.spinner('Running simulation...'):

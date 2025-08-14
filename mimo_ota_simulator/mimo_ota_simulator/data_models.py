@@ -32,6 +32,7 @@ class TargetChannelConfig(BaseModel):
     # Channel Condition
     force_condition: Optional[Literal['LOS', 'NLOS']] = Field(None, description="Force Line-of-Sight or Non-Line-of-Sight")
     random_seed: Optional[int] = Field(None, description="Seed for the random number generator")
+    use_median_lsps: bool = Field(False, description="Use median LSP values instead of random sampling")
 
 # --- Shared Data Models ---
 

@@ -104,7 +104,7 @@ class MIMO_OTA_Simulator:
         param_file = os.path.join(lib_path, 'parameters', 'parameters_tr38901_v19.0.0.json')
         
         params = ParameterLoader.load_parameters(param_file)
-        generator = ChannelGenerator(engine_scenario_config, params)
+        generator = ChannelGenerator(engine_scenario_config, params, use_median_lsps=channel_config.use_median_lsps)
         target_H_matrix, _, physical_clusters, _, _, _ = generator.generate_channel_realization(
             force_condition=channel_config.force_condition, logger=None
         )
