@@ -4,35 +4,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
-from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig
+from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, ProbeAntennaConfig
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="MIMO OTA Simulator V4.3",
-    page_icon="📡",
+    page_title="MIMO OTA Simulator V4.4",
+    page_icon="🛰️",
     layout="wide"
 )
 
 # --- Backend Functions ---
-def run_simulation(target_config_dict, num_probes, radius_m, dual_polarized, synthesis_method):
+def run_simulation(target_config_dict, chamber_config_dict):
     target_config = TargetChannelConfig.parse_obj(target_config_dict)
+    chamber_config = ChamberConfig.parse_obj(chamber_config_dict)
     simulator = MIMO_OTA_Simulator()
-    num_rx_antennas = target_config.rx_antenna.num_rows * target_config.rx_antenna.num_cols
-    num_effective_probes = num_probes * 2 if dual_polarized else num_probes
-    
-    B = np.zeros((num_rx_antennas, num_effective_probes))
-    for i in range(min(num_rx_antennas, num_effective_probes)):
-        B[i, i] = 1
-        
-    chamber_config = ChamberConfig(
-        num_probes=num_probes,
-        dual_polarized=dual_polarized,
-        distribution='ring',
-        radius_m=radius_m,
-        calibration_matrix_B=B
-    )
     try:
-        return simulator.run(chamber_config=chamber_config, channel_config=target_config, synthesis_method=synthesis_method)
+        return simulator.run(chamber_config=chamber_config, channel_config=target_config, synthesis_method=st.session_state.synthesis_method)
     except Exception as e:
         st.error(f"Simulation Failed: {e}")
         return None
@@ -55,18 +42,20 @@ def antenna_panel(antenna_type: str):
         return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v)
 
 # --- UI Layout ---
-st.title("MIMO OTA Simulator V4.3")
+st.title("MIMO OTA Simulator V4.4")
 
 # --- Session State Initialization ---
 if 'simulation_results' not in st.session_state:
     st.session_state.simulation_results = None
+if 'synthesis_method' not in st.session_state:
+    st.session_state.synthesis_method = 'cluster'
 
 with st.sidebar:
     st.header("Simulation Control")
     with st.expander("1. Scenario & Geometry", expanded=True):
         model_name = st.selectbox('Large-Scale Environment', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
         cluster_model_name = st.selectbox('Small-Scale Cluster Model', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
-        center_frequency_hz = st.number_input('Frequency (GHz)', 0.5, 100.0, 2.4, 0.1, key='freq') * 1e9
+        center_frequency_hz = st.number_input('Frequency (GHz)', 0.5, 100.0, 3.5, 0.1, key='freq') * 1e9
         ue_velocity_kph = st.slider('UE Speed (km/h)', 0, 120, 3, key='speed')
 
     with st.expander("2. Chamber Configuration", expanded=True):
@@ -74,31 +63,53 @@ with st.sidebar:
         radius_m = st.number_input('Probe Ring Radius (m)', 0.5, 5.0, 1.5, 0.1, key='radius')
         dual_polarized = st.checkbox('Dual Polarized Probes', value=True)
 
-    with st.expander("3. Antenna Configuration", expanded=True):
+    with st.expander("3. Chamber Physical Parameters", expanded=False):
+        probe_gain_dBi = st.number_input("Probe Antenna Gain (dBi)", -10.0, 20.0, 0.0, 0.1)
+        qz_radius_m = st.number_input("Quiet Zone Radius (m)", 0.1, 2.0, 0.3, 0.05)
+        cal_file = st.file_uploader("Upload Calibration Vector (real,imag.csv)", type=['csv'])
+
+    with st.expander("4. Antenna Configuration", expanded=True):
         tx_antenna_config = antenna_panel("Tx")
         st.divider()
         rx_antenna_config = antenna_panel("Rx")
 
-    with st.expander("4. Channel & Run Control", expanded=True):
-        synthesis_method = st.selectbox('Synthesis Method', ('pinv', 'cluster'), index=1, key='synthesis')
+    with st.expander("5. Channel & Run Control", expanded=True):
+        st.selectbox('Synthesis Method', ('pinv', 'cluster'), key='synthesis_method')
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
         use_median_lsps = st.checkbox('Use Median LSPs', value=False, help="Bypass random sampling and use the median value for all Large-Scale Parameters.")
         random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
 
     if st.button("Run Simulation", type="primary"):
-        target_config = TargetChannelConfig(
-            model_name=model_name,
-            cluster_model_name=cluster_model_name if cluster_model_name != 'Stochastic' else None,
-            center_frequency_hz=center_frequency_hz,
-            ue_velocity=(ue_velocity_kph * 1000 / 3600, 0, 0),
-            tx_antenna=tx_antenna_config,
-            rx_antenna=rx_antenna_config,
-            force_condition=(None if force_condition == 'Default' else force_condition.split(' ')[-1]),
-            random_seed=random_seed,
-            use_median_lsps=use_median_lsps
-        )
+        cal_vector = None
+        if cal_file is not None:
+            try:
+                df = pd.read_csv(cal_file, header=None)
+                cal_vector = df[0].values + 1j * df[1].values
+            except Exception as e:
+                st.error(f"Failed to parse calibration file: {e}")
+
+        chamber_config_params = {
+            "num_probes": num_probes,
+            "dual_polarized": dual_polarized,
+            "distribution": 'ring',
+            "radius_m": radius_m,
+            "probe_antenna": {"gain_dBi": probe_gain_dBi, "pattern": "Isotropic"},
+            "quiet_zone_radius_m": qz_radius_m,
+            "calibration_vector": cal_vector
+        }
+        target_config_params = {
+            "model_name": model_name,
+            "cluster_model_name": cluster_model_name if cluster_model_name != 'Stochastic' else None,
+            "center_frequency_hz": center_frequency_hz,
+            "ue_velocity": (ue_velocity_kph * 1000 / 3600, 0, 0),
+            "tx_antenna": tx_antenna_config.model_dump(),
+            "rx_antenna": rx_antenna_config.model_dump(),
+            "force_condition": (None if force_condition == 'Default' else force_condition.split(' ')[-1]),
+            "random_seed": random_seed,
+            "use_median_lsps": use_median_lsps
+        }
         with st.spinner('Running simulation...'):
-            st.session_state.simulation_results = run_simulation(target_config.model_dump(), num_probes, radius_m, dual_polarized, synthesis_method)
+            st.session_state.simulation_results = run_simulation(target_config_params, chamber_config_params)
 
 # --- Results Display Area ---
 if st.session_state.simulation_results:
@@ -108,6 +119,7 @@ if st.session_state.simulation_results:
     # Unpack all results
     A_matrix = results['transmit_mapping_matrix_A']
     H_target = results['target_H_matrix']
+    B_matrix = results['B_matrix']
     clusters = results['clusters']
     probe_tx_power_contributions = results['probe_tx_power_contributions']
     cluster_probe_mapping = results['cluster_probe_mapping']
@@ -238,7 +250,10 @@ if st.session_state.simulation_results:
     else:
         st.info("No cluster mapping data available for this synthesis method.")
 
-    with st.expander("Show Raw Matrix Data"):
+    with st.expander("Show Physical Chamber Matrices"):
+        st.write("Physical B-Matrix (Complex Values)")
+        st.dataframe(B_matrix)
+        st.divider()
         st.write("Transmit Mapping Matrix A (Complex Values)")
         st.dataframe(A_matrix)
         st.write("H_target Matrix (Complex Values)")

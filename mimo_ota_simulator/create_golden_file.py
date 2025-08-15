@@ -16,8 +16,7 @@ def create_golden_file():
         num_probes=8,
         dual_polarized=False,
         distribution='ring',
-        radius_m=1.0,
-        calibration_matrix_B=np.eye(2, 8) # Simple identity matrix for Nr=2, Np=8
+        radius_m=1.0
     )
     
     channel_config = TargetChannelConfig(

@@ -10,7 +10,13 @@ GOLDEN_FILES = [f for f in os.listdir('tests') if f.startswith('golden_') and f.
 def test_regression(golden_file_name):
     """Compares a new simulation run against a saved golden file."""
     # --- 1. Parse parameters from the file name ---
-    parts = golden_file_name.replace('.npz', '').split('_')
+    file_stem = os.path.basename(golden_file_name).replace('.npz', '')
+    parts = file_stem.split('_')
+    
+    # Gracefully skip files that don't match the expected format
+    if len(parts) < 5:  # e.g., golden_UMa_NLOS_2x2_101
+        pytest.skip(f"Skipping file with non-standard name: {golden_file_name}")
+
     scenario = "-".join(parts[1:-3])
     condition = parts[-3]
     mimo_config = parts[-2].split('x')

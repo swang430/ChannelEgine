@@ -36,6 +36,11 @@ class TargetChannelConfig(BaseModel):
 
 # --- Shared Data Models ---
 
+class ProbeAntennaConfig(BaseModel):
+    """Configuration for the antenna of a single physical probe."""
+    gain_dBi: float = Field(0.0, description="The gain of the probe antenna in dBi.")
+    pattern: Literal['Isotropic', 'TR38.901'] = Field('Isotropic', description="The radiation pattern of the probe antenna.")
+
 class ChamberConfig(BaseModel):
     """
     Configuration for the physical properties of the OTA chamber.
@@ -46,7 +51,9 @@ class ChamberConfig(BaseModel):
     dual_polarized: bool = Field(False, description="Whether each probe is dual-polarized.")
     distribution: Literal['ring', 'multi-ring'] = Field(..., description="Arrangement of the probes.")
     radius_m: float = Field(..., description="The radius of the probe ring in meters.")
-    calibration_matrix_B: np.ndarray = Field(..., description="The chamber's calibration matrix B (Nr x Np_eff).")
+    probe_antenna: ProbeAntennaConfig = Field(default_factory=ProbeAntennaConfig, description="The antenna specification for each probe.")
+    quiet_zone_radius_m: Optional[float] = Field(None, description="Radius of the chamber's quiet zone in meters for validation.")
+    calibration_vector: Optional[np.ndarray] = Field(None, description="Complex vector for amplitude and phase calibration.")
 
 class Cluster(BaseModel):
     """
