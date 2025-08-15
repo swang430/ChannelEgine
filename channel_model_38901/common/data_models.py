@@ -54,6 +54,10 @@ class EngineCluster(BaseModel):
     aoa_phi: float = 0.0
     zod_theta: float = 0.0
     zoa_theta: float = 0.0
+    as_aod: float = 0.0
+    as_aoa: float = 0.0
+    as_zod: float = 0.0
+    as_zoa: float = 0.0
     k_n: Optional[float] = 1.0
     initial_phases: Optional[np.ndarray] = None
     h_matrix: Optional[np.ndarray] = None

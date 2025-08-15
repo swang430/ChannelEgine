@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
@@ -7,7 +8,7 @@ from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, A
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="MIMO OTA Simulator V4.0",
+    page_title="MIMO OTA Simulator V4.3",
     page_icon="📡",
     layout="wide"
 )
@@ -54,7 +55,11 @@ def antenna_panel(antenna_type: str):
         return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v)
 
 # --- UI Layout ---
-st.title("MIMO OTA Simulator V4.2")
+st.title("MIMO OTA Simulator V4.3")
+
+# --- Session State Initialization ---
+if 'simulation_results' not in st.session_state:
+    st.session_state.simulation_results = None
 
 with st.sidebar:
     st.header("Simulation Control")
@@ -76,137 +81,167 @@ with st.sidebar:
 
     with st.expander("4. Channel & Run Control", expanded=True):
         synthesis_method = st.selectbox('Synthesis Method', ('pinv', 'cluster'), index=1, key='synthesis')
-        max_hw_clusters = st.slider('Max Hardware Clusters', 1, 24, 24, 1, key='max_hw_clusters')
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
         use_median_lsps = st.checkbox('Use Median LSPs', value=False, help="Bypass random sampling and use the median value for all Large-Scale Parameters.")
         random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
 
-    run_button = st.button("Run Simulation", type="primary")
+    if st.button("Run Simulation", type="primary"):
+        target_config = TargetChannelConfig(
+            model_name=model_name,
+            cluster_model_name=cluster_model_name if cluster_model_name != 'Stochastic' else None,
+            center_frequency_hz=center_frequency_hz,
+            ue_velocity=(ue_velocity_kph * 1000 / 3600, 0, 0),
+            tx_antenna=tx_antenna_config,
+            rx_antenna=rx_antenna_config,
+            force_condition=(None if force_condition == 'Default' else force_condition.split(' ')[-1]),
+            random_seed=random_seed,
+            use_median_lsps=use_median_lsps
+        )
+        with st.spinner('Running simulation...'):
+            st.session_state.simulation_results = run_simulation(target_config.model_dump(), num_probes, radius_m, dual_polarized, synthesis_method)
 
-if run_button:
-    target_config = TargetChannelConfig(
-        model_name=model_name,
-        cluster_model_name=cluster_model_name,
-        center_frequency_hz=center_frequency_hz,
-        ue_velocity=(ue_velocity_kph * 1000 / 3600, 0, 0),
-        tx_antenna=tx_antenna_config,
-        rx_antenna=rx_antenna_config,
-        force_condition=(None if force_condition == 'Default' else force_condition.split(' ')[-1]),
-        random_seed=random_seed,
-        use_median_lsps=use_median_lsps
-    )
-
-    with st.spinner('Running simulation...'):
-        results = run_simulation(target_config.model_dump(), num_probes, radius_m, dual_polarized, synthesis_method)
+# --- Results Display Area ---
+if st.session_state.simulation_results:
+    results = st.session_state.simulation_results
+    st.success('Simulation finished successfully!')
     
-    if results:
-        st.success('Simulation finished successfully!')
-        A_matrix = results['transmit_mapping_matrix_A']
-        H_target = results['target_H_matrix']
-        clusters = results['clusters']
+    # Unpack all results
+    A_matrix = results['transmit_mapping_matrix_A']
+    H_target = results['target_H_matrix']
+    clusters = results['clusters']
+    probe_tx_power_contributions = results['probe_tx_power_contributions']
+    cluster_probe_mapping = results['cluster_probe_mapping']
+    num_effective_probes, num_tx_antennas = A_matrix.shape
+
+    st.header("Simulation Results")
+
+    # --- Create the two main plots ---
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Power per Probe & Tx Contribution (Centered)")
+        fig, ax = plt.subplots()
         
-        num_effective_probes = A_matrix.shape[0]
-
-        st.header("Simulation Results")
-        st.metric("H_target Shape", f"{H_target.shape[0]} x {H_target.shape[1]} (Rx, Tx)")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("A-Matrix Visualization")
+        if np.any(probe_tx_power_contributions):
+            shift = num_effective_probes // 2
+            x_coords = np.arange(num_effective_probes)
+            original_indices = np.arange(num_effective_probes)
+            shifted_indices = np.roll(original_indices, shift)
             
-            # --- Y-axis Centering Logic ---
-            num_rows = A_matrix.shape[0]
-            shift = num_rows // 2
-            
-            # Roll the matrix data for centered view
-            A_matrix_view = np.roll(A_matrix, shift=shift, axis=0)
-            
-            # Create new labels for the shifted y-axis
-            original_indices = np.arange(1, num_rows + 1)
-            shifted_indices = np.roll(original_indices, shift=shift)
-            
-            # Determine tick positions and labels
-            tick_positions = np.linspace(0, num_rows - 1, num=min(num_rows, 16), dtype=int)
-            tick_labels = shifted_indices[tick_positions]
+            bottoms = np.zeros(num_effective_probes)
+            colors = plt.cm.get_cmap('tab10', num_tx_antennas)
 
-            # --- Plotting ---
-            fig, ax = plt.subplots()
-            im = ax.imshow(np.abs(A_matrix_view), cmap='viridis', aspect='auto')
-            ax.set_title("Transmit Mapping Matrix A (Magnitude)")
-            ax.set_xlabel("Transmit Antenna Index (Nt)")
-            ax.set_ylabel("Effective Probe Index (Np_eff) - Centered View")
-            
-            # Set the calculated ticks and labels
-            ax.set_yticks(tick_positions)
-            ax.set_yticklabels(tick_labels)
+            for tx_idx in range(num_tx_antennas):
+                power_data = probe_tx_power_contributions[:, tx_idx]
+                rolled_power_data = np.roll(power_data, shift)
+                ax.bar(x_coords, rolled_power_data, bottom=bottoms, color=colors(tx_idx), label=f'Tx Ant {tx_idx}')
+                bottoms += rolled_power_data
 
-            # Force integer ticks on x-axis
-            from matplotlib.ticker import MaxNLocator
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            
-            fig.colorbar(im, ax=ax, label="Weight")
-            st.pyplot(fig)
+            ax.set_xlabel("Effective Probe ID (Centered)")
+            ax.set_ylabel("Power (linear scale)")
+            ax.set_title("Power per Probe with Tx Contributions")
+            ax.set_xticks(x_coords)
+            ax.set_xticklabels(shifted_indices)
+            ax.tick_params(axis='x', rotation=90, labelsize='small')
+            ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+            ax.legend()
+        else:
+            ax.text(0.5, 0.5, 'No power data available.', ha='center', va='center')
+        st.pyplot(fig)
 
-        with col2:
-            st.subheader("Angular Distribution & Power")
-            # --- Data Preparation ---
-            probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
-            clusters_sorted = sorted(clusters, key=lambda c: c.power, reverse=True)
-            cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters_sorted])
-            cluster_powers_db = np.array([c.power for c in clusters_sorted])
-            
-            # Normalize power for coloring, using a colormap
-            power_min, power_max = cluster_powers_db.min(), cluster_powers_db.max()
-            norm_powers = (cluster_powers_db - power_min) / (power_max - power_min) if (power_max - power_min) > 0 else np.ones_like(cluster_powers_db)
-            cmap = plt.get_cmap('plasma')
-            cluster_colors = cmap(norm_powers)
+        with st.expander("Show Probe Power Values"):
+            total_power_per_probe = probe_tx_power_contributions.sum(axis=1)
+            power_df = pd.DataFrame({
+                'Effective Probe ID': np.arange(num_effective_probes),
+                'Total Power (linear)': total_power_per_probe
+            })
+            st.dataframe(power_df)
 
-            # --- Plotting Setup ---
-            fig = plt.figure(figsize=(8, 6))
-            gs = fig.add_gridspec(1, 2, width_ratios=[10, 1])
-            ax_polar = fig.add_subplot(gs[0, 0], polar=True)
-            ax_cbar = fig.add_subplot(gs[0, 1])
+    with col2:
+        st.subheader("Angular Distribution of Target Clusters")
+        probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
+        clusters_sorted = sorted(clusters, key=lambda c: c.power, reverse=True)
+        cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters_sorted])
+        cluster_powers_db = np.array([c.power for c in clusters_sorted])
+        power_min, power_max = (cluster_powers_db.min(), cluster_powers_db.max()) if clusters_sorted else (0,0)
+        norm_powers = (cluster_powers_db - power_min) / (power_max - power_min) if (power_max - power_min) > 0 else np.ones_like(cluster_powers_db)
+        cmap = plt.get_cmap('plasma')
+        cluster_colors = cmap(norm_powers)
 
-            # --- Probe Plotting Logic ---
-            if dual_polarized:
-                v_angles, h_angles = probe_angles_rad - np.deg2rad(2), probe_angles_rad + np.deg2rad(2)
-                ax_polar.scatter(v_angles, np.ones(num_probes) * 1.1, s=80, c='blue', marker='o', label='V-Probes')
-                ax_polar.scatter(h_angles, np.ones(num_probes) * 1.1, s=80, c='red', marker='x', label='H-Probes')
-                for i in range(num_probes):
-                    ax_polar.text(v_angles[i], 1.2, str(2*i + 1), ha='center', va='center', fontsize=7, color='blue')
-                    ax_polar.text(h_angles[i], 1.2, str(2*i + 2), ha='center', va='center', fontsize=7, color='red')
-            else:
-                ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
-                for i, angle in enumerate(probe_angles_rad):
-                    ax_polar.text(angle, 1.2, str(i + 1), ha='center', va='center', fontsize=8, color='blue')
+        fig = plt.figure(figsize=(8, 6))
+        gs = fig.add_gridspec(1, 2, width_ratios=[10, 1])
+        ax_polar = fig.add_subplot(gs[0, 0], polar=True)
+        ax_cbar = fig.add_subplot(gs[0, 1])
 
-            # --- Cluster Plotting Logic ---
-            for i, (angle, color) in enumerate(zip(cluster_aods_rad, cluster_colors)):
-                ax_polar.plot([angle, angle], [0, 1], color=color, linewidth=2)
-            
-            ax_polar.set_title("Probe and Cluster Angles")
-            ax_polar.set_yticklabels([])
-            ax_polar.set_theta_zero_location('N')
-            ax_polar.set_theta_direction(-1)
-            ax_polar.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize='small')
+        if dual_polarized:
+            v_angles, h_angles = probe_angles_rad - np.deg2rad(2), probe_angles_rad + np.deg2rad(2)
+            ax_polar.scatter(v_angles, np.ones(num_probes) * 1.1, s=80, c='blue', marker='o', label='V-Probes')
+            ax_polar.scatter(h_angles, np.ones(num_probes) * 1.1, s=80, c='red', marker='x', label='H-Probes')
+            for i in range(num_probes):
+                ax_polar.text(v_angles[i], 1.2, str(2*i), ha='center', va='center', fontsize=7, color='blue')
+                ax_polar.text(h_angles[i], 1.2, str(2*i + 1), ha='center', va='center', fontsize=7, color='red')
+        else:
+            ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
+            for i, angle in enumerate(probe_angles_rad):
+                ax_polar.text(angle, 1.2, str(i), ha='center', va='center', fontsize=8, color='blue')
 
-            # --- Colorbar with Cluster Markers ---
-            sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=power_min, vmax=power_max))
-            cbar = fig.colorbar(sm, cax=ax_cbar)
-            cbar.set_label('Cluster Power (dB)', rotation=270, labelpad=15)
-            
-            # Add markers to the colorbar
-            cbar.ax.yaxis.set_ticks(cluster_powers_db, labels=[f"{i+1}" for i in range(len(clusters_sorted))])
-            cbar.ax.tick_params(axis='y', length=5, pad=2, labelsize='x-small')
+        for i, (angle, color) in enumerate(zip(cluster_aods_rad, cluster_colors)):
+            ax_polar.plot([angle, angle], [0, 1], color=color, linewidth=2)
+        
+        ax_polar.set_title("Probe and Target Cluster Angles")
+        ax_polar.set_yticklabels([])
+        ax_polar.set_theta_zero_location('N')
+        ax_polar.set_theta_direction(-1)
+        ax_polar.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize='small')
 
-            st.pyplot(fig)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=power_min, vmax=power_max))
+        cbar = fig.colorbar(sm, cax=ax_cbar)
+        cbar.set_label('Target Cluster Power (dB)', rotation=270, labelpad=15)
+        cbar.ax.yaxis.set_ticks(cluster_powers_db, labels=[f"{i+1}" for i in range(len(clusters_sorted))])
+        cbar.ax.tick_params(axis='y', length=5, pad=2, labelsize='x-small')
+        st.pyplot(fig)
 
-        with st.expander("Show Raw Matrix Data"):
-            st.write("A-Matrix (Magnitude)")
-            st.dataframe(np.abs(A_matrix))
-            st.write("A-Matrix (Phase)")
-            st.dataframe(np.angle(A_matrix))
-            st.write("H_target Matrix")
-            st.dataframe(H_target)
+    st.divider()
+
+    # --- Cluster-to-Probe Power Contribution Matrix ---
+    st.subheader("Cluster-to-Probe Power Contribution Matrix (dB, Centered)")
+    if cluster_probe_mapping:
+        # Create a DataFrame for cluster info (Delay, AoD)
+        cluster_info_df = pd.DataFrame([
+            {'Delay (s)': c.delay, 'AoD (deg)': c.aod_phi}
+            for c in clusters
+        ])
+        cluster_info_df.index.name = "Cluster ID"
+
+        # Create a DataFrame for the mapping
+        mapping_df = pd.DataFrame.from_dict(cluster_probe_mapping, orient='index')
+        
+        # Join them
+        full_mapping_df = cluster_info_df.join(mapping_df)
+
+        # Center the probe columns
+        probe_columns = [col for col in full_mapping_df.columns if isinstance(col, int)]
+        non_probe_columns = [col for col in full_mapping_df.columns if not isinstance(col, int)]
+        shift = len(probe_columns) // 2
+        shifted_probe_columns = list(np.roll(probe_columns, shift))
+        final_df = full_mapping_df[non_probe_columns + shifted_probe_columns]
+        
+        # Convert power contributions to dB
+        with np.errstate(divide='ignore'):
+            power_db_df = 10 * np.log10(final_df[shifted_probe_columns])
+        
+        # Combine info and power dataframes
+        display_df = final_df[non_probe_columns].copy()
+        for col in shifted_probe_columns:
+            display_df[col] = power_db_df[col]
+
+        st.dataframe(display_df.style.background_gradient(cmap='viridis', vmin=-80, vmax=0, axis=1, subset=shifted_probe_columns).format("{:.1f}", subset=shifted_probe_columns).format("{:.3e}", subset=['Delay (s)']).format("{:.2f}", subset=['AoD (deg)']))
+    else:
+        st.info("No cluster mapping data available for this synthesis method.")
+
+    with st.expander("Show Raw Matrix Data"):
+        st.write("Transmit Mapping Matrix A (Complex Values)")
+        st.dataframe(A_matrix)
+        st.write("H_target Matrix (Complex Values)")
+        st.dataframe(H_target)
 else:
     st.info("Please configure parameters and click 'Run Simulation'.")

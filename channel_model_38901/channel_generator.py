@@ -114,6 +114,10 @@ class ChannelGenerator:
                 delay=c_data['delay_ns'] * 1e-9,
                 power=normalized_power,
                 aod_phi=aod, aoa_phi=aoa, zod_theta=zod, zoa_theta=zoa,
+                as_aod=c_data.get('as_aod_deg', 0.0),
+                as_aoa=c_data.get('as_aoa_deg', 0.0),
+                as_zod=c_data.get('as_zod_deg', 0.0),
+                as_zoa=c_data.get('as_zoa_deg', 0.0),
                 k_n=10**(model_params.get('xpr_db', 11) / 10) # Use model-wide XPR
             )
             clusters.append(cluster)
@@ -134,6 +138,8 @@ class ChannelGenerator:
                 delay=tau_n[i], power=P_n[i],
                 aod_phi=angles['aod_phi'][i], aoa_phi=angles['aoa_phi'][i],
                 zod_theta=angles['zod_theta'][i], zoa_theta=angles['zoa_theta'][i],
+                as_aod=lsps.departure_azimuth_spread_deg, as_aoa=lsps.arrival_azimuth_spread_deg,
+                as_zod=lsps.departure_zenith_spread_deg, as_zoa=lsps.arrival_zenith_spread_deg,
                 k_n=k_n[i], initial_phases=initial_phases[i]
             ))
         return clusters
