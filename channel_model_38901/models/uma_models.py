@@ -5,17 +5,17 @@ from channel_model_38901.common.data_models import ScenarioConfig, LargeScalePar
 from channel_model_38901.parameters.parameter_loader import ParameterTables
 
 class UMa_ChannelCondition(ABC_ChannelConditionModel):
-    """Implementation of the UMa channel condition model."""
+    """UMa场景的信道条件模型实现。"""
 
     def get_condition(self, distance_2d: float, h_ut: float) -> bool:
         """
-        Calculates the LOS probability for the UMa scenario.
-        Refers to TR 38.901 Table 7.4.2-1.
+        计算UMa场景的LOS概率。
+        参考TR 38.901 表 7.4.2-1。
         """
         if distance_2d <= 18:
-            return True  # LOS condition
+            return True  # LOS
 
-        # C(d2D, hUT) calculation
+        # C(d2D, hUT) 计算
         if h_ut < 13:
             c_h_ut = 0
         elif 13 <= h_ut <= 23:
@@ -31,17 +31,17 @@ class UMa_ChannelCondition(ABC_ChannelConditionModel):
 
 class UMa_Pathloss(ABC_PathlossModel):
     """
-    Implementation of the UMa pathloss model.
-    Refers to TR 38.901 Table 7.4.1-1.
+    UMa场景的路径损耗模型实现。
+    参考TR 38.901 表 7.4.1-1。
     """
     def __init__(self, params: ParameterTables):
         self.params = params.get_scenario_params('UMa')
 
     def calculate_pathloss(self, config: ScenarioConfig, is_los: bool) -> float:
-        """Calculates the pathloss in dB for the UMa scenario."""
+        """计算UMa场景的路径损耗（dB）。"""
         fc_ghz = config.center_frequency_hz / 1e9
-        h_bs = config.bs_positions[0, 2]  # Assuming single BS
-        h_ut = config.ue_positions[0, 2]  # Assuming single UE
+        h_bs = config.bs_positions[0, 2]
+        h_ut = config.ue_positions[0, 2]
         
         d_2d = np.linalg.norm(config.bs_positions[0, :2] - config.ue_positions[0, :2])
         d_3d = np.linalg.norm(config.bs_positions[0] - config.ue_positions[0])
@@ -88,12 +88,12 @@ class UMa_Pathloss(ABC_PathlossModel):
         return pathloss
 
 class UMa_Fading(ABC_FadingModel):
-    """Implementation of the UMa large-scale fading model."""
+    """UMa场景的大尺度衰落模型实现。"""
     def __init__(self, params: ParameterTables):
         self.params = params.get_scenario_params('UMa')
 
     def generate_lsps(self, is_los: bool, fc_ghz: float, use_median_lsps: bool = False) -> LargeScaleParameters:
-        """Generates Large Scale Parameters for UMa scenario."""
+        """为UMa场景生成大尺度参数。"""
         lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
         lsp_params = self.params[lsp_set]
         correlations = lsp_params['correlations']
@@ -117,7 +117,7 @@ class UMa_Fading(ABC_FadingModel):
         if use_median_lsps:
             x = np.array(mu)
         else:
-            # Build correlation matrix
+            # 构建相关矩阵
             C = np.identity(len(param_order))
             for i, p1 in enumerate(param_order):
                 for j, p2 in enumerate(param_order):
@@ -126,24 +126,24 @@ class UMa_Fading(ABC_FadingModel):
                         if key in correlations:
                             C[i, j] = C[j, i] = correlations[key]
 
-            # Cholesky decomposition - with eigenvalue correction for non-positive definite matrices
+            # Cholesky分解 - 对非正定矩阵进行特征值修正
             try:
                 L = np.linalg.cholesky(C)
             except np.linalg.LinAlgError:
-                # Find the nearest positive-definite matrix
+                # 寻找最近的正定矩阵
                 eigenvalues, eigenvectors = np.linalg.eigh(C)
-                eigenvalues[eigenvalues < 1e-12] = 1e-12 # Replace negative eigenvalues
+                eigenvalues[eigenvalues < 1e-12] = 1e-12 # 替换负特征值
                 C_new = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
                 L = np.linalg.cholesky(C_new)
             
-            # Generate correlated random variables
+            # 生成相关的随机变量
             z = np.random.randn(len(param_order))
             y = L @ z
             
-            # Apply mu and sigma
+            # 应用均值和标准差
             x = np.array(mu) + y * np.array(sigma)
 
-        # Create LSP object, converting log-normal params
+        # 创建LSP对象，转换对数正态参数
         lsp_dict = dict(zip(param_order, x))
 
         return LargeScaleParameters(
@@ -153,6 +153,6 @@ class UMa_Fading(ABC_FadingModel):
             arrival_zenith_spread_deg=10**lsp_dict['ZSA'],
             shadow_fade_db=lsp_dict['SF'],
             k_factor_linear=10**(lsp_dict['K']/10) if 'K' in lsp_dict else 0.0,
-            # ZSD is handled differently in the standard, often derived from ZSA
-            departure_zenith_spread_deg=10**lsp_dict['ZSA'] # Placeholder
+            # ZSD在标准中处理方式不同，通常由ZSA导出
+            departure_zenith_spread_deg=10**lsp_dict['ZSA'] # 占位符
         )
