@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from mimo_ota_simulator.mimo_ota_simulator.simulator import MIMO_OTA_Simulator
-from mimo_ota_simulator.mimo_ota_simulator.data_models import AntennaArrayConfig
+from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+from mimo_ota_simulator.data_models import AntennaArrayConfig
 
 class TestDutLayout:
     def test_calculate_dut_ula_positions(self):
