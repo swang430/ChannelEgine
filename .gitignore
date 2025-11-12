@@ -73,4 +73,7 @@ venv.bak/
 .DS_Store
 
 # Specific to this project
-mimo_ota_simulator/channel_model_38901/# Statistical test cache files\ntests/cache/*.pkl
+mimo_ota_simulator/channel_model_38901/
+
+# Statistical test cache files
+tests/cache/*.pkl
