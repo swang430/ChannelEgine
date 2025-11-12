@@ -1,0 +1,492 @@
+{
+  "standard_version": "19.0.0",
+  "scenarios": {
+    "UMa": {
+      "pathloss_los": {
+        "formula_1": "28.0 + 22 * log10(d_3d) + 20 * log10(fc_ghz)",
+        "formula_2": "28.0 + 40 * log10(d_3d) + 20 * log10(fc_ghz) - 9 * log10((d_bp**2 + (h_bs - h_ut)**2))",
+        "shadow_fading_std_db": 4.0
+      },
+      "pathloss_nlos": {
+        "formula": "max(pathloss_los, 13.54 + 39.08 * log10(d_3d) + 20 * log10(fc_ghz) - 0.6 * (h_ut - 1.5))",
+        "shadow_fading_std_db": 6.0
+      },
+      "los_probability": {
+        "formula": "[18/d_2d + exp(-d_2d/63) * (1 - 18/d_2d)] * [1 + C(d_2d, h_ut) * (5/4) * (d_2d/100)**3 * exp(-d_2d/150)]",
+        "params": {
+          "C_h_ut_less_13": "0",
+          "C_h_ut_13_23": "((h_ut-13)/10)**1.5"
+        }
+      },
+      "lsp_parameters_los": {
+        "mu_log10_DS": "-7.067 - 0.0794 * log10(fc_ghz)", "sigma_log10_DS": "0.57 + 0.026 * log10(fc_ghz)",
+        "mu_log10_ASD": "0.92", "sigma_log10_ASD": "0.31",
+        "mu_log10_ASA": "1.76", "sigma_log10_ASA": "0.19",
+        "mu_log10_ZSA": "0.96", "sigma_log10_ZSA": "0.15",
+        "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+        "mu_log10_K": "9.0", "sigma_log10_K": "3.5",
+        "correlations": {
+          "DS_vs_SF": -0.4, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": -0.4,
+          "K_vs_DS": -0.2, "K_vs_SF": 0.5, "ASD_vs_DS": 0.4, "ASA_vs_SF": -0.4,
+          "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.5, "ZSA_vs_ASA": -0.1
+        }
+      },
+      "lsp_parameters_nlos": {
+        "mu_log10_DS": "-6.47 - 0.134 * log10(fc_ghz)", "sigma_log10_DS": "0.39",
+        "mu_log10_ASD": "1.09", "sigma_log10_ASD": "0.44",
+        "mu_log10_ASA": "2.04 - 0.25 * log10(fc_ghz)", "sigma_log10_ASA": "0.17 - 0.03 * log10(fc_ghz)",
+        "mu_log10_ZSA": "-0.2856 * log10(fc_ghz) + 1.445", "sigma_log10_ZSA": "0.17",
+        "mu_log10_SF": "0", "sigma_log10_SF": "6.0",
+        "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+        "correlations": {
+            "DS_vs_SF": -0.5, "ASA_vs_DS": 0.6, "ASD_vs_SF": -0.8, "ZSA_vs_SF": -0.5,
+            "ASD_vs_DS": 0.4, "ASA_vs_SF": -0.6, "ZSA_vs_DS": 0.4, "ZSA_vs_ASD": 0.2,
+            "ZSA_vs_ASA": 0
+        }
+      },
+      "num_clusters_los": 12,
+      "num_clusters_nlos": 20,
+      "delay_scaling_factor": 2.3,
+      "xpr_mu_los": 8, "xpr_sigma_los": 4,
+      "xpr_mu_nlos": 7, "xpr_sigma_nlos": 3,
+      "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "UMi-StreetCanyon": {
+        "pathloss_los": {
+        "formula_1": "32.4 + 21 * log10(d_3d) + 20 * log10(fc_ghz)",
+        "formula_2": "32.4 + 40 * log10(d_3d) + 20 * log10(fc_ghz) - 9.5 * log10((d_bp**2 + (h_bs - h_ut)**2))",
+        "shadow_fading_std_db": 4.0
+      },
+      "pathloss_nlos": {
+        "formula": "max(pathloss_los, 35.3 * log10(d_3d) + 22.4 + 21.3 * log10(fc_ghz) - 0.3 * (h_ut - 1.5))",
+        "shadow_fading_std_db": 7.82
+      },
+      "los_probability": {
+        "formula": "18/d_2d + exp(-d_2d/36) * (1 - 18/d_2d)",
+        "params": {}
+      },
+      "lsp_parameters_los": {
+        "mu_log10_DS": "-0.18 * log10(1 + fc_ghz) - 7.28", "sigma_log10_DS": "0.39",
+        "mu_log10_ASD": "-0.05 * log10(1 + fc_ghz) + 1.21", "sigma_log10_ASD": "0.08 * log10(1 + fc_ghz) + 0.29",
+        "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.66", "sigma_log10_ASA": "0.021 * log10(1 + fc_ghz) + 0.26",
+        "mu_log10_ZSA": "-0.11 * log10(1 + fc_ghz) + 0.81", "sigma_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.29",
+        "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+        "mu_log10_K": "9.0", "sigma_log10_K": "5.0",
+        "correlations": {
+          "DS_vs_SF": -0.4, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": 0.0,
+          "K_vs_DS": -0.7, "K_vs_SF": 0.5, "ASD_vs_DS": 0.5, "ASA_vs_SF": -0.4,
+          "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.5, "ZSA_vs_ASA": 0.0
+        }
+      },
+      "lsp_parameters_nlos": {
+        "mu_log10_DS": "-0.22 * log10(1 + fc_ghz) - 6.87", "sigma_log10_DS": "0.19 * log10(1 + fc_ghz) + 0.22",
+        "mu_log10_ASD": "-0.24 * log10(1 + fc_ghz) + 1.54", "sigma_log10_ASD": "0.10 * log10(1 + fc_ghz) + 0.33",
+        "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.76", "sigma_log10_ASA": "0.05 * log10(1 + fc_ghz) + 0.27",
+        "mu_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.92", "sigma_log10_ZSA": "-0.05 * log10(1 + fc_ghz) + 0.35",
+        "mu_log10_SF": "0", "sigma_log10_SF": "7.82",
+        "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+        "correlations": {
+            "DS_vs_SF": -0.4, "ASA_vs_DS": 0.4, "ASD_vs_SF": -0.7, "ZSA_vs_SF": 0.0,
+            "ASD_vs_DS": 0.0, "ASA_vs_SF": -0.4, "ZSA_vs_DS": 0.5, "ZSA_vs_ASD": 0.5,
+            "ZSA_vs_ASA": 0.2
+        }
+      },
+      "num_clusters_los": 12,
+      "num_clusters_nlos": 19,
+      "delay_scaling_factor": 2.1,
+      "xpr_mu_los": 9, "xpr_sigma_los": 3,
+      "xpr_mu_nlos": 8, "xpr_sigma_nlos": 3,
+      "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "UMi-OpenArea": {
+        "pathloss_los": {
+            "formula_1": "32.4 + 21 * log10(d_3d) + 20 * log10(fc_ghz)",
+            "formula_2": "32.4 + 40 * log10(d_3d) + 20 * log10(fc_ghz) - 9.5 * log10((d_bp**2 + (h_bs - h_ut)**2))",
+            "shadow_fading_std_db": 4.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 35.3 * log10(d_3d) + 22.4 + 21.3 * log10(fc_ghz) - 0.3 * (h_ut - 1.5))",
+            "shadow_fading_std_db": 7.82
+        },
+        "los_probability": {
+            "formula": "1.0",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-0.18 * log10(1 + fc_ghz) - 7.28", "sigma_log10_DS": "0.39",
+            "mu_log10_ASD": "-0.05 * log10(1 + fc_ghz) + 1.21", "sigma_log10_ASD": "0.08 * log10(1 + fc_ghz) + 0.29",
+            "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.66", "sigma_log10_ASA": "0.021 * log10(1 + fc_ghz) + 0.26",
+            "mu_log10_ZSA": "-0.11 * log10(1 + fc_ghz) + 0.81", "sigma_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.29",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+            "mu_log10_K": "9.0", "sigma_log10_K": "5.0",
+            "correlations": {
+              "DS_vs_SF": -0.4, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": 0.0,
+              "K_vs_DS": -0.7, "K_vs_SF": 0.5, "ASD_vs_DS": 0.5, "ASA_vs_SF": -0.4,
+              "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.5, "ZSA_vs_ASA": 0.0
+            }
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-0.22 * log10(1 + fc_ghz) - 6.87", "sigma_log10_DS": "0.19 * log10(1 + fc_ghz) + 0.22",
+            "mu_log10_ASD": "-0.24 * log10(1 + fc_ghz) + 1.54", "sigma_log10_ASD": "0.10 * log10(1 + fc_ghz) + 0.33",
+            "mu_log10_ASA": "-0.07 * log10(1 + fc_ghz) + 1.76", "sigma_log10_ASA": "0.05 * log10(1 + fc_ghz) + 0.27",
+            "mu_log10_ZSA": "-0.03 * log10(1 + fc_ghz) + 0.92", "sigma_log10_ZSA": "-0.05 * log10(1 + fc_ghz) + 0.35",
+            "mu_log10_SF": "0", "sigma_log10_SF": "7.82",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {
+                "DS_vs_SF": -0.4, "ASA_vs_DS": 0.4, "ASD_vs_SF": -0.7, "ZSA_vs_SF": 0.0,
+                "ASD_vs_DS": 0.0, "ASA_vs_SF": -0.4, "ZSA_vs_DS": 0.5, "ZSA_vs_ASD": 0.5,
+                "ZSA_vs_ASA": 0.2
+            }
+        },
+        "num_clusters_los": 12,
+        "num_clusters_nlos": 19,
+        "delay_scaling_factor": 2.1,
+        "xpr_mu_los": 9, "xpr_sigma_los": 3,
+        "xpr_mu_nlos": 8, "xpr_sigma_nlos": 3,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "RMa": {
+        "pathloss_los": {
+            "formula_1": "20 * log10(40 * np.pi * d_3d * fc_ghz / 3) + min(0.03 * h_bs**1.72, 10) * log10(d_3d) - min(0.044 * h_bs**1.72, 14.77) + 0.002 * log10(h_bs) * d_3d",
+            "formula_2": "20 * log10(40 * np.pi * d_bp * fc_ghz / 3) + 40 * log10(d_3d / d_bp)",
+            "shadow_fading_std_db": 4.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 161.04 - 7.1 * log10(W) + 7.5 * log10(h) - (24.37 - 3.7 * (h / h_bs)**2) * log10(h_bs) + (43.42 - 3.1 * log10(h_bs)) * (log10(d_3d) - 3) + 20 * log10(fc_ghz) - (3.2 * (log10(11.75 * h_ut))**2 - 4.97))",
+            "shadow_fading_std_db": 8.0
+        },
+        "los_probability": {
+            "formula": "exp(-(d_2d - 10) / 1000)",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-7.49", "sigma_log10_DS": "0.55",
+            "mu_log10_ASD": "0.90", "sigma_log10_ASD": "0.38",
+            "mu_log10_ASA": "1.52", "sigma_log10_ASA": "0.24",
+            "mu_log10_ZSA": "0.47", "sigma_log10_ZSA": "0.40",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+            "mu_log10_K": "7.0", "sigma_log10_K": "4.0",
+            "correlations": {
+                "DS_vs_SF": -0.5, "ASA_vs_DS": 0.0, "ASD_vs_SF": 0.6, "ZSA_vs_SF": -0.04,
+                "K_vs_DS": 0.0, "K_vs_SF": 0.0, "ASD_vs_DS": 0.0, "ASA_vs_SF": 0.0,
+                "ZSA_vs_DS": -0.05, "ZSA_vs_ASD": 0.73, "ZSA_vs_ASA": -0.20
+            }
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-7.43", "sigma_log10_DS": "0.48",
+            "mu_log10_ASD": "0.95", "sigma_log10_ASD": "0.45",
+            "mu_log10_ASA": "1.52", "sigma_log10_ASA": "0.13",
+            "mu_log10_ZSA": "0.58", "sigma_log10_ZSA": "0.37",
+            "mu_log10_SF": "0", "sigma_log10_SF": "6.0",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {
+                "DS_vs_SF": -0.4, "ASA_vs_DS": 0.0, "ASD_vs_SF": 0.6, "ZSA_vs_SF": -0.25,
+                "ASD_vs_DS": -0.4, "ASA_vs_SF": 0.0, "ZSA_vs_DS": -0.10, "ZSA_vs_ASD": 0.42,
+                "ZSA_vs_ASA": 0.26
+            }
+        },
+        "num_clusters_los": 11,
+        "num_clusters_nlos": 10,
+        "delay_scaling_factor": 3.8,
+        "xpr_mu_los": 12, "xpr_sigma_los": 4,
+        "xpr_mu_nlos": 7, "xpr_sigma_nlos": 3,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "InH-Office": {
+        "pathloss_los": {
+            "formula_1": "32.4 + 17.3 * log10(d_3d) + 20 * log10(fc_ghz)",
+            "shadow_fading_std_db": 3.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 38.3 * log10(d_3d) + 17.30 + 24.9 * log10(fc_ghz))",
+            "shadow_fading_std_db": 8.03
+        },
+        "los_probability": {
+            "formula": "1.0 if d_2d <= 1.2 else (1.2 / d_2d) * (1 - exp(-d_2d / 4.7)) + exp(-d_2d / 4.7) if d_2d <= 6.5 else 0.32 * exp(-(d_2d - 6.5) / 32.6)",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-0.01 * log10(1 + fc_ghz) - 7.692", "sigma_log10_DS": "0.18",
+            "mu_log10_ASD": "1.60", "sigma_log10_ASD": "0.18",
+            "mu_log10_ASA": "-0.19 * log10(1 + fc_ghz) + 1.781", "sigma_log10_ASA": "0.12 * log10(1 + fc_ghz) + 0.119",
+            "mu_log10_ZSA": "-0.26 * log10(1 + fc_ghz) + 1.44", "sigma_log10_ZSA": "-0.04 * log10(1 + fc_ghz) + 0.264",
+            "mu_log10_SF": "0", "sigma_log10_SF": "3.0",
+            "mu_log10_K": "7.0", "sigma_log10_K": "4.0",
+            "correlations": {
+                "DS_vs_SF": -0.8, "ASA_vs_DS": 0.8, "ASD_vs_SF": -0.5, "ZSA_vs_SF": 0.2,
+                "K_vs_DS": 0.0, "K_vs_SF": 0.0, "ASD_vs_DS": 0.0, "ASA_vs_SF": -0.5,
+                "ZSA_vs_DS": 0.2, "ZSA_vs_ASD": 0.0, "ZSA_vs_ASA": 0.5
+            }
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-0.28 * log10(1 + fc_ghz) - 7.173", "sigma_log10_DS": "0.10 * log10(1 + fc_ghz) + 0.055",
+            "mu_log10_ASD": "1.62", "sigma_log10_ASD": "0.25",
+            "mu_log10_ASA": "-0.11 * log10(1 + fc_ghz) + 1.863", "sigma_log10_ASA": "0.12 * log10(1 + fc_ghz) + 0.059",
+            "mu_log10_ZSA": "-0.15 * log10(1 + fc_ghz) + 1.387", "sigma_log10_ZSA": "-0.09 * log10(1 + fc_ghz) + 0.746",
+            "mu_log10_SF": "0", "sigma_log10_SF": "8.03",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {
+                "DS_vs_SF": -0.5, "ASA_vs_DS": 0.0, "ASD_vs_SF": -0.4, "ZSA_vs_SF": 0.3,
+                "ASD_vs_DS": 0.5, "ASA_vs_SF": -0.4, "ZSA_vs_DS": 0.08, "ZSA_vs_ASD": 0.35,
+                "ZSA_vs_ASA": 0.43
+            }
+        },
+        "num_clusters_los": 15,
+        "num_clusters_nlos": 19,
+        "delay_scaling_factor": 3.6,
+        "xpr_mu_los": 11, "xpr_sigma_los": 4,
+        "xpr_mu_nlos": 10, "xpr_sigma_nlos": 4,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "SMa": {
+        "pathloss_los": {
+            "formula_1": "20 * log10(40 * np.pi * d_3d * fc_ghz / 3) + min(0.03 * h_bs**1.72, 10) * log10(d_3d) - min(0.044 * h_bs**1.72, 14.77) + 0.002 * log10(h_bs) * d_3d",
+            "formula_2": "20 * log10(40 * np.pi * d_bp * fc_ghz / 3) + 40 * log10(d_3d / d_bp)",
+            "shadow_fading_std_db": 4.0
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 161.04 - 7.1 * log10(W) + 7.5 * log10(h) - (24.37 - 3.7 * (h / h_bs)**2) * log10(h_bs) + (43.42 - 3.1 * log10(h_bs)) * (log10(d_3d) - 3) + 20 * log10(fc_ghz) - (3.2 * (log10(11.75 * h_ut))**2 - 4.97))",
+            "shadow_fading_std_db": 8.0
+        },
+        "los_probability": {},
+        "lsp_parameters_los": {
+            "mu_log10_DS": "-7.42", "sigma_log10_DS": "0.60",
+            "mu_log10_ASD": "0.48", "sigma_log10_ASD": "0.27",
+            "mu_log10_ASA": "1.43", "sigma_log10_ASA": "0.12",
+            "mu_log10_ZSA": "1.18", "sigma_log10_ZSA": "0.05",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.0",
+            "mu_log10_K": "9.0", "sigma_log10_K": "7.0",
+            "correlations": {}
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "-7.20", "sigma_log10_DS": "0.58",
+            "mu_log10_ASD": "0.51", "sigma_log10_ASD": "0.33",
+            "mu_log10_ASA": "1.63", "sigma_log10_ASA": "0.26",
+            "mu_log10_ZSA": "1.16", "sigma_log10_ZSA": "0.14",
+            "mu_log10_SF": "0", "sigma_log10_SF": "6.0",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {}
+        },
+        "num_clusters_los": 15,
+        "num_clusters_nlos": 14,
+        "delay_scaling_factor": 2.4,
+        "xpr_mu_los": 8, "xpr_sigma_los": 4,
+        "xpr_mu_nlos": 4, "xpr_sigma_nlos": 3,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    },
+    "InF": {
+        "pathloss_los": {
+            "formula_1": "31.84 + 21.5 * log10(d_3d) + 19.0 * log10(fc_ghz)",
+            "shadow_fading_std_db": 4.3
+        },
+        "pathloss_nlos": {
+            "formula": "max(pathloss_los, 33.0 + 25.5 * log10(d_3d) + 20.0 * log10(fc_ghz))",
+            "shadow_fading_std_db": 5.7
+        },
+        "los_probability": {
+            "formula": "1.0 if d_2d <= 5 else exp(-(d_2d - 5) / 70.8) if d_2d <= 49 else 0.54 * exp(-(d_2d - 49) / 211.7)",
+            "params": {}
+        },
+        "lsp_parameters_los": {
+            "mu_log10_DS": "log10(26*(V/S)+14)-9.35", "sigma_log10_DS": "0.15",
+            "mu_log10_ASD": "1.56", "sigma_log10_ASD": "0.25",
+            "mu_log10_ASA": "-0.18 * log10(1 + fc_ghz) + 1.78", "sigma_log10_ASA": "0.12 * log10(1 + fc_ghz) + 0.2",
+            "mu_log10_ZSA": "-0.2 * log10(1 + fc_ghz) + 1.5", "sigma_log10_ZSA": "0.35",
+            "mu_log10_SF": "0", "sigma_log10_SF": "4.3",
+            "mu_log10_K": "7.0", "sigma_log10_K": "8.0",
+            "correlations": {}
+        },
+        "lsp_parameters_nlos": {
+            "mu_log10_DS": "log10(30*(V/S)+32)-9.44", "sigma_log10_DS": "0.19",
+            "mu_log10_ASD": "1.57", "sigma_log10_ASD": "0.2",
+            "mu_log10_ASA": "1.72", "sigma_log10_ASA": "0.3",
+            "mu_log10_ZSA": "-0.13 * log10(1 + fc_ghz) + 1.45", "sigma_log10_ZSA": "0.45",
+            "mu_log10_SF": "0", "sigma_log10_SF": "5.7",
+            "mu_log10_K": "N/A", "sigma_log10_K": "N/A",
+            "correlations": {}
+        },
+        "num_clusters_los": 25,
+        "num_clusters_nlos": 25,
+        "delay_scaling_factor": 2.7,
+        "xpr_mu_los": 12, "xpr_sigma_los": 6,
+        "xpr_mu_nlos": 11, "xpr_sigma_nlos": 6,
+        "V": 10000, "S": 1000,
+        "ray_angle_offsets_deg": [0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551]
+    }
+  },
+  "cdl_models": {
+    "CDL-A": {
+  "name": "CDL-A",
+  "condition": "NLOS",
+  "num_tx_antennas": 2,
+  "num_rx_antennas": 2,
+  "xpr_db": 10,
+  "clusters": [
+    {"id": 1, "delay_ns": 0.0, "power_db": -13.4, "aod_deg": -178.1, "aoa_deg": 51.3, "zod_deg": 50.2, "zoa_deg": 125.4},
+    {"id": 2, "delay_ns": 381.9, "power_db": 0.0, "aod_deg": -4.2, "aoa_deg": -152.7, "zod_deg": 93.2, "zoa_deg": 91.3},
+    {"id": 3, "delay_ns": 402.5, "power_db": -2.2, "aod_deg": -4.2, "aoa_deg": -152.7, "zod_deg": 93.2, "zoa_deg": 91.3},
+    {"id": 4, "delay_ns": 586.8, "power_db": -4.0, "aod_deg": -4.2, "aoa_deg": -152.7, "zod_deg": 93.2, "zoa_deg": 91.3},
+    {"id": 5, "delay_ns": 461.0, "power_db": -6.0, "aod_deg": 90.2, "aoa_deg": 76.6, "zod_deg": 122.0, "zoa_deg": 94.0},
+    {"id": 6, "delay_ns": 537.5, "power_db": -8.2, "aod_deg": 90.2, "aoa_deg": 76.6, "zod_deg": 122.0, "zoa_deg": 94.0},
+    {"id": 7, "delay_ns": 670.8, "power_db": -9.9, "aod_deg": 90.2, "aoa_deg": 76.6, "zod_deg": 122.0, "zoa_deg": 94.0},
+    {"id": 8, "delay_ns": 575.0, "power_db": -10.5, "aod_deg": 121.5, "aoa_deg": -1.8, "zod_deg": 150.2, "zoa_deg": 47.1},
+    {"id": 9, "delay_ns": 761.8, "power_db": -7.5, "aod_deg": -81.7, "aoa_deg": -41.9, "zod_deg": 55.2, "zoa_deg": 56.0},
+    {"id": 10, "delay_ns": 1537.5, "power_db": -15.9, "aod_deg": 158.4, "aoa_deg": 94.2, "zod_deg": 26.4, "zoa_deg": 30.1},
+    {"id": 11, "delay_ns": 1897.8, "power_db": -6.6, "aod_deg": -83.0, "aoa_deg": 51.9, "zod_deg": 126.4, "zoa_deg": 58.8},
+    {"id": 12, "delay_ns": 2224.2, "power_db": -16.7, "aod_deg": 134.8, "aoa_deg": -115.9, "zod_deg": 171.6, "zoa_deg": 26.0},
+    {"id": 13, "delay_ns": 2171.8, "power_db": -12.4, "aod_deg": -153.0, "aoa_deg": 26.6, "zod_deg": 151.4, "zoa_deg": 49.2},
+    {"id": 14, "delay_ns": 2494.2, "power_db": -15.2, "aod_deg": -172.0, "aoa_deg": 76.6, "zod_deg": 157.2, "zoa_deg": 143.1},
+    {"id": 15, "delay_ns": 2511.9, "power_db": -10.8, "aod_deg": -129.9, "aoa_deg": -7.0, "zod_deg": 47.2, "zoa_deg": 117.4},
+    {"id": 16, "delay_ns": 3058.2, "power_db": -11.3, "aod_deg": -136.0, "aoa_deg": -23.0, "zod_deg": 40.4, "zoa_deg": 122.7},
+    {"id": 17, "delay_ns": 4081.0, "power_db": -12.7, "aod_deg": 165.4, "aoa_deg": -47.2, "zod_deg": 43.3, "zoa_deg": 123.2},
+    {"id": 18, "delay_ns": 4457.9, "power_db": -16.2, "aod_deg": 148.4, "aoa_deg": 110.4, "zod_deg": 161.8, "zoa_deg": 32.6},
+    {"id": 19, "delay_ns": 4569.5, "power_db": -18.3, "aod_deg": 132.7, "aoa_deg": 144.5, "zod_deg": 10.8, "zoa_deg": 27.2},
+    {"id": 20, "delay_ns": 4796.6, "power_db": -18.9, "aod_deg": -118.6, "aoa_deg": 155.3, "zod_deg": 16.7, "zoa_deg": 15.2},
+    {"id": 21, "delay_ns": 5006.6, "power_db": -16.6, "aod_deg": -154.1, "aoa_deg": 102.0, "zod_deg": 171.7, "zoa_deg": 146.0},
+    {"id": 22, "delay_ns": 5304.3, "power_db": -19.9, "aod_deg": 126.5, "aoa_deg": -151.8, "zod_deg": 22.7, "zoa_deg": 150.7},
+    {"id": 23, "delay_ns": 9658.6, "power_db": -29.7, "aod_deg": -56.2, "aoa_deg": 55.2, "zod_deg": 144.9, "zoa_deg": 156.1}
+  ]
+},
+    "CDL-B": {
+  "name": "CDL-B",
+  "condition": "NLOS",
+  "num_tx_antennas": 2,
+  "num_rx_antennas": 2,
+  "xpr_db": 8,
+  "clusters": [
+    {"id": 1, "delay_ns": 0.0, "power_db": 0.0, "aod_deg": 9.3, "aoa_deg": -173.3, "zod_deg": 105.8, "zoa_deg": 78.9},
+    {"id": 2, "delay_ns": 107.2, "power_db": -2.2, "aod_deg": 9.3, "aoa_deg": -173.3, "zod_deg": 105.8, "zoa_deg": 78.9},
+    {"id": 3, "delay_ns": 215.5, "power_db": -4.0, "aod_deg": 9.3, "aoa_deg": -173.3, "zod_deg": 105.8, "zoa_deg": 78.9},
+    {"id": 4, "delay_ns": 209.5, "power_db": -3.2, "aod_deg": -34.1, "aoa_deg": 125.5, "zod_deg": 115.3, "zoa_deg": 63.3},
+    {"id": 5, "delay_ns": 287.0, "power_db": -9.8, "aod_deg": -65.4, "aoa_deg": -88.0, "zod_deg": 119.3, "zoa_deg": 59.9},
+    {"id": 6, "delay_ns": 298.6, "power_db": -1.2, "aod_deg": -11.4, "aoa_deg": 155.1, "zod_deg": 103.2, "zoa_deg": 67.5},
+    {"id": 7, "delay_ns": 375.2, "power_db": -3.4, "aod_deg": -11.4, "aoa_deg": 155.1, "zod_deg": 103.2, "zoa_deg": 67.5},
+    {"id": 8, "delay_ns": 505.5, "power_db": -5.2, "aod_deg": -11.4, "aoa_deg": 155.1, "zod_deg": 103.2, "zoa_deg": 67.5},
+    {"id": 9, "delay_ns": 368.1, "power_db": -7.6, "aod_deg": -67.2, "aoa_deg": -89.8, "zod_deg": 118.2, "zoa_deg": 82.6},
+    {"id": 10, "delay_ns": 369.7, "power_db": -3.0, "aod_deg": 52.5, "aoa_deg": 132.1, "zod_deg": 102.0, "zoa_deg": 66.3},
+    {"id": 11, "delay_ns": 570.0, "power_db": -8.9, "aod_deg": -72.0, "aoa_deg": -83.6, "zod_deg": 100.4, "zoa_deg": 61.6},
+    {"id": 12, "delay_ns": 528.3, "power_db": -9.0, "aod_deg": 74.3, "aoa_deg": 95.3, "zod_deg": 98.3, "zoa_deg": 58.0},
+    {"id": 13, "delay_ns": 1102.1, "power_db": -4.8, "aod_deg": -52.2, "aoa_deg": 103.7, "zod_deg": 103.4, "zoa_deg": 78.2},
+    {"id": 14, "delay_ns": 1275.6, "power_db": -5.7, "aod_deg": -50.5, "aoa_deg": -87.8, "zod_deg": 102.5, "zoa_deg": 82.0},
+    {"id": 15, "delay_ns": 1547.4, "power_db": -7.5, "aod_deg": 61.4, "aoa_deg": -92.5, "zod_deg": 101.4, "zoa_deg": 62.4},
+    {"id": 16, "delay_ns": 1784.2, "power_db": -1.9, "aod_deg": 30.6, "aoa_deg": -139.1, "zod_deg": 103.0, "zoa_deg": 78.0},
+    {"id": 17, "delay_ns": 2016.9, "power_db": -7.6, "aod_deg": -72.5, "aoa_deg": -90.6, "zod_deg": 100.0, "zoa_deg": 60.9},
+    {"id": 18, "delay_ns": 2829.4, "power_db": -12.2, "aod_deg": -90.6, "aoa_deg": 58.6, "zod_deg": 115.2, "zoa_deg": 82.9},
+    {"id": 19, "delay_ns": 3021.9, "power_db": -9.8, "aod_deg": -77.6, "aoa_deg": -79.0, "zod_deg": 100.5, "zoa_deg": 60.8},
+    {"id": 20, "delay_ns": 3618.7, "power_db": -11.4, "aod_deg": -82.6, "aoa_deg": 65.8, "zod_deg": 119.6, "zoa_deg": 57.3},
+    {"id": 21, "delay_ns": 4106.7, "power_db": -14.9, "aod_deg": -103.6, "aoa_deg": 52.7, "zod_deg": 118.7, "zoa_deg": 59.9},
+    {"id": 22, "delay_ns": 4279.0, "power_db": -9.2, "aod_deg": 75.6, "aoa_deg": 88.7, "zod_deg": 117.8, "zoa_deg": 60.1},
+    {"id": 23, "delay_ns": 4783.4, "power_db": -11.3, "aod_deg": -77.6, "aoa_deg": -88.7, "zod_deg": 115.7, "zoa_deg": 62.3}
+  ]
+},
+    "CDL-C": {
+  "name": "CDL-C",
+  "condition": "NLOS",
+  "num_tx_antennas": 2,
+  "num_rx_antennas": 2,
+  "xpr_db": 7,
+  "clusters": [
+    {"id": 1, "delay_ns": 0.0, "power_db": -4.4, "aod_deg": -46.6, "aoa_deg": -101.0, "zod_deg": 97.2, "zoa_deg": 87.6},
+    {"id": 2, "delay_ns": 209.9, "power_db": -1.2, "aod_deg": -22.8, "aoa_deg": 120.0, "zod_deg": 98.6, "zoa_deg": 72.1},
+    {"id": 3, "delay_ns": 221.9, "power_db": -3.5, "aod_deg": -22.8, "aoa_deg": 120.0, "zod_deg": 98.6, "zoa_deg": 72.1},
+    {"id": 4, "delay_ns": 232.9, "power_db": -5.2, "aod_deg": -22.8, "aoa_deg": 120.0, "zod_deg": 98.6, "zoa_deg": 72.1},
+    {"id": 5, "delay_ns": 217.6, "power_db": -2.5, "aod_deg": -40.7, "aoa_deg": -127.5, "zod_deg": 100.6, "zoa_deg": 70.1},
+    {"id": 6, "delay_ns": 636.6, "power_db": 0.0, "aod_deg": 0.3, "aoa_deg": 170.4, "zod_deg": 99.2, "zoa_deg": 75.3},
+    {"id": 7, "delay_ns": 644.8, "power_db": -2.2, "aod_deg": 0.3, "aoa_deg": 170.4, "zod_deg": 99.2, "zoa_deg": 75.3},
+    {"id": 8, "delay_ns": 656.0, "power_db": -3.9, "aod_deg": 0.3, "aoa_deg": 170.4, "zod_deg": 99.2, "zoa_deg": 75.3},
+    {"id": 9, "delay_ns": 658.4, "power_db": -7.4, "aod_deg": 73.1, "aoa_deg": 55.4, "zod_deg": 105.2, "zoa_deg": 67.4},
+    {"id": 10, "delay_ns": 793.5, "power_db": -7.1, "aod_deg": -64.5, "aoa_deg": 66.5, "zod_deg": 95.3, "zoa_deg": 63.8},
+    {"id": 11, "delay_ns": 821.3, "power_db": -10.7, "aod_deg": 80.2, "aoa_deg": -48.1, "zod_deg": 106.1, "zoa_deg": 71.4},
+    {"id": 12, "delay_ns": 933.6, "power_db": -11.1, "aod_deg": -97.1, "aoa_deg": 46.9, "zod_deg": 93.5, "zoa_deg": 60.5},
+    {"id": 13, "delay_ns": 1228.5, "power_db": -5.1, "aod_deg": -55.3, "aoa_deg": 68.1, "zod_deg": 103.7, "zoa_deg": 90.6},
+    {"id": 14, "delay_ns": 1308.3, "power_db": -6.8, "aod_deg": -64.3, "aoa_deg": -68.7, "zod_deg": 104.2, "zoa_deg": 60.1},
+    {"id": 15, "delay_ns": 2170.4, "power_db": -8.7, "aod_deg": -78.5, "aoa_deg": 81.5, "zod_deg": 93.0, "zoa_deg": 61.0},
+    {"id": 16, "delay_ns": 2710.5, "power_db": -13.2, "aod_deg": 102.7, "aoa_deg": 30.7, "zod_deg": 104.2, "zoa_deg": 100.7},
+    {"id": 17, "delay_ns": 4258.9, "power_db": -13.9, "aod_deg": 99.2, "aoa_deg": -16.4, "zod_deg": 94.9, "zoa_deg": 62.3},
+    {"id": 18, "delay_ns": 4600.3, "power_db": -13.9, "aod_deg": 88.8, "aoa_deg": 3.8, "zod_deg": 93.1, "zoa_deg": 66.7},
+    {"id": 19, "delay_ns": 5490.2, "power_db": -15.8, "aod_deg": -101.9, "aoa_deg": -13.7, "zod_deg": 92.2, "zoa_deg": 52.9},
+    {"id": 20, "delay_ns": 5607.7, "power_db": -17.1, "aod_deg": 92.2, "aoa_deg": 9.7, "zod_deg": 106.7, "zoa_deg": 61.8},
+    {"id": 21, "delay_ns": 6306.5, "power_db": -16.0, "aod_deg": 93.3, "aoa_deg": 5.6, "zod_deg": 93.0, "zoa_deg": 51.9},
+    {"id": 22, "delay_ns": 6637.4, "power_db": -15.7, "aod_deg": 106.6, "aoa_deg": 0.7, "zod_deg": 92.9, "zoa_deg": 61.7},
+    {"id": 23, "delay_ns": 7042.7, "power_db": -21.6, "aod_deg": 119.5, "aoa_deg": -21.9, "zod_deg": 105.2, "zoa_deg": 58.0},
+    {"id": 24, "delay_ns": 8652.3, "power_db": -22.8, "aod_deg": -123.8, "aoa_deg": 33.6, "zod_deg": 107.8, "zoa_deg": 57.0}
+  ]
+},
+    "CDL-D": {
+  "name": "CDL-D",
+  "condition": "LOS",
+  "num_tx_antennas": 2,
+  "num_rx_antennas": 2,
+  "xpr_db": 11,
+  "clusters": [
+    {"id": 1, "delay_ns": 0.0, "power_db": -0.2, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 98.5, "zoa_deg": 81.5},
+    {"id": 2, "delay_ns": 0.0, "power_db": -13.5, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 98.5, "zoa_deg": 81.5},
+    {"id": 3, "delay_ns": 35.0, "power_db": -18.8, "aod_deg": 89.2, "aoa_deg": 89.2, "zod_deg": 85.5, "zoa_deg": 86.9},
+    {"id": 4, "delay_ns": 612.0, "power_db": -21.0, "aod_deg": 89.2, "aoa_deg": 89.2, "zod_deg": 85.5, "zoa_deg": 86.9},
+    {"id": 5, "delay_ns": 1363.0, "power_db": -22.8, "aod_deg": 89.2, "aoa_deg": 89.2, "zod_deg": 85.5, "zoa_deg": 86.9},
+    {"id": 6, "delay_ns": 1405.0, "power_db": -17.9, "aod_deg": 13.0, "aoa_deg": 163.0, "zod_deg": 97.5, "zoa_deg": 79.4},
+    {"id": 7, "delay_ns": 1804.0, "power_db": -20.1, "aod_deg": 13.0, "aoa_deg": 163.0, "zod_deg": 97.5, "zoa_deg": 79.4},
+    {"id": 8, "delay_ns": 2596.0, "power_db": -21.9, "aod_deg": 13.0, "aoa_deg": 163.0, "zod_deg": 97.5, "zoa_deg": 79.4},
+    {"id": 9, "delay_ns": 1775.0, "power_db": -22.9, "aod_deg": 34.6, "aoa_deg": -137.0, "zod_deg": 98.5, "zoa_deg": 78.2},
+    {"id": 10, "delay_ns": 4042.0, "power_db": -27.8, "aod_deg": -64.5, "aoa_deg": 74.5, "zod_deg": 88.4, "zoa_deg": 73.6},
+    {"id": 11, "delay_ns": 7937.0, "power_db": -23.6, "aod_deg": -32.9, "aoa_deg": 127.7, "zod_deg": 91.3, "zoa_deg": 78.3},
+    {"id": 12, "delay_ns": 9424.0, "power_db": -24.8, "aod_deg": 52.6, "aoa_deg": -119.6, "zod_deg": 103.8, "zoa_deg": 87.0},
+    {"id": 13, "delay_ns": 9708.0, "power_db": -30.0, "aod_deg": -132.1, "aoa_deg": -9.1, "zod_deg": 80.3, "zoa_deg": 70.6},
+    {"id": 14, "delay_ns": 12525.0, "power_db": -27.7, "aod_deg": 77.2, "aoa_deg": -83.8, "zod_deg": 86.5, "zoa_deg": 72.9}
+  ]
+},
+    "CDL-E": {
+  "name": "CDL-E",
+  "condition": "LOS",
+  "num_tx_antennas": 2,
+  "num_rx_antennas": 2,
+  "xpr_db": 8,
+  "clusters": [
+    {"id": 1, "delay_ns": 0.0, "power_db": -0.03, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 99.6, "zoa_deg": 80.4},
+    {"id": 2, "delay_ns": 0.0, "power_db": -22.03, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 99.6, "zoa_deg": 80.4},
+    {"id": 3, "delay_ns": 513.3, "power_db": -15.8, "aod_deg": 57.5, "aoa_deg": 18.2, "zod_deg": 104.2, "zoa_deg": 80.4},
+    {"id": 4, "delay_ns": 544.0, "power_db": -18.1, "aod_deg": 57.5, "aoa_deg": 18.2, "zod_deg": 104.2, "zoa_deg": 80.4},
+    {"id": 5, "delay_ns": 563.0, "power_db": -19.8, "aod_deg": 57.5, "aoa_deg": 18.2, "zod_deg": 104.2, "zoa_deg": 80.4},
+    {"id": 6, "delay_ns": 544.0, "power_db": -22.9, "aod_deg": -20.1, "aoa_deg": 101.8, "zod_deg": 99.4, "zoa_deg": 80.8},
+    {"id": 7, "delay_ns": 711.2, "power_db": -22.4, "aod_deg": 16.2, "aoa_deg": 112.9, "zod_deg": 100.8, "zoa_deg": 86.3},
+    {"id": 8, "delay_ns": 1909.2, "power_db": -18.6, "aod_deg": 9.3, "aoa_deg": -155.5, "zod_deg": 98.8, "zoa_deg": 82.7},
+    {"id": 9, "delay_ns": 1929.3, "power_db": -20.8, "aod_deg": 9.3, "aoa_deg": -155.5, "zod_deg": 98.8, "zoa_deg": 82.7},
+    {"id": 10, "delay_ns": 1958.9, "power_db": -22.6, "aod_deg": 9.3, "aoa_deg": -155.5, "zod_deg": 98.8, "zoa_deg": 82.7},
+    {"id": 11, "delay_ns": 2642.6, "power_db": -22.3, "aod_deg": 19.0, "aoa_deg": -143.3, "zod_deg": 100.8, "zoa_deg": 82.9},
+    {"id": 12, "delay_ns": 3713.6, "power_db": -25.6, "aod_deg": 32.7, "aoa_deg": -94.7, "zod_deg": 96.4, "zoa_deg": 88.0},
+    {"id": 13, "delay_ns": 5452.4, "power_db": -20.2, "aod_deg": 0.5, "aoa_deg": 147.0, "zod_deg": 98.9, "zoa_deg": 81.0},
+    {"id": 14, "delay_ns": 12003.4, "power_db": -29.8, "aod_deg": 55.9, "aoa_deg": -36.2, "zod_deg": 95.6, "zoa_deg": 88.6},
+    {"id": 15, "delay_ns": 20641.9, "power_db": -29.2, "aod_deg": 57.6, "aoa_deg": -26.0, "zod_deg": 104.6, "zoa_deg": 78.3}
+      ]
+    }
+  },
+  "scme_models": {
+    "SCME": {
+      "name": "SCME",
+      "condition": "NLOS",
+      "num_tx_antennas": 2,
+      "num_rx_antennas": 2,
+      "xpr_db": 8,
+      "clusters": [
+        {"id": 1, "delay_ns": 0, "power_db": -3.0, "aod_deg": 5, "aoa_deg": 82.0, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 2, "delay_ns": 5, "power_db": -5.2, "aod_deg": 10, "aoa_deg": 65.7, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 3, "delay_ns": 10, "power_db": -7.0, "aod_deg": -3, "aoa_deg": 65.7, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 4, "delay_ns": 360, "power_db": -5.2, "aod_deg": -5, "aoa_deg": 80.5, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 5, "delay_ns": 365, "power_db": -7.4, "aod_deg": -5, "aoa_deg": 45.6, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 6, "delay_ns": 370, "power_db": -9.2, "aod_deg": -5, "aoa_deg": 45.6, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 7, "delay_ns": 730, "power_db": -7.5, "aod_deg": 15, "aoa_deg": 110.2, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 8, "delay_ns": 735, "power_db": -9.5, "aod_deg": 15, "aoa_deg": 111.8, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 9, "delay_ns": 740, "power_db": -11.7, "aod_deg": 15, "aoa_deg": 111.8, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 10, "delay_ns": 1100, "power_db": -9.8, "aod_deg": 8, "aoa_deg": 89.3, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 11, "delay_ns": 1105, "power_db": -12.0, "aod_deg": 8, "aoa_deg": 92.1, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 12, "delay_ns": 1110, "power_db": -14.0, "aod_deg": 8, "aoa_deg": 92.1, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 13, "delay_ns": 1730, "power_db": -14.0, "aod_deg": -8, "aoa_deg": 115.0, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 14, "delay_ns": 1735, "power_db": -16.2, "aod_deg": -8, "aoa_deg": 118.2, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 15, "delay_ns": 1740, "power_db": -18.2, "aod_deg": -8, "aoa_deg": 118.2, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 16, "delay_ns": 2500, "power_db": -18.5, "aod_deg": -12, "aoa_deg": 135.5, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 17, "delay_ns": 2505, "power_db": -20.7, "aod_deg": -12, "aoa_deg": 134.8, "zod_deg": 90, "zoa_deg": 90},
+        {"id": 18, "delay_ns": 2510, "power_db": -22.7, "aod_deg": -12, "aoa_deg": 134.8, "zod_deg": 90, "zoa_deg": 90}
+      ]
+    }
+  }
+}

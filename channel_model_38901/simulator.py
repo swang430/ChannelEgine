@@ -22,7 +22,7 @@ class ChannelSimulator:
             use_median_lsps (bool, optional): 是否使用大尺度参数（LSP）的中位值，而不是从统计分布中随机抽样。
                                              这对于需要确定性LSP的测试非常有用。默认为 False。
         """
-        param_file = 'channel_model_38901/parameters/parameters_tr38901_v19.0.0.json'
+        param_file = 'channel_model_38901/parameters/parameters1013_tr38901_v19.0.0.json'
         self.params = ParameterLoader.load_parameters(param_file)
         
         self.config = ScenarioConfig(
