@@ -60,8 +60,13 @@ with st.sidebar:
 
     with st.expander("2. Chamber Configuration", expanded=True):
         num_probes = st.slider('Number of Probes', 1, 64, 16, 1, key="num_probes")
-        radius_m = st.number_input('Probe Ring Radius (m)', 0.5, 5.0, 1.5, 0.1, key='radius')
+        radius_m = st.number_input('Probe Ring Radius (m)', 0.5, 30.0, 1.5, 0.5, key='radius')
         dual_polarized = st.checkbox('Dual Polarized Probes', value=True)
+
+        # 远场条件提示
+        wavelength = 3e8 / center_frequency_hz
+        st.caption(f"💡 远场条件参考：R > 2D²/λ (当前波长: {wavelength*100:.2f} cm)")
+        st.caption(f"   例如：DUT尺寸0.5m需要>5.8m，1.0m需要>23m，2.0m需要>92m")
 
     with st.expander("3. Chamber Physical Parameters", expanded=False):
         probe_gain_dBi = st.number_input("Probe Antenna Gain (dBi)", -10.0, 20.0, 0.0, 0.1)
