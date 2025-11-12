@@ -160,14 +160,14 @@ def get_expected_lsp_params(scenario: str, condition: str, fc_ghz: float = 3.5) 
     return params
 
 
-def test_mean_and_std(observed_stats: Dict[str, float],
-                     expected_params: Dict[str, float],
-                     param_name: str,
-                     n_samples: int,
-                     tolerance_mean: float = 0.3,
-                     tolerance_std: float = 0.2) -> Dict[str, any]:
+def validate_mean_and_std(observed_stats: Dict[str, float],
+                         expected_params: Dict[str, float],
+                         param_name: str,
+                         n_samples: int,
+                         tolerance_mean: float = 0.3,
+                         tolerance_std: float = 0.2) -> Dict[str, any]:
     """
-    Test if observed mean and std are within tolerance of expected values.
+    Validate if observed mean and std are within tolerance of expected values.
 
     Args:
         observed_stats: Dictionary from calculate_lsp_statistics()
