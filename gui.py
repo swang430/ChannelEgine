@@ -21,6 +21,7 @@ class ChannelModelApp(tk.Tk):
 
         self.simulation_queue = queue.Queue()
         self.controls = {}
+        self.last_results = None
         self.after(100, self.process_queue)
 
         self._create_widgets()
@@ -127,6 +128,10 @@ class ChannelModelApp(tk.Tk):
         self.save_button.pack(side=tk.LEFT, padx=5)
         self.load_button = ttk.Button(control_frame, text="Load Config", command=self.load_config)
         self.load_button.pack(side=tk.LEFT, padx=5)
+        self.save_results_button = ttk.Button(control_frame, text="Save Results", command=self.save_results)
+        self.save_results_button.pack(side=tk.LEFT, padx=5)
+        self.export_fpga_button = ttk.Button(control_frame, text="Export FPGA Params", command=self.export_fpga_sos_csv)
+        self.export_fpga_button.pack(side=tk.LEFT, padx=5)
 
     def _create_log_display(self):
         log_frame = ttk.Frame(self.notebook)
@@ -268,6 +273,7 @@ class ChannelModelApp(tk.Tk):
                 msg_type, data = self.simulation_queue.get_nowait()
                 if msg_type == "log": self.log(data)
                 elif msg_type == "results":
+                    self.last_results = data
                     self.log("\n--- Simulation Successful ---")
                     self.log(f"Final Channel Condition: {'LOS' if data['is_los'] else 'NLOS'}")
                     self.log(f"Pathloss: {data['pathloss_db']:.2f} dB")
@@ -337,6 +343,145 @@ class ChannelModelApp(tk.Tk):
             if key in self.controls:
                 self.controls[key]['var'].set(value)
         self.log(f"Configuration loaded from {filepath}")
+
+    def save_results(self):
+        if not self.last_results:
+            messagebox.showinfo("Info", "No simulation results to save. Please run a simulation first.")
+            return
+
+        from tkinter.filedialog import asksaveasfilename
+        filepath = asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json"), ("All files", "*.*")], title="Save Simulation Results")
+        if not filepath: return
+
+        try:
+            # Prepare data for export
+            export_data = {
+                "timestamp": str(np.datetime64('now')),
+                "lsps": self.last_results['lsps'].model_dump(),
+                "pathloss_db": self.last_results['pathloss_db'],
+                "is_los": self.last_results['is_los'],
+                "clusters": [
+                    {
+                        "delay": c.delay,
+                        "power": c.power,
+                        "aoa_phi": c.aoa_phi,
+                        "zoa_theta": c.zoa_theta,
+                        "aod_phi": c.aod_phi,
+                        "zod_theta": c.zod_theta,
+                        "xpr_db": 10 * np.log10(c.k_n) if c.k_n else 0.0,
+                        "k_n": c.k_n
+                    }
+                    for c in self.last_results['clusters']
+                ]
+            }
+            
+            # Helper to handle numpy types
+            def np_encoder(object):
+                if isinstance(object, np.generic):
+                    return object.item()
+                raise TypeError
+
+            with open(filepath, 'w') as f:
+                json.dump(export_data, f, indent=4, default=np_encoder)
+            self.log(f"Results saved to {filepath}")
+        except Exception as e:
+            self.log(f"Error saving results: {e}")
+            messagebox.showerror("Error", f"Failed to save results: {e}")
+
+    def export_fpga_sos_csv(self):
+        """Re-instantiates the simulator with current config and exports FPGA SoS parameters to CSV."""
+        from tkinter.filedialog import asksaveasfilename
+        import csv
+
+        filepath = asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv"), ("All files", "*.*")], title="Export FPGA SoS Parameters")
+        if not filepath: return
+
+        try:
+            self.log("Generating FPGA parameters...")
+            # Re-create simulator logic (copied from run_simulation)
+            params = {key: control['var'].get() for key, control in self.controls.items()}
+            scenario_name = params["scenario_name"]
+            cluster_model_name = params["cluster_model_name"]
+            if cluster_model_name == 'Stochastic': cluster_model_name = None
+
+            center_frequency_hz = float(params["center_frequency_ghz"]) * 1e9
+            bs_pos = np.array([[float(p) for p in params["tx_position"].split(',')]])
+            ue_pos = np.array([[float(p) for p in params["rx_position"].split(',')]])
+            ue_velocity_kph = float(params["ue_velocity_kph"])
+            ue_velocity_mps = ue_velocity_kph * 1000 / 3600
+            ue_vel_vector = np.array([[ue_velocity_mps, 0, 0]])
+            seed_str = params["random_seed"]
+            seed = int(seed_str) if seed_str else None
+            
+            # Setup Antennas
+            c = 3e8
+            lambda_meters = c / center_frequency_hz
+            tx_positions = get_antenna_positions(
+                array_type=params['tx_array_type'], num_rows=int(params['tx_num_rows']),
+                num_cols=int(params['tx_num_cols']), spacing_h_m=float(params['tx_spacing_h']) * lambda_meters,
+                spacing_v_m=float(params['tx_spacing_v']) * lambda_meters
+            )
+            rx_positions = get_antenna_positions(
+                array_type=params['rx_array_type'], num_rows=int(params['rx_num_rows']),
+                num_cols=int(params['rx_num_cols']), spacing_h_m=float(params['rx_spacing_h']) * lambda_meters,
+                spacing_v_m=float(params['rx_spacing_v']) * lambda_meters
+            )
+            ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
+
+            # Initialize Simulator
+            np.random.seed(seed)
+            simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=params["use_median_lsps"])
+            simulator.config.bs_positions = bs_pos
+            simulator.config.ue_positions = ue_pos
+            simulator.config.ue_velocities = ue_vel_vector
+            simulator.config.antenna_config = ant_config
+            simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=params["use_median_lsps"])
+
+            # Export
+            sos_params = simulator.export_fpga_sos_params()
+            
+            # Write to CSV
+            if not sos_params:
+                self.log("No parameters generated.")
+                return
+
+            keys = sos_params[0].keys()
+            with open(filepath, 'w', newline='') as output_file:
+                dict_writer = csv.DictWriter(output_file, fieldnames=keys)
+                dict_writer.writeheader()
+                dict_writer.writerows(sos_params)
+            
+            self.log(f"FPGA parameters exported to {filepath} ({len(sos_params)} rows)")
+            messagebox.showinfo("Success", f"Successfully exported {len(sos_params)} rows to:\n{filepath}")
+
+        except Exception as e:
+            import traceback
+            self.log(f"Error exporting FPGA params: {e}\n{traceback.format_exc()}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def process_queue(self):
+        try:
+            while True:
+                msg_type, data = self.simulation_queue.get_nowait()
+                if msg_type == "log": self.log(data)
+                elif msg_type == "results":
+                    self.last_results = data
+                    self.log("\n--- Simulation Successful ---")
+                    self.log(f"Final Channel Condition: {'LOS' if data['is_los'] else 'NLOS'}")
+                    self.log(f"Pathloss: {data['pathloss_db']:.2f} dB")
+                    self.log(f"Channel Matrix H (shape: {data['channel_matrix'].shape}):\n{data['channel_matrix']}")
+                    self.log("\n--- Large Scale Parameters (LSPs) ---")
+                    lsp_text = json.dumps(data['lsps'].model_dump(), indent=2)
+                    self.log(lsp_text)
+                    self._update_results_display(data['clusters'])
+                    self.log("\nPlots and data tables updated.")
+                elif msg_type == "error":
+                    self.log(data)
+                    messagebox.showerror("Simulation Error", data)
+                elif msg_type == "done":
+                    self.run_button.config(state=tk.NORMAL)
+        except queue.Empty:
+            self.after(100, self.process_queue)
 
 if __name__ == '__main__':
     app = ChannelModelApp()

@@ -110,3 +110,9 @@ class ChannelSimulator:
         # 注意: 当前实现会重新运行一次仿真来获取LSP，未来可以优化。
         _, _, _, lsps, _, _ = self.generator.generate_channel_realization(logger=None)
         return lsps
+
+    def export_fpga_sos_params(self):
+        """
+        导出用于FPGA SoS的参数列表。
+        """
+        return self.generator.export_sos_parameters()
