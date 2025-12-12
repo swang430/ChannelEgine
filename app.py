@@ -80,9 +80,19 @@ with st.sidebar:
 
     with st.expander("5. Channel & Run Control", expanded=True):
         st.selectbox('Synthesis Method', ('pinv', 'cluster'), key='synthesis_method')
+        
+        run_mode = st.radio("Run Mode", ('Single Snapshot', 'Statistical Validation'))
+        
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
         use_median_lsps = st.checkbox('Use Median LSPs', value=False, help="Bypass random sampling and use the median value for all Large-Scale Parameters.")
-        random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
+        
+        num_drops = 1
+        if run_mode == 'Statistical Validation':
+            num_drops = st.slider('Number of Drops', 10, 200, 50, 10)
+            random_seed = None # Seed must vary
+            st.info("Random seed will vary automatically for validation.")
+        else:
+            random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
 
     if st.button("Run Simulation", type="primary"):
         cal_vector = None
@@ -113,16 +123,94 @@ with st.sidebar:
             "random_seed": random_seed,
             "use_median_lsps": use_median_lsps
         }
-        with st.spinner('Running simulation...'):
-            st.session_state.simulation_results = run_simulation(target_config_params, chamber_config_params)
+        
+        target_config = TargetChannelConfig.parse_obj(target_config_params)
+        chamber_config = ChamberConfig.parse_obj(chamber_config_params)
+        simulator = MIMO_OTA_Simulator()
+
+        with st.spinner(f'Running simulation ({run_mode})...'):
+            if run_mode == 'Single Snapshot':
+                st.session_state.simulation_results = simulator.run(
+                    chamber_config=chamber_config, 
+                    channel_config=target_config, 
+                    synthesis_method=st.session_state.synthesis_method
+                )
+                st.session_state.simulation_results['mode'] = 'single'
+            else:
+                # Statistical Validation Loop
+                num_rx = rx_antenna_config.num_rows * rx_antenna_config.num_cols
+                R_sum = np.zeros((num_rx, num_rx), dtype=complex)
+                progress_bar = st.progress(0)
+                
+                base_seed = np.random.randint(0, 10000)
+                
+                for i in range(num_drops):
+                    # Vary seed
+                    current_target = target_config.model_copy()
+                    current_target.random_seed = base_seed + i
+                    
+                    res = simulator.run(chamber_config, current_target, st.session_state.synthesis_method)
+                    H = res['effective_H_matrix']
+                    R_sum += H @ H.conj().T
+                    progress_bar.progress((i + 1) / num_drops)
+                
+                R_mean = R_sum / num_drops
+                
+                # Calculate Correlation Coeffs (Ref Ant 0)
+                # rho_0i = |R_0i| / sqrt(R_00 * R_ii)
+                correlations = []
+                r00 = np.abs(R_mean[0,0])
+                for i in range(num_rx):
+                    rii = np.abs(R_mean[i,i])
+                    if r00 > 0 and rii > 0:
+                        rho = np.abs(R_mean[0,i]) / np.sqrt(r00 * rii)
+                    else:
+                        rho = 0.0
+                    correlations.append(rho)
+                
+                st.session_state.simulation_results = {
+                    'mode': 'validation',
+                    'spatial_correlation': correlations,
+                    'num_drops': num_drops
+                }
 
 # --- Results Display Area ---
 if st.session_state.simulation_results:
     results = st.session_state.simulation_results
     st.success('Simulation finished successfully!')
     
-    # Unpack all results
-    A_matrix = results['transmit_mapping_matrix_A']
+    if results.get('mode') == 'validation':
+        st.header("Statistical Validation Results")
+        corr = results['spatial_correlation']
+        drops = results['num_drops']
+        
+        st.subheader(f"Spatial Correlation (Averaged over {drops} Drops)")
+        fig_corr, ax_corr = plt.subplots()
+        ax_corr.plot(corr, marker='o', linestyle='-', linewidth=2, color='green')
+        ax_corr.set_title(f"Rx Spatial Correlation (Ref: Ant 0, N={drops})")
+        ax_corr.set_xlabel("Rx Antenna Index")
+        ax_corr.set_ylabel("Correlation Coefficient")
+        ax_corr.set_ylim(0, 1.1)
+        ax_corr.grid(True)
+        # Add theoretical target line (0 for ideal uncorrelated)
+        ax_corr.axhline(0, color='gray', linestyle='--', alpha=0.5, label='Ideal Uncorrelated')
+        ax_corr.legend()
+        
+        st.pyplot(fig_corr)
+        
+        avg_cross_corr = np.mean(corr[1:]) if len(corr) > 1 else 0.0
+        st.metric("Avg Cross-Correlation (Ant 0 vs Others)", f"{avg_cross_corr:.4f}")
+        
+        if avg_cross_corr < 0.2:
+            st.success("✅ Excellent Decorrelation! Chamber is performing well.")
+        elif avg_cross_corr < 0.5:
+            st.warning("⚠️ Moderate Correlation. Consider increasing probe count or antenna spacing.")
+        else:
+            st.error("❌ High Correlation. Check probe configuration or model parameters.")
+            
+    else:
+        # Single Snapshot Display (Existing Logic)
+        A_matrix = results['transmit_mapping_matrix_A']
     H_target = results['target_H_matrix']
     B_matrix = results['B_matrix']
     clusters = results['clusters']
