@@ -1,8 +1,7 @@
 import numpy as np
 from typing import Dict, Literal, List
 import os
-import numpy as np
-import streamlit as st
+import warnings
 
 from .data_models import ChamberConfig, TargetChannelConfig
 from channel_model_38901.simulator import ChannelSimulator
@@ -77,7 +76,7 @@ class MIMO_OTA_Simulator:
             if chamber_config.calibration_vector.shape[0] == num_effective_probes:
                 b_matrix *= chamber_config.calibration_vector
             else:
-                st.warning("Calibration vector shape mismatch. Ignoring calibration.")
+                warnings.warn("Calibration vector shape mismatch. Ignoring calibration.")
 
         return b_matrix
 
@@ -123,7 +122,8 @@ class MIMO_OTA_Simulator:
             if as_rad > 1e-9:
                 weights[idx] = np.exp(-np.power(delta_angle, 2) / (2 * np.power(as_rad, 2)))
             else:
-                weights[idx] = 1.0 if np.isclose(delta_angle, 0) else 0.0
+                # Point source: Assign to the closest probe (candidate_indices is sorted)
+                weights[idx] = 1.0 if idx == candidate_indices[0] else 0.0
         total_weight = np.sum(weights)
         if total_weight > 1e-9:
             weights /= total_weight
@@ -157,7 +157,7 @@ class MIMO_OTA_Simulator:
             dut_positions = self._calculate_dut_antenna_positions(channel_config.rx_antenna, wavelength)
             max_dut_dimension = np.max(np.linalg.norm(dut_positions, axis=1))
             if max_dut_dimension > chamber_config.quiet_zone_radius_m:
-                st.warning(f"Warning: DUT dimension ({max_dut_dimension:.2f}m) may exceed quiet zone radius ({chamber_config.quiet_zone_radius_m:.2f}m).")
+                warnings.warn(f"Warning: DUT dimension ({max_dut_dimension:.2f}m) may exceed quiet zone radius ({chamber_config.quiet_zone_radius_m:.2f}m).")
 
         # Synthesize the physical B-Matrix
         B_matrix = self._synthesize_b_matrix(chamber_config, channel_config)

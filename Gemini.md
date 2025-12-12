@@ -210,6 +210,14 @@ pip install -e ./mimo_ota_simulator
 *   **实现**: `tests/create_golden_files.py` 和 `tests/test_regression.py`
 *   **结论**: **我们为当前稳定版的引擎建立了一个可靠的“代码安全网”。**
 
+### 7.5 系统级综合验证 (System Validation)
+*   **目标**: 验证核心引擎、FPGA 导出与 MIMO OTA 仿真器之间的端到端一致性，特别是针对功率守恒和物理模型完整性的验证。
+*   **实现**: `tests/test_comprehensive_system.py`
+*   **覆盖范围**:
+    *   **FPGA 导出**: 验证 Ray 级参数生成的完整性（行数、数据类型）。
+    *   **OTA 功率逻辑**: 专门的回归测试 (`test_mimo_ota_power_scaling_bug_fix`)，确保 CDL 模型的动态范围在合成后得以保留，验证了线性/dB 功率转换的正确性。
+    *   **Facade 集成**: 验证上层应用能否正确调用重构后的核心接口。
+
 ## 8. 编码规范与开发环境
 
 * **语言**: Python 3.10+

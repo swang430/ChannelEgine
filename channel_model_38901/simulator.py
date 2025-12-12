@@ -2,6 +2,7 @@ from typing import Optional, Callable, Dict
 from .common.data_models import ScenarioConfig, EngineCluster, LargeScaleParameters
 from .parameters.parameter_loader import ParameterLoader
 from .channel_generator import ChannelGenerator
+from .common.geometry import get_antenna_positions
 import numpy as np
 
 class ChannelSimulator:
@@ -89,6 +90,27 @@ class ChannelSimulator:
         self.config.antenna_config.num_tx_cols = num_tx_cols
         self.config.antenna_config.num_rx_rows = num_rx_rows
         self.config.antenna_config.num_rx_cols = num_rx_cols
+        
+        # Calculate positions
+        c = 3e8
+        lam = c / self.config.center_frequency_hz
+        
+        # Tx
+        self.config.antenna_config.tx_positions = get_antenna_positions(
+            self.config.antenna_config.tx_array_type,
+            num_tx_rows, num_tx_cols,
+            self.config.antenna_config.tx_spacing_h * lam,
+            self.config.antenna_config.tx_spacing_v * lam
+        )
+        
+        # Rx
+        self.config.antenna_config.rx_positions = get_antenna_positions(
+            self.config.antenna_config.rx_array_type,
+            num_rx_rows, num_rx_cols,
+            self.config.antenna_config.rx_spacing_h * lam,
+            self.config.antenna_config.rx_spacing_v * lam
+        )
+
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
 
     def set_scenario(self, scenario_name: str, cluster_model_name: Optional[str] = None):
