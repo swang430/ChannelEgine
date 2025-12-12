@@ -1,13 +1,12 @@
 import numpy as np
 from typing import Dict, Literal, List
 import os
-import channel_model_38901
+import numpy as np
 import streamlit as st
 
-from .data_models import ChamberConfig, TargetChannelConfig, ProbeAntennaConfig, AntennaArrayConfig
-from channel_model_38901.common.data_models import ScenarioConfig as EngineScenarioConfig, EngineCluster, AntennaArray as EngineAntennaArray
-from channel_model_38901.parameters.parameter_loader import ParameterLoader
-from channel_model_38901.channel_generator import ChannelGenerator
+from .data_models import ChamberConfig, TargetChannelConfig
+from channel_model_38901.simulator import ChannelSimulator
+from channel_model_38901.common.data_models import EngineCluster
 
 class MIMO_OTA_Simulator:
     def _calculate_probe_positions(self, chamber_config: ChamberConfig) -> np.ndarray:
@@ -83,7 +82,7 @@ class MIMO_OTA_Simulator:
         return b_matrix
 
     @staticmethod
-    def _calculate_dut_antenna_positions(antenna_config: AntennaArrayConfig, wavelength: float) -> np.ndarray:
+    def _calculate_dut_antenna_positions(antenna_config, wavelength: float) -> np.ndarray:
         """Calculates the 3D Cartesian coordinates of each DUT antenna element."""
         num_rows = antenna_config.num_rows
         num_cols = antenna_config.num_cols
@@ -163,38 +162,48 @@ class MIMO_OTA_Simulator:
         # Synthesize the physical B-Matrix
         B_matrix = self._synthesize_b_matrix(chamber_config, channel_config)
 
-        engine_antenna_config = EngineAntennaArray(
-            tx_array_type=channel_config.tx_antenna.array_type,
-            tx_element_pattern=channel_config.tx_antenna.element_pattern,
+        # --- REFACTOR: Use ChannelSimulator Facade ---
+        simulator = ChannelSimulator(
+            scenario_name=channel_config.model_name,
+            center_frequency_hz=channel_config.center_frequency_hz,
+            cluster_model_name=channel_config.cluster_model_name,
+            use_median_lsps=channel_config.use_median_lsps
+        )
+        
+        # Configure Simulator
+        simulator.set_bs_ue_positions(
+            bs_positions=np.array([channel_config.bs_position]),
+            ue_positions=np.array([channel_config.ue_position])
+        )
+        simulator.set_velocities(np.array([channel_config.ue_velocity]))
+        
+        simulator.set_antenna_config(
             num_tx_rows=channel_config.tx_antenna.num_rows,
             num_tx_cols=channel_config.tx_antenna.num_cols,
-            tx_spacing_h=channel_config.tx_antenna.spacing_h,
-            tx_spacing_v=channel_config.tx_antenna.spacing_v,
-            rx_array_type=channel_config.rx_antenna.array_type,
-            rx_element_pattern=channel_config.rx_antenna.element_pattern,
             num_rx_rows=channel_config.rx_antenna.num_rows,
-            num_rx_cols=channel_config.rx_antenna.num_cols,
-            rx_spacing_h=channel_config.rx_antenna.spacing_h,
-            rx_spacing_v=channel_config.rx_antenna.spacing_v,
-        )
-        engine_scenario_config = EngineScenarioConfig(
-            scenario_name=channel_config.model_name,
-            cluster_model_name=channel_config.cluster_model_name,
-            center_frequency_hz=channel_config.center_frequency_hz,
-            bs_positions=np.array([channel_config.bs_position]),
-            ue_positions=np.array([channel_config.ue_position]),
-            ue_velocities=np.array([channel_config.ue_velocity]),
-            antenna_config=engine_antenna_config
+            num_rx_cols=channel_config.rx_antenna.num_cols
         )
         
-        lib_path = os.path.dirname(channel_model_38901.__file__)
-        param_file = os.path.join(lib_path, 'parameters', 'parameters_tr38901_v19.0.0.json')
+        # Override antenna patterns if needed (Simulator facade defaults to Isotropic if not exposed, 
+        # but ChannelSimulator.config.antenna_config is accessible)
+        simulator.config.antenna_config.tx_array_type = channel_config.tx_antenna.array_type
+        simulator.config.antenna_config.rx_array_type = channel_config.rx_antenna.array_type
+        # TODO: Add spacing config to simulator facade properly or modify config directly
+        c = 3e8
+        lam = c / channel_config.center_frequency_hz
+        simulator.config.antenna_config.tx_spacing_h = channel_config.tx_antenna.spacing_h * lam
+        simulator.config.antenna_config.tx_spacing_v = channel_config.tx_antenna.spacing_v * lam
+        simulator.config.antenna_config.rx_spacing_h = channel_config.rx_antenna.spacing_h * lam
+        simulator.config.antenna_config.rx_spacing_v = channel_config.rx_antenna.spacing_v * lam
+
+        # Generate Channel
+        sim_result = simulator.run(force_condition=channel_config.force_condition)
         
-        params = ParameterLoader.load_parameters(param_file)
-        generator = ChannelGenerator(engine_scenario_config, params, use_median_lsps=channel_config.use_median_lsps)
-        target_H_matrix, _, physical_clusters, _, _, _ = generator.generate_channel_realization(
-            force_condition=channel_config.force_condition, logger=None
-        )
+        target_H_matrix = sim_result['channel_matrix']
+        physical_clusters = sim_result['clusters']
+        lsps = sim_result['lsps']
+        
+        # ---------------------------------------------
 
         if synthesis_method == 'pinv':
             B_pinv = np.linalg.pinv(B_matrix)
@@ -210,7 +219,9 @@ class MIMO_OTA_Simulator:
             for i, cluster in enumerate(physical_clusters):
                 w_map = self._calculate_weights_for_cluster(cluster, chamber_config)
                 g_tx = self._get_g_tx_from_h_matrix(cluster.h_matrix)
-                cluster_power_linear = 10**(cluster.power / 10.0)
+                
+                # FIX: Power is already linear from ChannelGenerator
+                cluster_power_linear = cluster.power 
                 
                 A_cluster = np.sqrt(cluster_power_linear) * (w_map @ g_tx)
                 A_total += A_cluster
@@ -230,6 +241,7 @@ class MIMO_OTA_Simulator:
             "effective_H_matrix": effective_H_matrix,
             "B_matrix": B_matrix,
             "clusters": physical_clusters,
+            "lsps": lsps, # Return LSPs for display
             "probe_tx_power_contributions": probe_tx_power_contributions,
             "cluster_probe_mapping": cluster_probe_mapping,
         }

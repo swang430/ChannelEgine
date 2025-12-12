@@ -128,9 +128,89 @@ if st.session_state.simulation_results:
     clusters = results['clusters']
     probe_tx_power_contributions = results['probe_tx_power_contributions']
     cluster_probe_mapping = results['cluster_probe_mapping']
+    lsps = results.get('lsps') # Safely get LSPs
     num_effective_probes, num_tx_antennas = A_matrix.shape
 
     st.header("Simulation Results")
+    
+    # --- Show LSPs ---
+    if lsps:
+        with st.expander("Generated Large Scale Parameters (LSP)", expanded=False):
+            # Convert Pydantic model to dict for display
+            lsp_dict = lsps.model_dump()
+            
+            # Format numbers for better readability
+            formatted_lsps = {}
+            units = {
+                'delay_spread_s': 's',
+                'departure_azimuth_spread_deg': 'deg',
+                'arrival_azimuth_spread_deg': 'deg',
+                'departure_zenith_spread_deg': 'deg',
+                'arrival_zenith_spread_deg': 'deg',
+                'shadow_fade_db': 'dB',
+                'k_factor_linear': '(linear)'
+            }
+            
+            for k, v in lsp_dict.items():
+                unit = units.get(k, '')
+                if isinstance(v, float):
+                    if 'delay' in k:
+                        formatted_lsps[k] = f"{v:.2e} {unit}"
+                    else:
+                        formatted_lsps[k] = f"{v:.2f} {unit}"
+                else:
+                    formatted_lsps[k] = f"{v} {unit}"
+            
+            st.json(formatted_lsps)
+
+    # --- Show SSPs (Clusters) ---
+    if clusters:
+        with st.expander("Small Scale Parameters (Clusters)", expanded=False):
+            cluster_data = []
+            for i, c in enumerate(clusters):
+                cluster_data.append({
+                    "Cluster ID": i,
+                    "Delay (ns)": c.delay * 1e9,
+                    "Power (Linear)": c.power,
+                    "Power (dB)": 10 * np.log10(c.power) if c.power > 0 else -100,
+                    "AoD (deg)": c.aod_phi,
+                    "AoA (deg)": c.aoa_phi,
+                    "ZoD (deg)": c.zod_theta,
+                    "ZoA (deg)": c.zoa_theta
+                })
+            st.dataframe(pd.DataFrame(cluster_data))
+
+    # --- Spatial Correlation Validation ---
+    st.subheader("Spatial Correlation Validation")
+    with st.expander("Instantaneous Rx Spatial Correlation (Snapshot)", expanded=True):
+        # Calculate R = H * H'
+        # H is (N_rx, N_tx)
+        # We want Rx correlation, so we average over Tx streams or just take H*H' which sums over Tx.
+        # R_rx = H @ H.H
+        
+        effective_H = results['effective_H_matrix']
+        R_inst = effective_H @ effective_H.conj().T
+        
+        # Normalize so diagonal is 1 (or max is 1)
+        diag = np.diag(R_inst)
+        # Avoid div by zero
+        norm_factor = np.sqrt(np.outer(diag, diag))
+        R_norm = np.abs(R_inst / (norm_factor + 1e-12))
+        
+        # Plot correlation of Ant 0 with others
+        if R_norm.shape[0] > 0:
+            corr_row = R_norm[0, :]
+            
+            fig_corr, ax_corr = plt.subplots()
+            ax_corr.plot(corr_row, marker='o', linestyle='-')
+            ax_corr.set_title("Spatial Correlation (Ref: Ant 0)")
+            ax_corr.set_xlabel("Rx Antenna Index")
+            ax_corr.set_ylabel("Correlation Magnitude")
+            ax_corr.set_ylim(0, 1.1)
+            ax_corr.grid(True)
+            st.pyplot(fig_corr)
+            
+            st.caption("Note: This is the instantaneous correlation of the single generated snapshot. For statistical validation, averaging over multiple drops is required.")
 
     # --- Create the two main plots ---
     col1, col2 = st.columns(2)
