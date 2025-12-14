@@ -79,12 +79,13 @@ with st.sidebar:
         rx_antenna_config = antenna_panel("Rx")
 
     with st.expander("5. Channel & Run Control", expanded=True):
-        st.selectbox('Synthesis Method', ('pinv', 'cluster'), key='synthesis_method')
+        st.selectbox('Synthesis Method', ('pinv', 'cluster', 'ray'), key='synthesis_method')
         
         run_mode = st.radio("Run Mode", ('Single Snapshot', 'Statistical Validation'))
         
         force_condition = st.selectbox('LOS/NLOS', ('Default', 'Force LOS', 'Force NLOS'), key='los')
         use_median_lsps = st.checkbox('Use Median LSPs', value=False, help="Bypass random sampling and use the median value for all Large-Scale Parameters.")
+        probe_phase_jitter = st.checkbox('Simulate Probe Phase Jitter', value=False, help="Adds random phase noise (+/- 10 deg) to probes to simulate hardware imperfections and improve decorrelation in Cluster mode.")
         
         num_drops = 1
         if run_mode == 'Statistical Validation':
@@ -133,7 +134,8 @@ with st.sidebar:
                 st.session_state.simulation_results = simulator.run(
                     chamber_config=chamber_config, 
                     channel_config=target_config, 
-                    synthesis_method=st.session_state.synthesis_method
+                    synthesis_method=st.session_state.synthesis_method,
+                    probe_phase_jitter=probe_phase_jitter
                 )
                 st.session_state.simulation_results['mode'] = 'single'
             else:
@@ -149,7 +151,7 @@ with st.sidebar:
                     current_target = target_config.model_copy()
                     current_target.random_seed = base_seed + i
                     
-                    res = simulator.run(chamber_config, current_target, st.session_state.synthesis_method)
+                    res = simulator.run(chamber_config, current_target, st.session_state.synthesis_method, probe_phase_jitter=probe_phase_jitter)
                     H = res['effective_H_matrix']
                     R_sum += H @ H.conj().T
                     progress_bar.progress((i + 1) / num_drops)
@@ -171,7 +173,9 @@ with st.sidebar:
                 st.session_state.simulation_results = {
                     'mode': 'validation',
                     'spatial_correlation': correlations,
-                    'num_drops': num_drops
+                    'num_drops': num_drops,
+                    'rx_config': target_config.rx_antenna.model_dump(),
+                    'R_mean': R_mean
                 }
 
 # --- Results Display Area ---
@@ -183,8 +187,19 @@ if st.session_state.simulation_results:
         st.header("Statistical Validation Results")
         corr = results['spatial_correlation']
         drops = results['num_drops']
+        rx_config_debug = results.get('rx_config', {})
+        R_mean_debug = results.get('R_mean')
         
         st.subheader(f"Spatial Correlation (Averaged over {drops} Drops)")
+        
+        # --- DEBUG INFO ---
+        with st.expander("Debug: Validation Details"):
+            st.write("**Rx Antenna Config Used:**", rx_config_debug)
+            if R_mean_debug is not None:
+                st.write("**Mean Covariance Matrix Magnitude (|R_mean|):**")
+                st.dataframe(pd.DataFrame(np.abs(R_mean_debug)))
+        # ------------------
+
         fig_corr, ax_corr = plt.subplots()
         ax_corr.plot(corr, marker='o', linestyle='-', linewidth=2, color='green')
         ax_corr.set_title(f"Rx Spatial Correlation (Ref: Ant 0, N={drops})")
@@ -209,227 +224,226 @@ if st.session_state.simulation_results:
             st.error("❌ High Correlation. Check probe configuration or model parameters.")
             
     else:
-        # Single Snapshot Display (Existing Logic)
+        # --- Single Snapshot Mode Display ---
+        # Unpack all results
         A_matrix = results['transmit_mapping_matrix_A']
-    H_target = results['target_H_matrix']
-    B_matrix = results['B_matrix']
-    clusters = results['clusters']
-    probe_tx_power_contributions = results['probe_tx_power_contributions']
-    cluster_probe_mapping = results['cluster_probe_mapping']
-    lsps = results.get('lsps') # Safely get LSPs
-    num_effective_probes, num_tx_antennas = A_matrix.shape
+        H_target = results['target_H_matrix']
+        B_matrix = results['B_matrix']
+        clusters = results['clusters']
+        probe_tx_power_contributions = results['probe_tx_power_contributions']
+        cluster_probe_mapping = results['cluster_probe_mapping']
+        lsps = results.get('lsps') # Safely get LSPs
+        num_effective_probes, num_tx_antennas = A_matrix.shape
 
-    st.header("Simulation Results")
-    
-    # --- Show LSPs ---
-    if lsps:
-        with st.expander("Generated Large Scale Parameters (LSP)", expanded=False):
-            # Convert Pydantic model to dict for display
-            lsp_dict = lsps.model_dump()
-            
-            # Format numbers for better readability
-            formatted_lsps = {}
-            units = {
-                'delay_spread_s': 's',
-                'departure_azimuth_spread_deg': 'deg',
-                'arrival_azimuth_spread_deg': 'deg',
-                'departure_zenith_spread_deg': 'deg',
-                'arrival_zenith_spread_deg': 'deg',
-                'shadow_fade_db': 'dB',
-                'k_factor_linear': '(linear)'
-            }
-            
-            for k, v in lsp_dict.items():
-                unit = units.get(k, '')
-                if isinstance(v, float):
-                    if 'delay' in k:
-                        formatted_lsps[k] = f"{v:.2e} {unit}"
+        st.header("Simulation Results")
+        
+        # --- Show LSPs ---
+        if lsps:
+            with st.expander("Generated Large Scale Parameters (LSP)", expanded=False):
+                # Convert Pydantic model to dict for display
+                lsp_dict = lsps.model_dump()
+                
+                # Format numbers for better readability
+                formatted_lsps = {}
+                units = {
+                    'delay_spread_s': 's',
+                    'departure_azimuth_spread_deg': 'deg',
+                    'arrival_azimuth_spread_deg': 'deg',
+                    'departure_zenith_spread_deg': 'deg',
+                    'arrival_zenith_spread_deg': 'deg',
+                    'shadow_fade_db': 'dB',
+                    'k_factor_linear': '(linear)'
+                }
+                
+                for k, v in lsp_dict.items():
+                    unit = units.get(k, '')
+                    if isinstance(v, float):
+                        if 'delay' in k:
+                            formatted_lsps[k] = f"{v:.2e} {unit}"
+                        else:
+                            formatted_lsps[k] = f"{v:.2f} {unit}"
                     else:
-                        formatted_lsps[k] = f"{v:.2f} {unit}"
-                else:
-                    formatted_lsps[k] = f"{v} {unit}"
-            
-            st.json(formatted_lsps)
+                        formatted_lsps[k] = f"{v} {unit}"
+                
+                st.json(formatted_lsps)
 
-    # --- Show SSPs (Clusters) ---
-    if clusters:
-        with st.expander("Small Scale Parameters (Clusters)", expanded=False):
-            cluster_data = []
-            for i, c in enumerate(clusters):
-                cluster_data.append({
-                    "Cluster ID": i,
-                    "Delay (ns)": c.delay * 1e9,
-                    "Power (Linear)": c.power,
-                    "Power (dB)": 10 * np.log10(c.power) if c.power > 0 else -100,
-                    "AoD (deg)": c.aod_phi,
-                    "AoA (deg)": c.aoa_phi,
-                    "ZoD (deg)": c.zod_theta,
-                    "ZoA (deg)": c.zoa_theta
+        # --- Show SSPs (Clusters) ---
+        if clusters:
+            with st.expander("Small Scale Parameters (Clusters)", expanded=False):
+                cluster_data = []
+                for i, c in enumerate(clusters):
+                    cluster_data.append({
+                        "Cluster ID": i,
+                        "Delay (ns)": c.delay * 1e9,
+                        "Power (Linear)": c.power,
+                        "Power (dB)": 10 * np.log10(c.power) if c.power > 0 else -100,
+                        "AoD (deg)": c.aod_phi,
+                        "AoA (deg)": c.aoa_phi,
+                        "ZoD (deg)": c.zod_theta,
+                        "ZoA (deg)": c.zoa_theta
+                    })
+                st.dataframe(pd.DataFrame(cluster_data))
+
+        # --- Spatial Correlation Validation (Single Snapshot) ---
+        st.subheader("Spatial Correlation Validation")
+        with st.expander("Instantaneous Rx Spatial Correlation (Snapshot)", expanded=True):
+            # Calculate R = H * H'
+            # H is (N_rx, N_tx)
+            # We want Rx correlation, so we average over Tx streams or just take H*H' which sums over Tx.
+            # R_rx = H @ H.H
+            
+            effective_H = results['effective_H_matrix']
+            R_inst = effective_H @ effective_H.conj().T
+            
+            # Normalize so diagonal is 1 (or max is 1)
+            diag = np.diag(R_inst)
+            # Avoid div by zero
+            norm_factor = np.sqrt(np.outer(diag, diag))
+            R_norm = np.abs(R_inst / (norm_factor + 1e-12))
+            
+            # Plot correlation of Ant 0 with others
+            if R_norm.shape[0] > 0:
+                corr_row = R_norm[0, :]
+                
+                fig_corr, ax_corr = plt.subplots()
+                ax_corr.plot(corr_row, marker='o', linestyle='-')
+                ax_corr.set_title("Spatial Correlation (Ref: Ant 0)")
+                ax_corr.set_xlabel("Rx Antenna Index")
+                ax_corr.set_ylabel("Correlation Magnitude")
+                ax_corr.set_ylim(0, 1.1)
+                ax_corr.grid(True)
+                st.pyplot(fig_corr)
+                
+                st.caption("Note: This is the instantaneous correlation of the single generated snapshot. For statistical validation, averaging over multiple drops is required.")
+
+        # --- Create the two main plots ---
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Power per Probe & Tx Contribution (Centered)")
+            fig, ax = plt.subplots()
+            
+            if np.any(probe_tx_power_contributions):
+                shift = num_effective_probes // 2
+                x_coords = np.arange(num_effective_probes)
+                original_indices = np.arange(num_effective_probes)
+                shifted_indices = np.roll(original_indices, shift)
+                
+                bottoms = np.zeros(num_effective_probes)
+                colors = plt.cm.get_cmap('tab10', num_tx_antennas)
+
+                for tx_idx in range(num_tx_antennas):
+                    power_data = probe_tx_power_contributions[:, tx_idx]
+                    rolled_power_data = np.roll(power_data, shift)
+                    ax.bar(x_coords, rolled_power_data, bottom=bottoms, color=colors(tx_idx), label=f'Tx Ant {tx_idx}')
+                    bottoms += rolled_power_data
+
+                ax.set_xlabel("Effective Probe ID (Centered)")
+                ax.set_ylabel("Power (linear scale)")
+                ax.set_title("Power per Probe with Tx Contributions")
+                ax.set_xticks(x_coords)
+                ax.set_xticklabels(shifted_indices)
+                ax.tick_params(axis='x', rotation=90, labelsize='small')
+                ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+                ax.legend()
+            else:
+                ax.text(0.5, 0.5, 'No power data available.', ha='center', va='center')
+            st.pyplot(fig)
+
+            with st.expander("Show Probe Power Values"):
+                total_power_per_probe = probe_tx_power_contributions.sum(axis=1)
+                power_df = pd.DataFrame({
+                    'Effective Probe ID': np.arange(num_effective_probes),
+                    'Total Power (linear)': total_power_per_probe
                 })
-            st.dataframe(pd.DataFrame(cluster_data))
+                st.dataframe(power_df)
 
-    # --- Spatial Correlation Validation ---
-    st.subheader("Spatial Correlation Validation")
-    with st.expander("Instantaneous Rx Spatial Correlation (Snapshot)", expanded=True):
-        # Calculate R = H * H'
-        # H is (N_rx, N_tx)
-        # We want Rx correlation, so we average over Tx streams or just take H*H' which sums over Tx.
-        # R_rx = H @ H.H
-        
-        effective_H = results['effective_H_matrix']
-        R_inst = effective_H @ effective_H.conj().T
-        
-        # Normalize so diagonal is 1 (or max is 1)
-        diag = np.diag(R_inst)
-        # Avoid div by zero
-        norm_factor = np.sqrt(np.outer(diag, diag))
-        R_norm = np.abs(R_inst / (norm_factor + 1e-12))
-        
-        # Plot correlation of Ant 0 with others
-        if R_norm.shape[0] > 0:
-            corr_row = R_norm[0, :]
+        with col2:
+            st.subheader("Angular Distribution of Target Clusters")
+            probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
+            clusters_sorted = sorted(clusters, key=lambda c: c.power, reverse=True)
+            cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters_sorted])
+            cluster_powers_db = np.array([c.power for c in clusters_sorted])
+            power_min, power_max = (cluster_powers_db.min(), cluster_powers_db.max()) if clusters_sorted else (0,0)
+            norm_powers = (cluster_powers_db - power_min) / (power_max - power_min) if (power_max - power_min) > 0 else np.ones_like(cluster_powers_db)
+            cmap = plt.get_cmap('plasma')
+            cluster_colors = cmap(norm_powers)
+
+            fig = plt.figure(figsize=(8, 6))
+            gs = fig.add_gridspec(1, 2, width_ratios=[10, 1])
+            ax_polar = fig.add_subplot(gs[0, 0], polar=True)
+            ax_cbar = fig.add_subplot(gs[0, 1])
+
+            if dual_polarized:
+                v_angles, h_angles = probe_angles_rad - np.deg2rad(2), probe_angles_rad + np.deg2rad(2)
+                ax_polar.scatter(v_angles, np.ones(num_probes) * 1.1, s=80, c='blue', marker='o', label='V-Probes')
+                ax_polar.scatter(h_angles, np.ones(num_probes) * 1.1, s=80, c='red', marker='x', label='H-Probes')
+                for i in range(num_probes):
+                    ax_polar.text(v_angles[i], 1.2, str(2*i), ha='center', va='center', fontsize=7, color='blue')
+                    ax_polar.text(h_angles[i], 1.2, str(2*i + 1), ha='center', va='center', fontsize=7, color='red')
+            else:
+                ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
+                for i, angle in enumerate(probe_angles_rad):
+                    ax_polar.text(angle, 1.2, str(i), ha='center', va='center', fontsize=8, color='blue')
+
+            for i, (angle, color) in enumerate(zip(cluster_aods_rad, cluster_colors)):
+                ax_polar.plot([angle, angle], [0, 1], color=color, linewidth=2)
             
-            fig_corr, ax_corr = plt.subplots()
-            ax_corr.plot(corr_row, marker='o', linestyle='-')
-            ax_corr.set_title("Spatial Correlation (Ref: Ant 0)")
-            ax_corr.set_xlabel("Rx Antenna Index")
-            ax_corr.set_ylabel("Correlation Magnitude")
-            ax_corr.set_ylim(0, 1.1)
-            ax_corr.grid(True)
-            st.pyplot(fig_corr)
-            
-            st.caption("Note: This is the instantaneous correlation of the single generated snapshot. For statistical validation, averaging over multiple drops is required.")
+            ax_polar.set_title("Probe and Target Cluster Angles")
+            ax_polar.set_yticklabels([])
+            ax_polar.set_theta_zero_location('N')
+            ax_polar.set_theta_direction(-1)
+            ax_polar.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize='small')
 
-    # --- Create the two main plots ---
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Power per Probe & Tx Contribution (Centered)")
-        fig, ax = plt.subplots()
-        
-        if np.any(probe_tx_power_contributions):
-            shift = num_effective_probes // 2
-            x_coords = np.arange(num_effective_probes)
-            original_indices = np.arange(num_effective_probes)
-            shifted_indices = np.roll(original_indices, shift)
-            
-            bottoms = np.zeros(num_effective_probes)
-            colors = plt.cm.get_cmap('tab10', num_tx_antennas)
+            sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=power_min, vmax=power_max))
+            cbar = fig.colorbar(sm, cax=ax_cbar)
+            cbar.set_label('Target Cluster Power (dB)', rotation=270, labelpad=15)
+            cbar.ax.yaxis.set_ticks(cluster_powers_db, labels=[f"{i+1}" for i in range(len(clusters_sorted))])
+            cbar.ax.tick_params(axis='y', length=5, pad=2, labelsize='x-small')
+            st.pyplot(fig)
 
-            for tx_idx in range(num_tx_antennas):
-                power_data = probe_tx_power_contributions[:, tx_idx]
-                rolled_power_data = np.roll(power_data, shift)
-                ax.bar(x_coords, rolled_power_data, bottom=bottoms, color=colors(tx_idx), label=f'Tx Ant {tx_idx}')
-                bottoms += rolled_power_data
-
-            ax.set_xlabel("Effective Probe ID (Centered)")
-            ax.set_ylabel("Power (linear scale)")
-            ax.set_title("Power per Probe with Tx Contributions")
-            ax.set_xticks(x_coords)
-            ax.set_xticklabels(shifted_indices)
-            ax.tick_params(axis='x', rotation=90, labelsize='small')
-            ax.grid(True, axis='y', linestyle='--', alpha=0.7)
-            ax.legend()
-        else:
-            ax.text(0.5, 0.5, 'No power data available.', ha='center', va='center')
-        st.pyplot(fig)
-
-        with st.expander("Show Probe Power Values"):
-            total_power_per_probe = probe_tx_power_contributions.sum(axis=1)
-            power_df = pd.DataFrame({
-                'Effective Probe ID': np.arange(num_effective_probes),
-                'Total Power (linear)': total_power_per_probe
-            })
-            st.dataframe(power_df)
-
-    with col2:
-        st.subheader("Angular Distribution of Target Clusters")
-        probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
-        clusters_sorted = sorted(clusters, key=lambda c: c.power, reverse=True)
-        cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters_sorted])
-        cluster_powers_db = np.array([c.power for c in clusters_sorted])
-        power_min, power_max = (cluster_powers_db.min(), cluster_powers_db.max()) if clusters_sorted else (0,0)
-        norm_powers = (cluster_powers_db - power_min) / (power_max - power_min) if (power_max - power_min) > 0 else np.ones_like(cluster_powers_db)
-        cmap = plt.get_cmap('plasma')
-        cluster_colors = cmap(norm_powers)
-
-        fig = plt.figure(figsize=(8, 6))
-        gs = fig.add_gridspec(1, 2, width_ratios=[10, 1])
-        ax_polar = fig.add_subplot(gs[0, 0], polar=True)
-        ax_cbar = fig.add_subplot(gs[0, 1])
-
-        if dual_polarized:
-            v_angles, h_angles = probe_angles_rad - np.deg2rad(2), probe_angles_rad + np.deg2rad(2)
-            ax_polar.scatter(v_angles, np.ones(num_probes) * 1.1, s=80, c='blue', marker='o', label='V-Probes')
-            ax_polar.scatter(h_angles, np.ones(num_probes) * 1.1, s=80, c='red', marker='x', label='H-Probes')
-            for i in range(num_probes):
-                ax_polar.text(v_angles[i], 1.2, str(2*i), ha='center', va='center', fontsize=7, color='blue')
-                ax_polar.text(h_angles[i], 1.2, str(2*i + 1), ha='center', va='center', fontsize=7, color='red')
-        else:
-            ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
-            for i, angle in enumerate(probe_angles_rad):
-                ax_polar.text(angle, 1.2, str(i), ha='center', va='center', fontsize=8, color='blue')
-
-        for i, (angle, color) in enumerate(zip(cluster_aods_rad, cluster_colors)):
-            ax_polar.plot([angle, angle], [0, 1], color=color, linewidth=2)
-        
-        ax_polar.set_title("Probe and Target Cluster Angles")
-        ax_polar.set_yticklabels([])
-        ax_polar.set_theta_zero_location('N')
-        ax_polar.set_theta_direction(-1)
-        ax_polar.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize='small')
-
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=power_min, vmax=power_max))
-        cbar = fig.colorbar(sm, cax=ax_cbar)
-        cbar.set_label('Target Cluster Power (dB)', rotation=270, labelpad=15)
-        cbar.ax.yaxis.set_ticks(cluster_powers_db, labels=[f"{i+1}" for i in range(len(clusters_sorted))])
-        cbar.ax.tick_params(axis='y', length=5, pad=2, labelsize='x-small')
-        st.pyplot(fig)
-
-    st.divider()
-
-    # --- Cluster-to-Probe Power Contribution Matrix ---
-    st.subheader("Cluster-to-Probe Power Contribution Matrix (dB, Centered)")
-    if cluster_probe_mapping:
-        # Create a DataFrame for cluster info (Delay, AoD)
-        cluster_info_df = pd.DataFrame([
-            {'Delay (s)': c.delay, 'AoD (deg)': c.aod_phi}
-            for c in clusters
-        ])
-        cluster_info_df.index.name = "Cluster ID"
-
-        # Create a DataFrame for the mapping
-        mapping_df = pd.DataFrame.from_dict(cluster_probe_mapping, orient='index')
-        
-        # Join them
-        full_mapping_df = cluster_info_df.join(mapping_df)
-
-        # Center the probe columns
-        probe_columns = [col for col in full_mapping_df.columns if isinstance(col, int)]
-        non_probe_columns = [col for col in full_mapping_df.columns if not isinstance(col, int)]
-        shift = len(probe_columns) // 2
-        shifted_probe_columns = list(np.roll(probe_columns, shift))
-        final_df = full_mapping_df[non_probe_columns + shifted_probe_columns]
-        
-        # Convert power contributions to dB
-        with np.errstate(divide='ignore'):
-            power_db_df = 10 * np.log10(final_df[shifted_probe_columns])
-        
-        # Combine info and power dataframes
-        display_df = final_df[non_probe_columns].copy()
-        for col in shifted_probe_columns:
-            display_df[col] = power_db_df[col]
-
-        st.dataframe(display_df.style.background_gradient(cmap='viridis', vmin=-80, vmax=0, axis=1, subset=shifted_probe_columns).format("{:.1f}", subset=shifted_probe_columns).format("{:.3e}", subset=['Delay (s)']).format("{:.2f}", subset=['AoD (deg)']))
-    else:
-        st.info("No cluster mapping data available for this synthesis method.")
-
-    with st.expander("Show Physical Chamber Matrices"):
-        st.write("Physical B-Matrix (Complex Values)")
-        st.dataframe(B_matrix)
         st.divider()
-        st.write("Transmit Mapping Matrix A (Complex Values)")
-        st.dataframe(A_matrix)
-        st.write("H_target Matrix (Complex Values)")
-        st.dataframe(H_target)
-else:
-    st.info("Please configure parameters and click 'Run Simulation'.")
+
+        # --- Cluster-to-Probe Power Contribution Matrix ---
+        st.subheader("Cluster-to-Probe Power Contribution Matrix (dB, Centered)")
+        if cluster_probe_mapping:
+            # Create a DataFrame for cluster info (Delay, AoD)
+            cluster_info_df = pd.DataFrame([
+                {'Delay (s)': c.delay, 'AoD (deg)': c.aod_phi}
+                for c in clusters
+            ])
+            cluster_info_df.index.name = "Cluster ID"
+
+            # Create a DataFrame for the mapping
+            mapping_df = pd.DataFrame.from_dict(cluster_probe_mapping, orient='index')
+            
+            # Join them
+            full_mapping_df = cluster_info_df.join(mapping_df)
+
+            # Center the probe columns
+            probe_columns = [col for col in full_mapping_df.columns if isinstance(col, int)]
+            non_probe_columns = [col for col in full_mapping_df.columns if not isinstance(col, int)]
+            shift = len(probe_columns) // 2
+            shifted_probe_columns = list(np.roll(probe_columns, shift))
+            final_df = full_mapping_df[non_probe_columns + shifted_probe_columns]
+            
+            # Convert power contributions to dB
+            with np.errstate(divide='ignore'):
+                power_db_df = 10 * np.log10(final_df[shifted_probe_columns])
+            
+            # Combine info and power dataframes
+            display_df = final_df[non_probe_columns].copy()
+            for col in shifted_probe_columns:
+                display_df[col] = power_db_df[col]
+
+            st.dataframe(display_df.style.background_gradient(cmap='viridis', vmin=-80, vmax=0, axis=1, subset=shifted_probe_columns).format("{:.1f}", subset=shifted_probe_columns).format("{:.3e}", subset=['Delay (s)']).format("{:.2f}", subset=['AoD (deg)']))
+        else:
+            st.info("No cluster mapping data available for this synthesis method.")
+
+        with st.expander("Show Physical Chamber Matrices"):
+            st.write("Physical B-Matrix (Complex Values)")
+            st.dataframe(B_matrix)
+            st.divider()
+            st.write("Transmit Mapping Matrix A (Complex Values)")
+            st.dataframe(A_matrix)
+            st.write("H_target Matrix (Complex Values)")
+            st.dataframe(H_target)
