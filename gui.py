@@ -10,6 +10,15 @@ from channel_model_38901.channel_generator import ChannelGenerator
 from channel_model_38901.common.data_models import AntennaArray, EngineCluster
 from channel_model_38901.common.geometry import get_antenna_positions
 
+# Try importing MIMO OTA Simulator (Optional extension)
+try:
+    from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+    from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig
+    MIMO_OTA_AVAILABLE = True
+except ImportError:
+    MIMO_OTA_AVAILABLE = False
+    print("Warning: mimo_ota_simulator not found. OTA features disabled.")
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
@@ -39,13 +48,16 @@ class ChannelModelApp(tk.Tk):
         general_param_frame = ttk.LabelFrame(param_frame, text="通用参数", padding="10")
         general_param_frame.grid(row=0, column=0, padx=5, pady=5, sticky=tk.NSEW)
 
+        ota_param_frame = ttk.LabelFrame(param_frame, text="MIMO OTA 参数 (可选)", padding="10")
+        ota_param_frame.grid(row=1, column=0, padx=5, pady=5, sticky=tk.NSEW)
+
         tx_param_frame = ttk.LabelFrame(param_frame, text="发射端 (Tx) 参数", padding="10")
-        tx_param_frame.grid(row=0, column=1, padx=5, pady=5, sticky=tk.NSEW)
+        tx_param_frame.grid(row=0, column=1, rowspan=2, padx=5, pady=5, sticky=tk.NSEW)
 
         rx_param_frame = ttk.LabelFrame(param_frame, text="接收端 (Rx) 参数", padding="10")
-        rx_param_frame.grid(row=0, column=2, padx=5, pady=5, sticky=tk.NSEW)
+        rx_param_frame.grid(row=0, column=2, rowspan=2, padx=5, pady=5, sticky=tk.NSEW)
 
-        self._create_parameter_widgets(general_param_frame, tx_param_frame, rx_param_frame)
+        self._create_parameter_widgets(general_param_frame, ota_param_frame, tx_param_frame, rx_param_frame)
         self._create_control_buttons(top_frame)
         
         bottom_frame = ttk.Frame(self, padding="10")
@@ -60,7 +72,7 @@ class ChannelModelApp(tk.Tk):
         self.update_antenna_ui('tx')
         self.update_antenna_ui('rx')
 
-    def _create_parameter_widgets(self, general_frame, tx_frame, rx_frame):
+    def _create_parameter_widgets(self, general_frame, ota_frame, tx_frame, rx_frame):
         environments = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF']
         cluster_models = ['Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME']
         
@@ -76,8 +88,32 @@ class ChannelModelApp(tk.Tk):
         for i, (key, (text, default, values)) in enumerate(general_params.items()):
             self._create_entry(general_frame, key, text, default, values, i)
 
+        # OTA Parameters
+        self.ota_vars = {}
+        if MIMO_OTA_AVAILABLE:
+            ota_enable = self._create_entry(ota_frame, "ota_enable", "启用 MIMO OTA:", False, [True, False], 0)
+            ota_enable.trace_add('write', lambda *args: self.update_ota_ui())
+            
+            self._create_entry(ota_frame, "ota_num_probes", "探头数量:", "16", None, 1)
+            self._create_entry(ota_frame, "ota_radius_m", "探头半径 (m):", "1.5", None, 2)
+            self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 3)
+            self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 4)
+        else:
+            ttk.Label(ota_frame, text="MIMO OTA 库未安装").pack()
+
         self._create_antenna_widgets('tx', tx_frame)
         self._create_antenna_widgets('rx', rx_frame)
+        
+        if MIMO_OTA_AVAILABLE:
+            self.update_ota_ui()
+
+    def update_ota_ui(self):
+        if not MIMO_OTA_AVAILABLE: return
+        is_enabled = self.controls['ota_enable']['var'].get()
+        state = tk.NORMAL if is_enabled else tk.DISABLED
+        for key in ["ota_num_probes", "ota_radius_m", "ota_method", "ota_jitter"]:
+            self.controls[key]['label'].config(state=state)
+            self.controls[key]['widget'].config(state=state)
 
     def _create_antenna_widgets(self, prefix, parent_frame):
         self._create_entry(parent_frame, f'{prefix}_position', "Position (x,y,z):", "0,0,25" if prefix == 'tx' else "100,0,1.5", None, 0)
@@ -226,6 +262,12 @@ class ChannelModelApp(tk.Tk):
             los_condition_str = params["los_condition"]
             force_los_condition = None if los_condition_str == "Automatic" else los_condition_str
             time_s = float(params["simulation_time_s"])
+            use_median_lsps = params["use_median_lsps"]
+
+            # Check if OTA is enabled
+            ota_enabled = False
+            if MIMO_OTA_AVAILABLE and "ota_enable" in params:
+                 ota_enabled = params["ota_enable"]
 
             c = 3e8
             lambda_meters = c / center_frequency_hz
@@ -243,22 +285,81 @@ class ChannelModelApp(tk.Tk):
 
             ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
             
-            use_median_lsps = params["use_median_lsps"]
             log_msg = f"Starting simulation for Environment: {scenario_name}, Cluster Model: {cluster_model_name if cluster_model_name else 'Stochastic'}"
+            if ota_enabled:
+                log_msg += f" [MIMO OTA Mode: {params['ota_method']}, Probes: {params['ota_num_probes']}]"
             self.simulation_queue.put(("log", log_msg))
 
             np.random.seed(seed)
-            simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=use_median_lsps)
-            simulator.config.bs_positions = bs_pos
-            simulator.config.ue_positions = ue_pos
-            simulator.config.ue_velocities = ue_vel_vector
-            simulator.config.antenna_config = ant_config
-            
-            # The generator is now created inside the simulator, so we don't create it here.
-            # We need to re-initialize it if config changes, which is handled in the simulator.
-            simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=use_median_lsps)
 
-            results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
+            if ota_enabled:
+                # --- Run MIMO OTA Simulation ---
+                simulator = MIMO_OTA_Simulator() # This is the OTA simulator facade
+                
+                # Build OTA Configs
+                chamber_config = ChamberConfig(
+                    num_probes=int(params["ota_num_probes"]),
+                    radius_m=float(params["ota_radius_m"]),
+                    distribution='ring',
+                    dual_polarized=False # GUI doesn't support dual-pol probe selection yet
+                )
+                
+                # Map antenna config to OTA format
+                # Note: MIMO_OTA_Simulator expects specific AntennaArrayConfig objects or dicts
+                # We'll use the dict/object mapping as defined in mimo_ota_simulator/data_models.py
+                
+                tx_ant_ota = AntennaArrayConfig(
+                    num_rows=int(params['tx_num_rows']), num_cols=int(params['tx_num_cols']),
+                    spacing_h=float(params['tx_spacing_h']), spacing_v=float(params['tx_spacing_v'])
+                    # pattern handled internally or default
+                )
+                rx_ant_ota = AntennaArrayConfig(
+                    num_rows=int(params['rx_num_rows']), num_cols=int(params['rx_num_cols']),
+                    spacing_h=float(params['rx_spacing_h']), spacing_v=float(params['rx_spacing_v'])
+                )
+
+                channel_config = TargetChannelConfig(
+                    model_name=scenario_name,
+                    cluster_model_name=cluster_model_name,
+                    center_frequency_hz=center_frequency_hz,
+                    random_seed=seed,
+                    tx_antenna=tx_ant_ota,
+                    rx_antenna=rx_ant_ota,
+                    force_condition=force_los_condition,
+                    ue_velocity_kmh=ue_velocity_kph,
+                    use_median_lsps=use_median_lsps
+                )
+
+                # Run OTA Sim
+                ota_results = simulator.run(
+                    chamber_config=chamber_config,
+                    channel_config=channel_config,
+                    synthesis_method=params["ota_method"],
+                    probe_phase_jitter=params["ota_jitter"]
+                )
+                
+                # Adapt OTA results to GUI format
+                # OTA returns 'effective_H_matrix', 'lsps', 'clusters', 'pathloss_db', 'is_los'
+                results = {
+                    'channel_matrix': ota_results['effective_H_matrix'],
+                    'lsps': ota_results['lsps'],
+                    'pathloss_db': ota_results['pathloss_db'],
+                    'is_los': ota_results['is_los'],
+                    'clusters': ota_results['clusters']
+                }
+
+            else:
+                # --- Run Standard Core Simulation ---
+                simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=use_median_lsps)
+                simulator.config.bs_positions = bs_pos
+                simulator.config.ue_positions = ue_pos
+                simulator.config.ue_velocities = ue_vel_vector
+                simulator.config.antenna_config = ant_config
+                
+                simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=use_median_lsps)
+
+                results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
+
             self.simulation_queue.put(("results", results))
 
         except Exception as e:

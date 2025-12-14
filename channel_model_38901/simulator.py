@@ -84,12 +84,20 @@ class ChannelSimulator:
         self.config.ue_velocities = ue_velocities
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
 
-    def set_antenna_config(self, num_tx_rows, num_tx_cols, num_rx_rows, num_rx_cols):
+    def set_antenna_config(self, num_tx_rows, num_tx_cols, num_rx_rows, num_rx_cols, 
+                           tx_spacing_h=0.5, tx_spacing_v=0.5, rx_spacing_h=0.5, rx_spacing_v=0.5, 
+                           tx_array_type='ULA', rx_array_type='ULA'):
         """更新天线阵列配置。"""
         self.config.antenna_config.num_tx_rows = num_tx_rows
         self.config.antenna_config.num_tx_cols = num_tx_cols
         self.config.antenna_config.num_rx_rows = num_rx_rows
         self.config.antenna_config.num_rx_cols = num_rx_cols
+        self.config.antenna_config.tx_spacing_h = tx_spacing_h
+        self.config.antenna_config.tx_spacing_v = tx_spacing_v
+        self.config.antenna_config.rx_spacing_h = rx_spacing_h
+        self.config.antenna_config.rx_spacing_v = rx_spacing_v
+        self.config.antenna_config.tx_array_type = tx_array_type
+        self.config.antenna_config.rx_array_type = rx_array_type
         
         # Calculate positions
         c = 3e8
@@ -110,6 +118,18 @@ class ChannelSimulator:
             self.config.antenna_config.rx_spacing_h * lam,
             self.config.antenna_config.rx_spacing_v * lam
         )
+        
+        # DEBUG: Print calculated Rx Y-coordinates to check spacing
+        # Assuming ULA along Y-axis or X-axis depending on implementation
+        if self.config.antenna_config.rx_positions.shape[0] > 1:
+            p0 = self.config.antenna_config.rx_positions[0]
+            p1 = self.config.antenna_config.rx_positions[1]
+            dist = np.linalg.norm(p0 - p1)
+            print(f"[DEBUG set_antenna_config] Rx Spacing: {self.config.antenna_config.rx_spacing_h} lambda")
+            print(f"[DEBUG set_antenna_config] Frequency: {self.config.center_frequency_hz/1e9} GHz, Lambda: {lam*100:.2f} cm")
+            print(f"[DEBUG set_antenna_config] Rx Pos 0: {p0}")
+            print(f"[DEBUG set_antenna_config] Rx Pos 1: {p1}")
+            print(f"[DEBUG set_antenna_config] Calculated Physical Distance: {dist*100:.2f} cm ({dist/lam:.2f} lambda)")
 
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
 

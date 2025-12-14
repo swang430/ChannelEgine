@@ -110,20 +110,44 @@ class MIMO_OTA_Simulator:
         num_physical_probes = chamber_config.num_probes
         num_effective_probes = num_physical_probes * 2 if chamber_config.dual_polarized else num_physical_probes
         probe_angles_rad = np.linspace(0, 2 * np.pi, num_physical_probes, endpoint=False)
-        aoa_rad = np.deg2rad(cluster.aod_phi)
-        as_rad = np.deg2rad(cluster.as_aod)
-        angle_diffs = np.abs(probe_angles_rad - aoa_rad)
+        aoa_rad = np.deg2rad(cluster.aod_phi) # Note: Is this AoA or AoD? Usually Rx side weights use AoA.
+        # FIX: The input cluster has aod_phi and aoa_phi. For OTA probes (Rx side), we MUST use aoa_phi.
+        # The previous code used cluster.aod_phi which might be wrong if passed directly, 
+        # but in 'ray' loop we construct temp cluster with aoa_phi in both slots? 
+        # Let's check usage. In 'cluster' mode: w_map = self._calculate_weights_for_cluster(cluster, ...).
+        # Standard cluster has aod/aoa. OTA probes are at Rx. We need AoA.
+        # Let's correct this line to use aoa_phi if available, but keep variable name if unsure.
+        # Actually, let's look at `ray` loop: temp_ray_cluster = EngineCluster(..., aoa_phi=aoa_ray, ...).
+        # So we should use `cluster.aoa_phi`.
+        
+        target_angle_rad = np.deg2rad(cluster.aoa_phi)
+        
+        as_rad = np.deg2rad(cluster.as_aod) # Again, should be as_aoa for Rx side?
+        # Let's look at cluster mode usage. It passes the raw cluster.
+        # We should use `cluster.as_aoa`.
+        target_as_rad = np.deg2rad(cluster.as_aoa)
+
+        # --- ADAPTIVE BROADENING FIX ---
+        # Ensure the Gaussian width is at least a fraction of the probe spacing.
+        # Otherwise, rays falling between probes are lost (weights -> 0).
+        probe_spacing_rad = 2 * np.pi / num_physical_probes
+        min_as_rad = probe_spacing_rad / 1.5  # Sigma approx 2/3 of spacing ensures overlap
+        
+        effective_as_rad = max(target_as_rad, min_as_rad)
+        # -------------------------------
+
+        angle_diffs = np.abs(probe_angles_rad - target_angle_rad)
         angle_diffs = np.minimum(angle_diffs, 2 * np.pi - angle_diffs)
         candidate_indices = np.argsort(angle_diffs)[:num_candidate_probes]
         weights = np.zeros(num_physical_probes)
+        
         for idx in candidate_indices:
-            delta_angle = np.abs(probe_angles_rad[idx] - aoa_rad)
+            delta_angle = np.abs(probe_angles_rad[idx] - target_angle_rad)
             delta_angle = np.minimum(delta_angle, 2 * np.pi - delta_angle)
-            if as_rad > 1e-9:
-                weights[idx] = np.exp(-np.power(delta_angle, 2) / (2 * np.power(as_rad, 2)))
-            else:
-                # Point source: Assign to the closest probe (candidate_indices is sorted)
-                weights[idx] = 1.0 if idx == candidate_indices[0] else 0.0
+            
+            # Use effective_as_rad for Gaussian
+            weights[idx] = np.exp(-np.power(delta_angle, 2) / (2 * np.power(effective_as_rad, 2)))
+            
         total_weight = np.sum(weights)
         if total_weight > 1e-9:
             weights /= total_weight
@@ -142,7 +166,8 @@ class MIMO_OTA_Simulator:
         return h_matrix[0:1, :]
 
     def run(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
-            synthesis_method: Literal['pinv', 'cluster'] = 'pinv') -> Dict:
+            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            probe_phase_jitter: bool = False) -> Dict:
         num_tx_antennas = channel_config.tx_antenna.num_cols * channel_config.tx_antenna.num_rows
         num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
         probe_tx_power_contributions = np.zeros((num_effective_probes, num_tx_antennas))
@@ -181,20 +206,22 @@ class MIMO_OTA_Simulator:
             num_tx_rows=channel_config.tx_antenna.num_rows,
             num_tx_cols=channel_config.tx_antenna.num_cols,
             num_rx_rows=channel_config.rx_antenna.num_rows,
-            num_rx_cols=channel_config.rx_antenna.num_cols
+            num_rx_cols=channel_config.rx_antenna.num_cols,
+            tx_spacing_h=channel_config.tx_antenna.spacing_h,
+            tx_spacing_v=channel_config.tx_antenna.spacing_v,
+            rx_spacing_h=channel_config.rx_antenna.spacing_h,
+            rx_spacing_v=channel_config.rx_antenna.spacing_v,
+            tx_array_type=channel_config.tx_antenna.array_type,
+            rx_array_type=channel_config.rx_antenna.array_type
         )
         
         # Override antenna patterns if needed (Simulator facade defaults to Isotropic if not exposed, 
         # but ChannelSimulator.config.antenna_config is accessible)
-        simulator.config.antenna_config.tx_array_type = channel_config.tx_antenna.array_type
-        simulator.config.antenna_config.rx_array_type = channel_config.rx_antenna.array_type
-        # TODO: Add spacing config to simulator facade properly or modify config directly
-        c = 3e8
-        lam = c / channel_config.center_frequency_hz
-        simulator.config.antenna_config.tx_spacing_h = channel_config.tx_antenna.spacing_h * lam
-        simulator.config.antenna_config.tx_spacing_v = channel_config.tx_antenna.spacing_v * lam
-        simulator.config.antenna_config.rx_spacing_h = channel_config.rx_antenna.spacing_h * lam
-        simulator.config.antenna_config.rx_spacing_v = channel_config.rx_antenna.spacing_v * lam
+        # Note: Patterns are passed to generator during init in Facade, 
+        # but current AntennaArray model defaults to Isotropic anyway. 
+        # If needed, update config directly for pattern strings.
+        simulator.config.antenna_config.tx_element_pattern = channel_config.tx_antenna.element_pattern
+        simulator.config.antenna_config.rx_element_pattern = channel_config.rx_antenna.element_pattern
 
         # Generate Channel
         sim_result = simulator.run(force_condition=channel_config.force_condition)
@@ -231,8 +258,95 @@ class MIMO_OTA_Simulator:
 
             transmit_mapping_matrix_A = A_total
             probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
+            
+        elif synthesis_method == 'ray':
+            # Ray-Level Synthesis (Geometric GSCM)
+            # This reconstructs rays from cluster parameters, bypassing the 'Rank-1' issue of simplified models.
+            
+            # 1. Get Ray Offsets
+            scenario_params = simulator.generator.params.get_scenario_params(simulator.config.scenario_name)
+            if 'ray_angle_offsets_deg' in scenario_params:
+                ray_offsets = np.array(scenario_params['ray_angle_offsets_deg'])
+            else:
+                ray_offsets = np.array([0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 
+                                        0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551])
+            
+            A_total = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
+            c = 3e8
+            lambda_0 = c / channel_config.center_frequency_hz
+            k_factor = 2 * np.pi / lambda_0
+            
+            for i, cluster in enumerate(physical_clusters):
+                # We will map each ray to probes independently
+                cluster_power_accum = np.zeros(num_effective_probes)
+                
+                for m in range(20):
+                    alpha = ray_offsets[m]
+                    c_scale = 1.0 # Scaling factor
+                    
+                    # 1. Calculate Ray Angles
+                    aoa_ray = cluster.aoa_phi + c_scale * alpha * cluster.as_aoa
+                    aod_ray = cluster.aod_phi + c_scale * alpha * cluster.as_aod
+                    # zoa_ray = cluster.zoa_theta + c_scale * alpha * cluster.as_zoa # Not used for ring weights (2D)
+                    zod_ray = cluster.zod_theta + c_scale * alpha * cluster.as_zod
+                    
+                    # DEBUG: Check angles
+                    if i == 0 and m == 0:
+                        print(f"[DEBUG RAY] Cluster 0 Ray 0: AoA={aoa_ray:.2f}, ZoD={zod_ray:.2f}, Power={cluster.power:.4f}")
+
+                    # 2. Calculate Probe Weights for this Ray (Point Source Mode)
+                    # We treat each ray as a point source. 
+                    # CRITICAL FIX: Do NOT use AS=0 (Nearest Neighbor). This causes phase quantization.
+                    # Use a small AS (e.g., 2 deg) to enable Gaussian Interpolation between probes.
+                    # This smooths the field and improves spatial accuracy.
+                    temp_ray_cluster = EngineCluster(aod_phi=aod_ray, aoa_phi=aoa_ray, power=0, delay=0, as_aod=0, as_aoa=2.0)
+                    w_map_ray = self._calculate_weights_for_cluster(temp_ray_cluster, chamber_config) # Shape (N_probes, 1)
+                    
+                    # 3. Calculate Tx Steering Vector (g_tx for this ray)
+                    # v_tx = exp(j * k * r_tx . k_hat_departure)
+                    theta_t_rad = np.deg2rad(zod_ray)
+                    phi_t_rad = np.deg2rad(aod_ray)
+                    k_hat_tx = np.array([
+                        np.sin(theta_t_rad) * np.cos(phi_t_rad),
+                        np.sin(theta_t_rad) * np.sin(phi_t_rad),
+                        np.cos(theta_t_rad)
+                    ])
+                    
+                    g_tx_ray = np.zeros((1, num_tx_antennas), dtype=complex)
+                    for tx_idx in range(num_tx_antennas):
+                        pos_tx = simulator.config.antenna_config.tx_positions[tx_idx]
+                        phase_tx = k_factor * np.dot(k_hat_tx, pos_tx)
+                        g_tx_ray[0, tx_idx] = np.exp(1j * phase_tx)
+                    
+                    # 4. Synthesize Contribution
+                    # Random phase for this ray (Decorrelation source!)
+                    phi_rnd = np.random.uniform(-np.pi, np.pi)
+                    
+                    # Power per ray
+                    p_ray = cluster.power / 20.0
+                    
+                    # A_ray = sqrt(P) * w * g_tx * exp(j*phi)
+                    A_ray = np.sqrt(p_ray) * (w_map_ray @ g_tx_ray) * np.exp(1j * phi_rnd)
+                    
+                    A_total += A_ray
+                    cluster_power_accum += (w_map_ray.flatten() * p_ray)
+
+                cluster_probe_mapping[i] = cluster_power_accum
+
+            transmit_mapping_matrix_A = A_total
+            probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
+            
         else:
             raise ValueError(f"Unknown synthesis method: {synthesis_method}")
+
+        # Apply Probe Phase Jitter (Simulating hardware inconsistency)
+        if probe_phase_jitter:
+            # Jitter range: Full random phase [-pi, pi]
+            # This simulates uncalibrated phase or large cable length variations,
+            # which helps break the strong coherence of the simplified Cluster model.
+            jitter_rad = np.pi 
+            phase_noise = np.random.uniform(-jitter_rad, jitter_rad, size=(num_effective_probes, 1))
+            transmit_mapping_matrix_A *= np.exp(1j * phase_noise)
 
         effective_H_matrix = B_matrix @ transmit_mapping_matrix_A
         return {
@@ -242,6 +356,8 @@ class MIMO_OTA_Simulator:
             "B_matrix": B_matrix,
             "clusters": physical_clusters,
             "lsps": lsps, # Return LSPs for display
+            "pathloss_db": sim_result['pathloss_db'],
+            "is_los": sim_result['is_los'],
             "probe_tx_power_contributions": probe_tx_power_contributions,
             "cluster_probe_mapping": cluster_probe_mapping,
         }

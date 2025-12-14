@@ -222,23 +222,6 @@ class ChannelGenerator:
         num_rx = ant_config.num_rx_rows * ant_config.num_rx_cols
         num_tx = ant_config.num_tx_rows * ant_config.num_tx_cols
         
-        # 步骤 8: 生成空间相关矩阵
-        if is_deterministic:
-            # 确定性模型（如CDL）不使用空间相关性
-            L_rx, L_tx = np.eye(num_rx), np.eye(num_tx)
-        else:
-            mean_aoa = clusters[0].aoa_phi; mean_zoa = clusters[0].zoa_theta
-            mean_aod = clusters[0].aod_phi; mean_zod = clusters[0].zod_theta
-            R_rx = get_spatial_correlation_matrix(ant_config.rx_array_type, ant_config.num_rx_rows, ant_config.num_rx_cols, ant_config.rx_spacing_v, ant_config.rx_spacing_h, mean_zoa, mean_aoa, lsps.arrival_azimuth_spread_deg, lsps.arrival_azimuth_spread_deg)
-            R_tx = get_spatial_correlation_matrix(ant_config.tx_array_type, ant_config.num_tx_rows, ant_config.num_tx_cols, ant_config.tx_spacing_v, ant_config.tx_spacing_h, mean_zod, mean_aod, lsps.departure_zenith_spread_deg, lsps.departure_azimuth_spread_deg)
-            try:
-                L_rx = np.linalg.cholesky(R_rx)
-                L_tx = np.linalg.cholesky(R_tx)
-            except np.linalg.LinAlgError:
-                # 如果矩阵不是正定的，则使用单位矩阵
-                L_rx = np.eye(num_rx)
-                L_tx = np.eye(num_tx)
-
         H_total_normalized = np.zeros((num_rx, num_tx), dtype=np.complex128)
         c = 3e8
         lambda_0 = c / self.config.center_frequency_hz
@@ -247,8 +230,40 @@ class ChannelGenerator:
         for cluster in clusters:
             # 生成IID瑞利衰落矩阵
             H_iid = (np.random.randn(num_rx, num_tx) + 1j * np.random.randn(num_rx, num_tx)) / np.sqrt(2)
-            # 应用空间相关性
-            H_corr = L_rx @ H_iid @ L_tx.conj().T
+            
+            # 步骤 8: 应用空间相关性 (Per-Cluster)
+            if is_deterministic:
+                # 确定性模型（如CDL）不使用统计相关矩阵，而是依赖射线叠加
+                # 这里 H_iid 代表了簇内的随机相位变化
+                H_corr = H_iid
+            else:
+                # 随机模型 (Stochastic): 为每个簇计算独立的空间相关性
+                # 使用该簇特定的角度和LSP中的角度扩展
+                R_rx = get_spatial_correlation_matrix(
+                    ant_config.rx_array_type, ant_config.num_rx_rows, ant_config.num_rx_cols, 
+                    ant_config.rx_spacing_v, ant_config.rx_spacing_h, 
+                    cluster.zoa_theta, cluster.aoa_phi, 
+                    lsps.arrival_zenith_spread_deg, lsps.arrival_azimuth_spread_deg
+                )
+                R_tx = get_spatial_correlation_matrix(
+                    ant_config.tx_array_type, ant_config.num_tx_rows, ant_config.num_tx_cols, 
+                    ant_config.tx_spacing_v, ant_config.tx_spacing_h, 
+                    cluster.zod_theta, cluster.aod_phi, 
+                    lsps.departure_zenith_spread_deg, lsps.departure_azimuth_spread_deg
+                )
+                try:
+                    L_rx = np.linalg.cholesky(R_rx)
+                    L_tx = np.linalg.cholesky(R_tx)
+                    H_corr = L_rx @ H_iid @ L_tx.conj().T
+                    
+                    # DEBUG: Check R_rx for first cluster
+                    # if clusters.index(cluster) == 0:
+                    #    print(f"[DEBUG R_rx Cluster 0] AoA: {cluster.aoa_phi:.2f}, R_01: {R_rx[0,1]:.4f}")
+                        
+                except np.linalg.LinAlgError:
+                    # 如果矩阵不是正定的，回退到单位矩阵 (IID)
+                    H_corr = H_iid
+
             cluster.h_matrix = H_corr
             
             # 计算多普勒频移
