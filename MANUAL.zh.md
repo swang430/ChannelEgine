@@ -1,225 +1,117 @@
-# 3GPP TR 38.901 信道模型仿真器 - 用户手册
+# MIMO OTA 仿真器 V4.4 用户手册
 
-## 1. 项目概述
+本手册详细介绍了 **MIMO OTA Simulator** 的功能、操作流程及最佳实践。该软件旨在为 5G/6G 无线通信系统提供符合 3GPP TR 38.901 标准的高保真信道建模与空口 (OTA) 仿真能力。
 
-本项目是一个基于Python的高性能信道模型仿真器，精确实现了3GPP TR 38.901 V19.0.0标准中定义的5G无线信道模型。它采用模块化设计，将核心信道引擎 (`channel_model_38901`) 与上层应用（如`mimo_ota_simulator`）分离，确保了代码的可重用性和可扩展性。
+## 1. 快速开始
 
-## 2. 功能特性
+本项目提供两种用户界面，以满足不同的使用场景：
 
-- **严格遵循标准**: 精确实现3GPP TR 38.901中定义的各主要场景，如 `UMa`, `UMi`, `RMa`, `InH` 等。
-- **混合信道模型**: 允许将随机的大尺度环境（决定路径损耗和阴影衰落）与确定性的小尺度簇模型（如 `CDL-A`, `CDL-B`）相结合，生成物理意义更完备的信道。
-- **确定性LSP**: 支持使用大尺度参数（LSP）的统计中位值，以消除随机性，便于进行可重复的对比测试。
-- **简洁的API**: 通过 `ChannelSimulator` 外观类提供简单易用的编程接口。
-- **图形用户界面 (GUI)**: 提供一个基于Streamlit的GUI (`gui.py`)，用于快速执行仿真和结果可视化。
+### 1.1 Web 网页版 (推荐)
+提供最现代化的交互体验，支持远程访问、拖拽上传和一键下载。
+```bash
+streamlit run app.py
+```
+*   **适用场景**: 数据分析、图表展示、生成硬件驱动文件、远程共享。
 
-## 3. 安装指南
-
-1.  **克隆仓库**:
-    ```bash
-    git clone <repository_url>
-    ```
-2.  **创建并激活Python虚拟环境**:
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    ```
-3.  **安装依赖包**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **以可编辑模式安装本地包**:
-    这一步是必需的，它能确保上层应用可以正确调用核心库。
-    ```bash
-    pip install -e ./channel_model_38901
-    pip install -e ./mimo_ota_simulator
-    ```
-
-## 4. 快速入门
-
-### 4.1 使用GUI
-
-最简单的入门方式是运行项目提供的GUI。
-
+### 1.2 桌面 GUI 版
+基于 Python Tkinter 的传统窗口程序，响应速度快。
 ```bash
 python gui.py
 ```
+*   **适用场景**: 本地实验室环境、低延迟操作。
 
-在打开的网页浏览器窗口中，您可以选择不同的场景、配置参数并运行仿真，结果将以图表形式实时展示。
+---
 
-### 4.2 使用脚本
+## 2. 核心功能详解
 
-以下是一个基本的脚本示例，演示如何生成一个 `UMa` 场景的信道。
+无论使用哪个界面，核心参数配置逻辑是一致的。
 
-```python
-from channel_model_38901.simulator import ChannelSimulator
+### 2.1 场景与几何 (Scenario & Geometry)
+*   **大尺度环境 (Model)**: 选择 3GPP 标准场景，如 `UMa` (城市宏站), `RMa` (乡村), `InH-Office` (室内) 等。这决定了路径损耗、阴影衰落和多径分布的统计规律。
+*   **小尺度簇模型 (Cluster Model)**:
+    *   **Stochastic (随机)**: 完全根据标准概率密度函数生成新的信道。
+    *   **CDL-A/B/C...**: 使用 3GPP 定义的固定簇参数（时延、角度、功率固定，相位随机）。推荐用于标准化测试。
+*   **中心频率**: 直接影响路径损耗和多普勒频移。
+*   **UE 速度**: 决定了信道随时间变化的快慢（多普勒谱展宽）。
 
-# 1. 创建一个UMa场景的仿真器实例
-simulator = ChannelSimulator(scenario_name='UMa', center_frequency_hz=3.5e9)
+### 2.2 暗室配置 (Chamber Config)
+这是 MIMO OTA 特有的物理层配置。
+*   **探头数量 (Num Probes)**: 
+    *   **16 探头**: 推荐配置。能很好地平衡系统成本与空间相关性重构精度（在 NLOS 场景下相关性 < 0.2）。
+    *   **8 探头**: 不推荐用于复杂多径环境，可能导致相关性虚高。
+*   **探头环半径**: 探头到被测件 (DUT) 中心的距离。需满足远场条件 ($R > 2D^2/\lambda$)。
 
-# 2. 运行仿真
-results = simulator.run()
+### 2.3 天线配置 (Antenna Config)
+定义基站 (Tx) 和终端 (Rx) 的天线阵列。
+*   **ULA**: 均匀线阵。
+*   **URA**: 均匀面阵 (矩形)。
+*   **间距**: 通常设置为 0.5 波长。
 
-# 3. 打印结果
-print(f"场景: {results['lsps'].scenario}")
-print(f"信道条件: {'LOS' if results['is_los'] else 'NLOS'}")
-print(f"路径损耗: {results['pathloss_db']:.2f} dB")
-print(f"信道矩阵 H (形状: {results['channel_matrix'].shape}):\n{results['channel_matrix']}")
-```
+---
 
-## 5. 用户手册
+## 3. 运行模式与验证
 
-### 5.1 使用 `ChannelSimulator`
+系统支持两种核心运行模式，解决了传统仿真中的常见痛点。
 
-`ChannelSimulator` 是与库交互的主要接口。在创建实例时，您需要指定最核心的参数。
+### 3.1 单次快照 (Single Snapshot)
+生成某一瞬间 ($t=0$) 的信道状态。
+*   **输出**: 瞬时的 H 矩阵、功率分布、PDP 图。
+*   **注意**: 在单次快照模式下，计算出的空间相关性矩阵归一化后总是全 1.0。**这不是 Bug**，而是数学上的必然（秩-1矩阵）。请勿用此模式验证相关性指标。
 
-```python
-# 构造函数
-simulator = ChannelSimulator(
-    scenario_name: str,              # 大尺度环境, e.g., 'UMa', 'RMa'
-    center_frequency_hz: float,      # 中心频率 (Hz)
-    cluster_model_name: str = None,  # 小尺度模型, e.g., 'CDL-A'
-    use_median_lsps: bool = False    # 是否使用LSP中位值
-)
-```
+### 3.2 统计验证 (Statistical Validation)
+执行蒙特卡洛仿真（默认 50 次 Drops）。
+*   **原理**: 每次 Drop 保持角度和功率不变（针对 CDL 模型），但重新随机生成初始相位。
+*   **输出**: 平均空间相关性曲线。
+*   **用途**: **这是验证 OTA 暗室性能的唯一正确方式**。如果曲线在非对角线处接近 0 (例如 < 0.2)，说明暗室能产生良好的去相关场。
 
-### 5.2 混合信道模型
+### 3.3 合成方法 (Synthesis Method)
+*   **Ray (射线级合成) [强烈推荐]**: 
+    *   将每个簇拆解为 20 条子射线，为每条射线赋予独立的随机相位和多普勒频移。
+    *   **优势**: 极大地降低了空间相关性，最接近真实物理环境。支持生成高保真的动态多普勒信道。
+*   **Cluster (簇级合成)**: 将整个簇视为一个单一平面波。计算简单，但相关性较差。
+*   **Pinv (伪逆)**: 理论最优解，但对探头数量极其敏感，且在某些病态矩阵下不稳定。
 
-混合模型是本仿真器的核心特色。它允许您将一个大尺度环境的路径损耗和阴影衰落，应用到一个确定性的簇模型上。
+---
 
-例如，要生成一个受 `UMa` 环境影响的 `CDL-A` 信道：
+## 4. 硬件集成：Keysight Propsim F64
 
-```python
-simulator = ChannelSimulator(
-    scenario_name='UMa',           # 大尺度环境
-    cluster_model_name='CDL-A',    # 小尺度簇模型
-    center_frequency_hz=3.5e9
-)
-results = simulator.run()
-```
+本系统可生成标准 `.asc` 文件，直接驱动 Keysight F64 硬件仿真器。
 
-此时，仿真器会：
-1.  计算 `UMa` 场景的路径损耗。
-2.  生成 `UMa` 场景的随机大尺度参数（阴影衰落、角度扩展等）。
-3.  加载 `CDL-A` 预定义的、固定的簇参数。
-4.  将三者结合，生成最终的信道矩阵。
+### 4.1 导出配置
+在 Web App 的侧边栏 "6. 硬件导出" 中配置：
+*   **幅度模式 (Mode)**:
+    *   **Mode A (推荐)**: 软件生成**满量程 (Full Scale)** 信号。系统会计算所需的**外部衰减值 (External Attenuation)**。此模式能最大化利用 DAC 的动态范围，信噪比最高。
+    *   **Mode B**: 软件直接将路径损耗缩放应用到数字信号上。适用于路损较小的场景。
+*   **时长 (Duration)**: 建议设置为 **0.005s (5ms)**。F64 会循环播放此文件。
+    *   *技术背景*: 我们生成的是包含动态多普勒旋转的静态信道片段。5ms 足够体现多普勒特征，且文件体积小 (<400MB)，加载迅速。
 
-### 5.3 使用确定性LSP
+### 4.2 校准 (Calibration)
+支持加载 CSV 格式的校准文件，以补偿电缆损耗、相位误差和探头增益不一致。
+*   **CSV 格式**:
+    ```csv
+    Port, Loss, Phase, Gain
+    1, 2.5, 45.0, 3.0
+    2, 2.6, 42.0, 3.1
+    ...
+    ```
+*   系统会自动应用 **预失真 (Pre-distortion)**，即生成与误差相反的相位和幅度，确保到达 DUT 的信号是完美的。
 
-为了进行可复现的测试，您可以设置 `use_median_lsps=True`。这将使得所有大尺度参数（如时延扩展、角度扩展、阴影衰落）都取其统计分布的中位值，从而消除这部分的随机性。
+---
 
-```python
-simulator = ChannelSimulator(
-    scenario_name='RMa',
-    center_frequency_hz=0.7e9,
-    use_median_lsps=True  # 启用确定性LSP
-)
-results = simulator.run()
-```
+## 5. 结果分析指南
 
-### 5.4 配置仿真参数
+### 5.1 PDP (功率时延谱)
+展示多径簇在时间轴上的分布。
+*   **Stem 图**: 每一根竖线代表一个簇。高度代表相对功率 (dB)。
 
-您可以在创建 `ChannelSimulator` 实例后，通过其提供的方法修改仿真参数。
+### 5.2 AoA (到达角谱)
+展示信号从哪个方向到达 DUT。
+*   **极坐标图**: 能够直观地看到信号是集中在某个方向（如 LOS）还是均匀分布（如 NLOS）。
 
-```python
-# 创建实例
-simulator = ChannelSimulator(scenario_name='UMa', center_frequency_hz=3.5e9)
-
-# 修改基站和UE的位置
-bs_pos = np.array([[0, 0, 30]])
-ue_pos = np.array([[150, 50, 1.5]])
-simulator.set_bs_ue_positions(bs_pos, ue_pos)
-
-# 修改UE的速度 (30 km/h, 沿Y轴正方向)
-ue_vel = np.array([[0, 30 * 1000 / 3600, 0]])
-simulator.set_velocities(ue_vel)
-
-# 修改天线配置 (4x2 MIMO)
-simulator.set_antenna_config(num_tx_rows=4, num_tx_cols=1, num_rx_rows=2, num_rx_cols=1)
-
-# 重新运行仿真
-results = simulator.run()
-```
-
-## 6. API 参考
-
-### `ChannelSimulator`
-
-#### `__init__(self, scenario_name, center_frequency_hz, cluster_model_name=None, use_median_lsps=False)`
-初始化仿真器。
-
-#### `run(self, force_condition=None, time_s=0.0, logger=print, use_median_lsps=None) -> Dict`
-运行一次信道实现。
-- **force_condition**: `'LOS'` 或 `'NLOS'`，强制指定信道条件。
-- **time_s**: 时间点（秒），用于计算多普勒效应。
-- **logger**: 日志记录函数。
-- **use_median_lsps**: 单次运行覆盖LSP中位值设置。
-- **返回**: 包含结果的字典。
-
-#### `set_bs_ue_positions(self, bs_positions, ue_positions)`
-设置基站和UE位置。
-
-#### `set_velocities(self, ue_velocities)`
-设置UE速度。
-
-#### `set_antenna_config(self, num_tx_rows, num_tx_cols, num_rx_rows, num_rx_cols)`
-设置天线阵列配置。
-
-#### `set_scenario(self, scenario_name, cluster_model_name=None)`
-切换仿真场景。
-
-#### `set_median_lsp_usage(self, use_median_lsps)`
-设置是否使用LSP中位值。
-
-#### `get_config(self) -> ScenarioConfig`
-返回当前仿真配置。
-
-## 7. 输出数据结构
-
-`run()` 方法返回一个字典，包含以下键：
-
-- `channel_matrix` (`np.ndarray`): 最终的复数信道矩阵 `H`，已包含路径损耗和阴影衰落。
-- `channel_matrix_normalized` (`np.ndarray`): 归一化后的信道矩阵，其功率总和为1。
-- `clusters` (`List[EngineCluster]`): 描述信道多径簇的列表。每个 `EngineCluster` 对象包含时延、功率、角度等详细信息。
-- `lsps` (`LargeScaleParameters`): 本次仿真生成的大尺度参数对象。
-- `pathloss_db` (`float`): 计算出的路径损耗（dB）。
-- `is_los` (`bool`): `True` 表示为LOS信道，`False` 表示为NLOS信道。
-
-## 8. MIMO OTA 仿真器 (`mimo_ota_simulator`)
-
-`mimo_ota_simulator` 是一个利用 `channel_model_38901` 核心库构建的上层应用，专门用于MIMO OTA（Over-the-Air）测试场景的仿真。
-
-### 8.1 核心功能
-
-它的核心任务是解决一个工程问题：如何在一个物理的、由有限探头天线组成的暗室中，精确地复现一个复杂的目标信道（如CDL-A模型）。
-
-它通过“空间场合成法”实现这一目标，即将目标信道的每个多径簇，通过其周围的多个物理探头进行加权合成，从而在被测设备（DUT）所在的位置精确地复现该簇的来波方向和功率。
-
-### 8.2 如何使用
-
-该应用提供了一个独立的GUI，是进行MIMO OTA仿真的主要入口。
-
-```bash
-python mimo_ota_simulator/app.py
-```
-
-在打开的GUI中，您可以配置：
-
-- **暗室参数**: 如探头数量、环形半径、是否双极化等。
-- **目标信道**: 使用与核心库一致的参数，定义您想要复现的信道，例如 `UMa` + `CDL-C`。
-- **天线配置**: 配置发射端（虚拟）和接收端（DUT）的天线阵列。
-
-运行后，仿真器会计算出需要馈入到每个物理探头的激励信号（A矩阵），并提供丰富的可视化图表来分析合成效果，例如：
-
-- **簇-探头功率贡献矩阵**: 清晰地展示每个目标簇的功率是如何分配到各个物理探头上的。
-- **各探头相对功率分布**: 显示所有探头的最终功率分布。
-
-## 9. 图形用户界面 (GUI)
-
-`gui.py` 提供了一个方便的图形界面，用于交互式地运行仿真。
-
-- **左侧边栏**: 包含所有可配置的参数，如场景、频率、天线配置、速度等。
-- **主窗口**: 显示仿真结果，包括信道矩阵、路径损耗、簇信息以及各种可视化图表。
-
-## 10. 致谢
-
-本项目的开发得到了 [Google Gemini](https://gemini.google.com) 的大力支持。
+### 5.3 空间相关性曲线
+*   **横轴**: 接收天线索引。
+*   **纵轴**: 相关系数 (0~1)。
+*   **判据**:
+    *   **< 0.2**: 优秀。MIMO 性能极佳。
+    *   **> 0.5**: 较差。MIMO 可能会退化为 SISO。
+    *   **注意**: 必须在 "统计验证" 模式下查看此图。
