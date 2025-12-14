@@ -2,7 +2,43 @@
 
 本手册详细介绍了 **MIMO OTA Simulator** 的功能、操作流程及最佳实践。该软件旨在为 5G/6G 无线通信系统提供符合 3GPP TR 38.901 标准的高保真信道建模与空口 (OTA) 仿真能力。
 
-## 1. 快速开始
+## 1. 环境搭建与安装
+
+在开始使用前，请确保您的系统已安装 **Python 3.10** 或更高版本。
+
+### 1.1 获取代码
+```bash
+git clone https://git.metaradio.tech/swang/channelengine.git
+cd channelengine
+```
+
+### 1.2 创建虚拟环境 (推荐)
+为了避免污染系统 Python 环境，强烈建议使用虚拟环境：
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Windows
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+### 1.3 安装依赖与项目
+本项目包含核心库 (`channel_model_38901`) 和 OTA 仿真器 (`mimo_ota_simulator`)。请使用可编辑模式安装，以获得最佳开发体验：
+```bash
+# 安装基础依赖
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 安装核心库和应用 (Editable Mode)
+pip install -e ./channel_model_38901
+pip install -e ./mimo_ota_simulator
+```
+
+---
+
+## 2. 快速启动
 
 本项目提供两种用户界面，以满足不同的使用场景：
 
