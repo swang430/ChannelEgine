@@ -13,7 +13,8 @@ from channel_model_38901.common.geometry import get_antenna_positions
 # Try importing MIMO OTA Simulator (Optional extension)
 try:
     from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
-    from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig
+    from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, PropsimExportConfig, CalibrationConfig, CalibrationEntry
+    from mimo_ota_simulator.exporters import PropsimASCIIExporter
     MIMO_OTA_AVAILABLE = True
 except ImportError:
     MIMO_OTA_AVAILABLE = False
@@ -98,6 +99,27 @@ class ChannelModelApp(tk.Tk):
             self._create_entry(ota_frame, "ota_radius_m", "探头半径 (m):", "1.5", None, 2)
             self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 3)
             self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 4)
+            
+            # Propsim Hardware Export
+            ttk.Separator(ota_frame, orient='horizontal').grid(row=5, column=0, columnspan=2, sticky='ew', pady=10)
+            ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=6, column=0, columnspan=2, sticky='w')
+            
+            self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 7)
+            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 8)
+            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "100e6", None, 9)
+            
+            # Calibration Loader
+            cal_frame = ttk.Frame(ota_frame)
+            cal_frame.grid(row=10, column=0, columnspan=2, sticky='ew', pady=2)
+            self.load_cal_button = ttk.Button(cal_frame, text="Load Cal CSV", width=12, command=self.load_calibration_file)
+            self.load_cal_button.pack(side=tk.LEFT, padx=(5, 5))
+            self.cal_file_label = ttk.Label(cal_frame, text="No File Selected", font=("Arial", 9, "italic"))
+            self.cal_file_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.current_cal_config = None # Store loaded config here
+
+            self.export_f64_button = ttk.Button(ota_frame, text="Export to F64", command=self.export_to_propsim)
+            self.export_f64_button.grid(row=11, column=0, columnspan=2, pady=5)
+            
         else:
             ttk.Label(ota_frame, text="MIMO OTA 库未安装").pack()
 
@@ -111,11 +133,67 @@ class ChannelModelApp(tk.Tk):
         if not MIMO_OTA_AVAILABLE: return
         is_enabled = self.controls['ota_enable']['var'].get()
         state = tk.NORMAL if is_enabled else tk.DISABLED
+        
+        # OTA Gen Params
         for key in ["ota_num_probes", "ota_radius_m", "ota_method", "ota_jitter"]:
             self.controls[key]['label'].config(state=state)
             self.controls[key]['widget'].config(state=state)
+            
+        # Propsim Params
+        for key in ["f64_mode", "f64_duration_s", "f64_sample_rate_hz"]:
+            self.controls[key]['label'].config(state=state)
+            self.controls[key]['widget'].config(state=state)
+        
+        self.export_f64_button.config(state=state)
+        self.load_cal_button.config(state=state)
 
-    def _create_antenna_widgets(self, prefix, parent_frame):
+    def load_calibration_file(self):
+        """Loads a calibration CSV file."""
+        from tkinter.filedialog import askopenfilename
+        import csv
+        
+        filepath = askopenfilename(filetypes=[("CSV Files", "*.csv"), ("All files", "*.*")], title="Select Calibration File")
+        if not filepath: return
+        
+        try:
+            entries = []
+            with open(filepath, 'r') as f:
+                reader = csv.DictReader(f)
+                # Expected columns: Port_ID, Cable_Loss_dB, Cable_Phase_deg, Probe_Gain_dBi
+                # We'll allow case-insensitive matching or standard names
+                for row in reader:
+                    # Normalize keys
+                    row_lower = {k.lower().strip(): v for k, v in row.items()}
+                    
+                    # Safe parse helper
+                    def get_float(keys, default=0.0):
+                        for k in keys:
+                            if k in row_lower: return float(row_lower[k])
+                        return default
+                    
+                    p_id = int(get_float(['port_id', 'port', 'id']))
+                    loss = get_float(['cable_loss_db', 'loss', 'loss_db'])
+                    phase = get_float(['cable_phase_deg', 'phase', 'phase_deg'])
+                    gain = get_float(['probe_gain_dbi', 'gain', 'gain_dbi'])
+                    
+                    entries.append(CalibrationEntry(
+                        port_id=p_id, cable_loss_db=loss, cable_phase_deg=phase, probe_gain_dbi=gain
+                    ))
+            
+            if not entries:
+                raise ValueError("No valid calibration entries found in CSV.")
+                
+            self.current_cal_config = CalibrationConfig(entries=entries)
+            filename = filepath.split('/')[-1]
+            self.cal_file_label.config(text=f"Loaded: {filename}")
+            self.log(f"Loaded calibration for {len(entries)} ports from {filename}")
+            
+        except Exception as e:
+            import traceback
+            self.log(f"Calibration Load Failed: {e}\n{traceback.format_exc()}")
+            messagebox.showerror("Load Error", f"Failed to load calibration:\n{e}")
+            self.current_cal_config = None
+            self.cal_file_label.config(text="Load Failed")
         self._create_entry(parent_frame, f'{prefix}_position', "Position (x,y,z):", "0,0,25" if prefix == 'tx' else "100,0,1.5", None, 0)
         array_type_var = self._create_entry(parent_frame, f'{prefix}_array_type', "Array Type:", 'ULA', ['ULA', 'URA'], 1)
         array_type_var.trace_add('write', lambda *args, p=prefix: self.update_antenna_ui(p))
@@ -339,13 +417,14 @@ class ChannelModelApp(tk.Tk):
                 )
                 
                 # Adapt OTA results to GUI format
-                # OTA returns 'effective_H_matrix', 'lsps', 'clusters', 'pathloss_db', 'is_los'
+                # OTA returns 'effective_H_matrix', 'lsps', 'clusters', 'pathloss_db', 'is_los', 'transmit_mapping_matrix_A'
                 results = {
                     'channel_matrix': ota_results['effective_H_matrix'],
                     'lsps': ota_results['lsps'],
                     'pathloss_db': ota_results['pathloss_db'],
                     'is_los': ota_results['is_los'],
-                    'clusters': ota_results['clusters']
+                    'clusters': ota_results['clusters'],
+                    'transmit_mapping_matrix_A': ota_results['transmit_mapping_matrix_A'] # Required for F64 Export
                 }
 
             else:
@@ -559,6 +638,68 @@ class ChannelModelApp(tk.Tk):
             import traceback
             self.log(f"Error exporting FPGA params: {e}\n{traceback.format_exc()}")
             messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def export_to_propsim(self):
+        """Exports the current simulation result to Keysight Propsim F64 format."""
+        if not self.last_results:
+            messagebox.showinfo("Info", "Please Run Simulation first to generate channel data.")
+            return
+            
+        # Check if we are in OTA mode (Propsim only makes sense for OTA probe weights)
+        # However, self.last_results doesn't explicitly store 'mode'. 
+        # But 'transmit_mapping_matrix_A' key presence is a good indicator of OTA results.
+        if 'transmit_mapping_matrix_A' not in self.last_results:
+             messagebox.showwarning("Warning", "Current results are not from MIMO OTA mode.\n\nPlease enable 'MIMO OTA' and run simulation again.")
+             return
+
+        from tkinter.filedialog import asksaveasfilename
+        filepath = asksaveasfilename(defaultextension=".asc", filetypes=[("ASCII Channel", "*.asc"), ("All files", "*.*")], title="Export to Propsim F64")
+        if not filepath: return
+
+        try:
+            params = {key: control['var'].get() for key, control in self.controls.items()}
+            
+            # 1. Prepare Export Config
+            mode_str = params['f64_mode'].split()[0] # Extract 'A' or 'B'
+            
+            p_config = PropsimExportConfig(
+                filename=filepath,
+                mode=mode_str,
+                duration_s=float(params['f64_duration_s']),
+                sample_rate_hz=float(params['f64_sample_rate_hz']),
+                target_output_power_dbm=-10.0 # Fixed for now or add GUI field
+            )
+            
+            # 2. Calibration
+            cal_config = self.current_cal_config
+            if cal_config:
+                self.log(f"Using Loaded Calibration ({len(cal_config.entries)} ports).")
+            else:
+                self.log("Using Ideal Calibration (No Cable/Probe compensation).")
+            
+            # 3. Export
+            exporter = PropsimASCIIExporter(p_config, calibration_config=cal_config)
+            
+            # We need to pass the FULL simulator result dictionary
+            # But wait, self.last_results in 'run_simulation' (OTA branch) was filtered!
+            # Look at gui.py run_simulation:
+            # results = {'channel_matrix':..., 'lsps':..., ...}
+            # IT DOES NOT INCLUDE 'transmit_mapping_matrix_A'!
+            # THIS IS A BUG/GAP. We need to pass the raw OTA weights to the GUI result.
+            
+            # Let's fix run_simulation first, but I can't interrupt this replace block.
+            # I will assume I fix run_simulation in the next step.
+            # For now, I'll write the logic assuming 'transmit_mapping_matrix_A' IS there.
+            
+            out_path = exporter.export(self.last_results, output_path=filepath)
+            
+            self.log(f"Successfully exported to {out_path}")
+            messagebox.showinfo("Success", f"Export Complete.\nMode: {mode_str}\nFile: {out_path}")
+            
+        except Exception as e:
+            import traceback
+            self.log(f"Propsim Export Failed: {e}\n{traceback.format_exc()}")
+            messagebox.showerror("Export Error", f"Failed: {e}")
 
     def process_queue(self):
         try:

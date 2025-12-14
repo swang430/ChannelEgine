@@ -4,7 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
-from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, ProbeAntennaConfig
+from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, ProbeAntennaConfig, PropsimExportConfig, CalibrationConfig, CalibrationEntry
+from mimo_ota_simulator.exporters import PropsimASCIIExporter
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -94,6 +95,88 @@ with st.sidebar:
             st.info("Random seed will vary automatically for validation.")
         else:
             random_seed = st.number_input('Random Seed', value=None, placeholder="Optional", step=1, key='seed')
+
+    with st.expander("6. Hardware Export (Keysight F64)", expanded=False):
+        st.write("Generate drive files for Propsim F64.")
+        
+        # 1. Export Config
+        f64_mode = st.selectbox("Amplitude Mode", ["A (Ext ATT)", "B (Internal Scaling)"], key="f64_mode")
+        f64_duration = st.number_input("Duration (s)", 0.001, 10.0, 0.1, 0.01, key="f64_dur")
+        f64_sample_rate = st.number_input("Sample Rate (Hz)", 1e6, 1000e6, 100e6, 10e6, format="%.2e", key="f64_sr")
+        
+        # 2. Calibration Upload
+        cal_file_upload = st.file_uploader("Upload Calibration CSV (Port, Loss, Phase, Gain)", type=['csv'])
+        cal_config = None
+        
+        if cal_file_upload is not None:
+            try:
+                # Parse CSV
+                import csv
+                import io
+                stringio = io.StringIO(cal_file_upload.getvalue().decode("utf-8"))
+                reader = csv.DictReader(stringio)
+                entries = []
+                for row in reader:
+                    # Normalize keys
+                    row_lower = {k.lower().strip(): v for k, v in row.items()}
+                    def get_float(keys, default=0.0):
+                        for k in keys:
+                            if k in row_lower: return float(row_lower[k])
+                        return default
+                    
+                    p_id = int(get_float(['port_id', 'port', 'id']))
+                    loss = get_float(['cable_loss_db', 'loss', 'loss_db'])
+                    phase = get_float(['cable_phase_deg', 'phase', 'phase_deg'])
+                    gain = get_float(['probe_gain_dbi', 'gain', 'gain_dbi'])
+                    entries.append(CalibrationEntry(port_id=p_id, cable_loss_db=loss, cable_phase_deg=phase, probe_gain_dbi=gain))
+                
+                if entries:
+                    cal_config = CalibrationConfig(entries=entries)
+                    st.success(f"Loaded {len(entries)} calibration points.")
+                else:
+                    st.warning("CSV loaded but no entries found.")
+            except Exception as e:
+                st.error(f"Calibration Parse Error: {e}")
+        
+        # 3. Generate Button
+        if st.button("Generate F64 File"):
+            if st.session_state.simulation_results and st.session_state.simulation_results.get('mode') == 'single':
+                # We need raw weights. Did we save them?
+                # Check app.py logic...
+                # Current app.py saves: A_matrix = results['transmit_mapping_matrix_A']
+                # But st.session_state.simulation_results is the raw return dict from simulator.run()
+                # So 'transmit_mapping_matrix_A' IS available!
+                
+                try:
+                    mode_char = f64_mode.split()[0]
+                    p_config = PropsimExportConfig(
+                        mode=mode_char,
+                        duration_s=f64_duration,
+                        sample_rate_hz=f64_sample_rate,
+                        filename="propsim_channel.asc" # Temp name
+                    )
+                    
+                    exporter = PropsimASCIIExporter(p_config, calibration_config=cal_config)
+                    
+                    # Run Export (Generate file in temp)
+                    out_path = exporter.export(st.session_state.simulation_results, output_path="propsim_output.asc")
+                    
+                    # Read back for download
+                    with open(out_path, "r") as f:
+                        file_content = f.read()
+                    
+                    st.download_button(
+                        label="Download .asc File",
+                        data=file_content,
+                        file_name=f"propsim_mode{mode_char}_{f64_duration}s.asc",
+                        mime="text/plain"
+                    )
+                    st.success("File generated successfully! Click above to download.")
+                    
+                except Exception as e:
+                    st.error(f"Export Failed: {e}")
+            else:
+                st.warning("Please run a 'Single Snapshot' simulation first to generate channel data.")
 
     if st.button("Run Simulation", type="primary"):
         cal_vector = None
