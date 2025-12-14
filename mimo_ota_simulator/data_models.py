@@ -34,6 +34,50 @@ class TargetChannelConfig(BaseModel):
     random_seed: Optional[int] = Field(None, description="Seed for the random number generator")
     use_median_lsps: bool = Field(False, description="Use median LSP values instead of random sampling")
 
+class CalibrationEntry(BaseModel):
+    """Calibration data for a single RF chain (Cable + Attenuator + Probe)."""
+    port_id: int = Field(..., description="F64 Output Port ID (1-based)")
+    cable_loss_db: float = Field(0.0, description="Fixed cable loss")
+    cable_phase_deg: float = Field(0.0, description="Fixed cable phase offset")
+    probe_gain_dbi: float = Field(0.0, description="Probe antenna gain")
+    # Future: Add attenuation phase curve LUT here if needed
+
+class CalibrationConfig(BaseModel):
+    """Collection of calibration data for the entire chamber."""
+    entries: List[CalibrationEntry] = Field(..., description="List of calibration entries per port")
+    
+    def get_correction_factor(self, port_id: int) -> complex:
+        """Returns the complex correction factor (Pre-distortion) for a given port."""
+        for entry in self.entries:
+            if entry.port_id == port_id:
+                # Total Phase Shift = Cable + Probe
+                # We want to APPLY the INVERSE (Pre-distortion) -> multiply by exp(+j * phase)
+                # Wait, usually we say system adds phase phi. So we generate exp(-j*phi).
+                # Here we model the physical system. 
+                # H_sys = G_cable * exp(j*phi_cable) * G_probe
+                # We want H_eff * H_sys = H_target
+                # So H_eff = H_target / H_sys
+                # Correction = 1 / H_sys
+                
+                loss_linear = 10**(-entry.cable_loss_db / 10.0) # Power ratio < 1
+                gain_linear = 10**(entry.probe_gain_dbi / 10.0) # Power ratio > 1
+                total_gain_mag = np.sqrt(loss_linear * gain_linear) # Voltage ratio
+                
+                phase_rad = np.deg2rad(entry.cable_phase_deg)
+                h_sys = total_gain_mag * np.exp(1j * phase_rad)
+                
+                if abs(h_sys) < 1e-9: return 0j
+                return 1.0 / h_sys
+        return 1.0 + 0j
+
+class PropsimExportConfig(BaseModel):
+    """Configuration for exporting to Keysight Propsim F64."""
+    filename: str = Field("propsim_channel.asc", description="Output filename")
+    mode: Literal['A', 'B'] = Field('A', description="Amplitude Control Mode: 'A' (External ATT) or 'B' (Internal Scaling)")
+    sample_rate_hz: float = Field(100e6, description="Sampling rate for the CIR time series")
+    duration_s: float = Field(0.1, description="Total duration of the channel sequence")
+    target_output_power_dbm: float = Field(-10.0, description="Target output power at F64 port (Mode A reference)")
+
 # --- Shared Data Models ---
 
 class ProbeAntennaConfig(BaseModel):
