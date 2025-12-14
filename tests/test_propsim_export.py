@@ -135,6 +135,44 @@ class TestPropsimExport(unittest.TestCase):
         diff = (exported_phase - expected_phase + 180) % 360 - 180
         self.assertAlmostEqual(diff, 0.0, delta=1.0, msg="Phase calibration incorrect")
 
+    def test_dynamic_doppler_variance(self):
+        """Test that Ray mode export produces time-varying data (Doppler)."""
+        print("\n--- Test Dynamic Doppler ---")
+        
+        # Ensure UE has velocity to generate Doppler
+        self.channel.ue_velocity = (10.0, 0, 0) # 10 m/s
+        
+        # Re-run simulator to get Doppler-ready results
+        self.sim_results = self.simulator.run(
+            self.chamber, self.channel, synthesis_method='ray'
+        )
+        
+        export_config = PropsimExportConfig(
+            filename=self.output_file,
+            mode='B',
+            duration_s=0.01, # 10ms, enough to see phase rotation
+            sample_rate_hz=1000
+        )
+        
+        exporter = PropsimASCIIExporter(export_config)
+        exporter.export(self.sim_results)
+        
+        data_complex = self._read_ascii_file_complex(self.output_file)
+        # data_complex shape: (Samples, Ports)
+        
+        # Check variance over time for the first port
+        # If static, variance of real/imag parts should be 0.
+        # If dynamic, > 0.
+        
+        # Check first port
+        port0_series = data_complex[:, 0]
+        std_real = np.std(np.real(port0_series))
+        std_imag = np.std(np.imag(port0_series))
+        
+        print(f"Std Dev Real: {std_real:.6e}, Imag: {std_imag:.6e}")
+        
+        self.assertTrue(std_real > 1e-9 or std_imag > 1e-9, "Output should vary over time due to Doppler")
+
     def _read_ascii_file(self, filename):
         """Helper to read numeric data from ASCII file."""
         values = []

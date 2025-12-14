@@ -276,6 +276,9 @@ class MIMO_OTA_Simulator:
             lambda_0 = c / channel_config.center_frequency_hz
             k_factor = 2 * np.pi / lambda_0
             
+            # Store ray components for time-series generation (Doppler)
+            ray_components = []
+            
             for i, cluster in enumerate(physical_clusters):
                 # We will map each ray to probes independently
                 cluster_power_accum = np.zeros(num_effective_probes)
@@ -325,11 +328,42 @@ class MIMO_OTA_Simulator:
                     # Power per ray
                     p_ray = cluster.power / 20.0
                     
-                    # A_ray = sqrt(P) * w * g_tx * exp(j*phi)
-                    A_ray = np.sqrt(p_ray) * (w_map_ray @ g_tx_ray) * np.exp(1j * phi_rnd)
+                    # Base Weight (without random phase, for later reconstruction)
+                    # W_base = sqrt(P) * w * g_tx
+                    W_base = np.sqrt(p_ray) * (w_map_ray @ g_tx_ray)
+                    
+                    # Apply random phase for current snapshot
+                    A_ray = W_base * np.exp(1j * phi_rnd)
                     
                     A_total += A_ray
                     cluster_power_accum += (w_map_ray.flatten() * p_ray)
+                    
+                    # Calculate Doppler for this ray
+                    # fd = v/lambda * cos(AoA - theta_v)
+                    # UE velocity vector is (vx, vy, vz). 
+                    # We need angle of arrival vector k_hat_rx.
+                    # k_hat_rx points INTO the UE. 
+                    # Doppler shift = (v . k_hat_rx) / lambda.
+                    # k_hat_rx (spherical) from AoA/ZoA.
+                    theta_r_rad = np.deg2rad(cluster.zoa_theta) # ZoA (from Zenith)
+                    phi_r_rad = np.deg2rad(aoa_ray) # AoA
+                    
+                    k_hat_rx = np.array([
+                        np.sin(theta_r_rad) * np.cos(phi_r_rad),
+                        np.sin(theta_r_rad) * np.sin(phi_r_rad),
+                        np.cos(theta_r_rad)
+                    ])
+                    
+                    # UE Velocity
+                    v_vec = channel_config.ue_velocity # tuple or array
+                    v_dot_k = np.dot(v_vec, k_hat_rx)
+                    fd = v_dot_k / lambda_0
+                    
+                    ray_components.append({
+                        'W_base': W_base, # Complex (N_probes, N_tx)
+                        'phi_init': phi_rnd,
+                        'doppler_hz': fd
+                    })
 
                 cluster_probe_mapping[i] = cluster_power_accum
 
@@ -347,6 +381,13 @@ class MIMO_OTA_Simulator:
             jitter_rad = np.pi 
             phase_noise = np.random.uniform(-jitter_rad, jitter_rad, size=(num_effective_probes, 1))
             transmit_mapping_matrix_A *= np.exp(1j * phase_noise)
+            # Note: Jitter is applied to the TOTAL snapshot. 
+            # If we reconstruct from rays, we must apply jitter there too.
+            # We should store the jitter vector to apply it consistently.
+            # Let's add jitter vector to return dict.
+            jitter_vector = np.exp(1j * phase_noise)
+        else:
+            jitter_vector = None
 
         effective_H_matrix = B_matrix @ transmit_mapping_matrix_A
         return {
@@ -360,4 +401,6 @@ class MIMO_OTA_Simulator:
             "is_los": sim_result['is_los'],
             "probe_tx_power_contributions": probe_tx_power_contributions,
             "cluster_probe_mapping": cluster_probe_mapping,
+            "ray_components": locals().get('ray_components', None), # Only for Ray method
+            "probe_phase_jitter_vector": jitter_vector
         }

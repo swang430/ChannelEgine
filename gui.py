@@ -37,36 +37,50 @@ class ChannelModelApp(tk.Tk):
         self._create_widgets()
 
     def _create_widgets(self):
-        top_frame = ttk.Frame(self, padding="10")
-        top_frame.pack(fill=tk.X, side=tk.TOP)
+        # Main Container
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        param_frame = ttk.Frame(top_frame)
-        param_frame.pack(fill=tk.X)
-        param_frame.grid_columnconfigure(0, weight=1)
-        param_frame.grid_columnconfigure(1, weight=1)
-        param_frame.grid_columnconfigure(2, weight=1)
-
-        general_param_frame = ttk.LabelFrame(param_frame, text="通用参数", padding="10")
-        general_param_frame.grid(row=0, column=0, padx=5, pady=5, sticky=tk.NSEW)
-
-        ota_param_frame = ttk.LabelFrame(param_frame, text="MIMO OTA 参数 (可选)", padding="10")
-        ota_param_frame.grid(row=1, column=0, padx=5, pady=5, sticky=tk.NSEW)
-
-        tx_param_frame = ttk.LabelFrame(param_frame, text="发射端 (Tx) 参数", padding="10")
-        tx_param_frame.grid(row=0, column=1, rowspan=2, padx=5, pady=5, sticky=tk.NSEW)
-
-        rx_param_frame = ttk.LabelFrame(param_frame, text="接收端 (Rx) 参数", padding="10")
-        rx_param_frame.grid(row=0, column=2, rowspan=2, padx=5, pady=5, sticky=tk.NSEW)
-
-        self._create_parameter_widgets(general_param_frame, ota_param_frame, tx_param_frame, rx_param_frame)
-        self._create_control_buttons(top_frame)
+        # --- Left Column (Fixed Width-ish, fill Y) ---
+        left_col = ttk.Frame(main_frame)
+        left_col.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10), anchor='n')
         
-        bottom_frame = ttk.Frame(self, padding="10")
-        bottom_frame.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
+        general_param_frame = ttk.LabelFrame(left_col, text="通用参数", padding="10")
+        general_param_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ota_param_frame = ttk.LabelFrame(left_col, text="MIMO OTA 参数 (可选)", padding="10")
+        ota_param_frame.pack(fill=tk.X) # Use fill=X so it doesn't stretch weirdly vertically if empty
 
-        self.notebook = ttk.Notebook(bottom_frame)
+        # --- Right Column (Expandable) ---
+        right_col = ttk.Frame(main_frame)
+        right_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # 1. Antenna Configs (Tx | Rx)
+        ant_frame = ttk.Frame(right_col)
+        ant_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tx_param_frame = ttk.LabelFrame(ant_frame, text="发射端 (Tx) 参数", padding="10")
+        tx_param_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        rx_param_frame = ttk.LabelFrame(ant_frame, text="接收端 (Rx) 参数", padding="10")
+        rx_param_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        # 2. Action Panel
+        action_frame = ttk.LabelFrame(right_col, text="操作", padding="10")
+        action_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # 3. Notebook (Results) - Fills remaining space
+        self.notebook = ttk.Notebook(right_col)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
+        # Initialize Internal Widgets
+        # Note: We need to configure grid columns for the frames that use create_entry (which uses grid)
+        for frame in [general_param_frame, ota_param_frame, tx_param_frame, rx_param_frame]:
+            frame.grid_columnconfigure(1, weight=1)
+
+        self._create_parameter_widgets(general_param_frame, ota_param_frame, tx_param_frame, rx_param_frame)
+        self._create_control_buttons(action_frame)
+        
         self._create_log_display()
         self._create_results_tabs()
         
@@ -92,6 +106,8 @@ class ChannelModelApp(tk.Tk):
         # OTA Parameters
         self.ota_vars = {}
         if MIMO_OTA_AVAILABLE:
+            # Vertical Layout: OTA Gen -> Separator -> Propsim Export
+            
             ota_enable = self._create_entry(ota_frame, "ota_enable", "启用 MIMO OTA:", False, [True, False], 0)
             ota_enable.trace_add('write', lambda *args: self.update_ota_ui())
             
@@ -105,7 +121,7 @@ class ChannelModelApp(tk.Tk):
             ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=6, column=0, columnspan=2, sticky='w')
             
             self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 7)
-            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 8)
+            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.005", None, 8)
             self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "100e6", None, 9)
             
             # Calibration Loader
@@ -115,7 +131,7 @@ class ChannelModelApp(tk.Tk):
             self.load_cal_button.pack(side=tk.LEFT, padx=(5, 5))
             self.cal_file_label = ttk.Label(cal_frame, text="No File Selected", font=("Arial", 9, "italic"))
             self.cal_file_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            self.current_cal_config = None # Store loaded config here
+            self.current_cal_config = None 
 
             self.export_f64_button = ttk.Button(ota_frame, text="Export to F64", command=self.export_to_propsim)
             self.export_f64_button.grid(row=11, column=0, columnspan=2, pady=5)
@@ -194,6 +210,8 @@ class ChannelModelApp(tk.Tk):
             messagebox.showerror("Load Error", f"Failed to load calibration:\n{e}")
             self.current_cal_config = None
             self.cal_file_label.config(text="Load Failed")
+
+    def _create_antenna_widgets(self, prefix, parent_frame):
         self._create_entry(parent_frame, f'{prefix}_position', "Position (x,y,z):", "0,0,25" if prefix == 'tx' else "100,0,1.5", None, 0)
         array_type_var = self._create_entry(parent_frame, f'{prefix}_array_type', "Array Type:", 'ULA', ['ULA', 'URA'], 1)
         array_type_var.trace_add('write', lambda *args, p=prefix: self.update_antenna_ui(p))
@@ -234,18 +252,25 @@ class ChannelModelApp(tk.Tk):
             self.controls[f'{prefix}_num_rows']['var'].set("1")
 
     def _create_control_buttons(self, parent_frame):
-        control_frame = ttk.Frame(parent_frame)
-        control_frame.pack(fill=tk.X, pady=5)
-        self.run_button = ttk.Button(control_frame, text="Run Simulation", command=self.start_simulation_thread)
-        self.run_button.pack(side=tk.LEFT, padx=5)
-        self.save_button = ttk.Button(control_frame, text="Save Config", command=self.save_config)
-        self.save_button.pack(side=tk.LEFT, padx=5)
-        self.load_button = ttk.Button(control_frame, text="Load Config", command=self.load_config)
-        self.load_button.pack(side=tk.LEFT, padx=5)
-        self.save_results_button = ttk.Button(control_frame, text="Save Results", command=self.save_results)
-        self.save_results_button.pack(side=tk.LEFT, padx=5)
-        self.export_fpga_button = ttk.Button(control_frame, text="Export FPGA Params", command=self.export_fpga_sos_csv)
-        self.export_fpga_button.pack(side=tk.LEFT, padx=5)
+        # Using grid layout for better organization in the bottom-right action frame
+        parent_frame.columnconfigure(0, weight=1)
+        parent_frame.columnconfigure(1, weight=1)
+        parent_frame.columnconfigure(2, weight=1)
+        
+        self.run_button = ttk.Button(parent_frame, text="Run Simulation", command=self.start_simulation_thread)
+        self.run_button.grid(row=0, column=0, padx=5, pady=5, sticky='ew')
+        
+        self.save_results_button = ttk.Button(parent_frame, text="Save Results", command=self.save_results)
+        self.save_results_button.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+        
+        self.export_fpga_button = ttk.Button(parent_frame, text="Export FPGA Params", command=self.export_fpga_sos_csv)
+        self.export_fpga_button.grid(row=0, column=2, padx=5, pady=5, sticky='ew')
+
+        self.save_button = ttk.Button(parent_frame, text="Save Config", command=self.save_config)
+        self.save_button.grid(row=1, column=0, padx=5, pady=5, sticky='ew')
+        
+        self.load_button = ttk.Button(parent_frame, text="Load Config", command=self.load_config)
+        self.load_button.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
 
     def _create_log_display(self):
         log_frame = ttk.Frame(self.notebook)
