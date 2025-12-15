@@ -172,6 +172,12 @@ class MIMO_OTA_Simulator:
         num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
         probe_tx_power_contributions = np.zeros((num_effective_probes, num_tx_antennas))
         cluster_probe_mapping = {}
+        ray_components = None # Initialize for export
+        jitter_vector = None
+        
+        # Wideband Impulse Response: List of taps {delay, coeff_matrix (PxT)}
+        impulse_response = []
+        
         if channel_config.random_seed is not None:
             np.random.seed(channel_config.random_seed)
         
@@ -252,6 +258,13 @@ class MIMO_OTA_Simulator:
                 
                 A_cluster = np.sqrt(cluster_power_linear) * (w_map @ g_tx)
                 A_total += A_cluster
+                
+                # Store Wideband Tap
+                impulse_response.append({
+                    'delay': cluster.delay,
+                    'coeff': A_cluster, # (PxT)
+                    'cluster_index': i
+                })
 
                 power_contributions = (w_map * cluster_power_linear).flatten()
                 cluster_probe_mapping[i] = power_contributions
@@ -282,6 +295,7 @@ class MIMO_OTA_Simulator:
             for i, cluster in enumerate(physical_clusters):
                 # We will map each ray to probes independently
                 cluster_power_accum = np.zeros(num_effective_probes)
+                cluster_A_accum = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
                 
                 for m in range(20):
                     alpha = ray_offsets[m]
@@ -336,6 +350,7 @@ class MIMO_OTA_Simulator:
                     A_ray = W_base * np.exp(1j * phi_rnd)
                     
                     A_total += A_ray
+                    cluster_A_accum += A_ray # Accumulate for tap
                     cluster_power_accum += (w_map_ray.flatten() * p_ray)
                     
                     # Calculate Doppler for this ray
@@ -362,13 +377,18 @@ class MIMO_OTA_Simulator:
                     ray_components.append({
                         'W_base': W_base, # Complex (N_probes, N_tx)
                         'phi_init': phi_rnd,
-                        'doppler_hz': fd
+                        'doppler_hz': fd,
+                        'cluster_index': i # Link to parent cluster/tap
                     })
 
                 cluster_probe_mapping[i] = cluster_power_accum
-
-            transmit_mapping_matrix_A = A_total
-            probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
+                
+                # Store Wideband Tap (Aggregated Rays)
+                impulse_response.append({
+                    'delay': cluster.delay,
+                    'coeff': cluster_A_accum,
+                    'cluster_index': i
+                })
             
         else:
             raise ValueError(f"Unknown synthesis method: {synthesis_method}")
@@ -401,6 +421,7 @@ class MIMO_OTA_Simulator:
             "is_los": sim_result['is_los'],
             "probe_tx_power_contributions": probe_tx_power_contributions,
             "cluster_probe_mapping": cluster_probe_mapping,
-            "ray_components": locals().get('ray_components', None), # Only for Ray method
-            "probe_phase_jitter_vector": jitter_vector
+            "ray_components": ray_components, # Explicit variable
+            "probe_phase_jitter_vector": jitter_vector,
+            "channel_impulse_response": impulse_response # Wideband Taps
         }
