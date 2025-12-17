@@ -389,6 +389,9 @@ class MIMO_OTA_Simulator:
                     'coeff': cluster_A_accum,
                     'cluster_index': i
                 })
+
+            transmit_mapping_matrix_A = A_total
+            probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
             
         else:
             raise ValueError(f"Unknown synthesis method: {synthesis_method}")

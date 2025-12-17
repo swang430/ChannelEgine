@@ -3,6 +3,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
 
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
 from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, ProbeAntennaConfig, PropsimExportConfig, CalibrationConfig, CalibrationEntry
@@ -53,7 +54,7 @@ st.title("MIMO OTA 仿真器 V4.4")
 if 'simulation_results' not in st.session_state:
     st.session_state.simulation_results = None
 if 'synthesis_method' not in st.session_state:
-    st.session_state.synthesis_method = 'cluster'
+    st.session_state.synthesis_method = 'ray'
 
 with st.sidebar:
     st.header("控制面板")
@@ -84,7 +85,7 @@ with st.sidebar:
         rx_antenna_config = antenna_panel("Rx")
 
     with st.expander("5. 运行控制 (Run Control)", expanded=False):
-        st.selectbox('合成方法 (Synthesis Method)', ('pinv', 'cluster', 'ray'), key='synthesis_method', help="Ray: 射线级(推荐); Cluster: 簇级; Pinv: 伪逆")
+        st.selectbox('合成方法 (Synthesis Method)', ('pinv', 'cluster', 'ray'), index=2, key='synthesis_method', help="Ray: 射线级(推荐); Cluster: 簇级; Pinv: 伪逆")
         
         run_mode = st.radio("运行模式", ('单次快照 (Single Snapshot)', '统计验证 (Statistical Validation)'))
         
@@ -104,9 +105,9 @@ with st.sidebar:
         st.write("生成 Propsim F64 驱动文件 (.asc)")
         
         # 1. Export Config
-        f64_mode = st.selectbox("幅度控制模式", ["A (固定输出+外部衰减)", "B (内部数字缩放)"], key="f64_mode", help="Mode A 动态范围更大，推荐使用。")
-        f64_duration = st.number_input("时长 (s)", 0.001, 10.0, 0.005, 0.001, key="f64_dur", help="静态信道建议使用 5ms 以减小文件体积。")
-        f64_sample_rate = st.number_input("采样率 (Hz)", 1e6, 1000e6, 100e6, 10e6, format="%.2e", key="f64_sr")
+        f64_mode = st.selectbox("Amplitude Mode", ["A (Ext ATT)", "B (Internal Scaling)"], key="f64_mode")
+        f64_duration = st.number_input("时长 (s)", 0.001, 10.0, 0.1, 0.001, key="f64_dur")
+        f64_sample_rate = st.number_input("采样率 (Hz)", 1.0, 100e6, 1000.0, 100.0, format="%.2f", key="f64_sr")
         
         # 2. Calibration Upload (Shown again here for convenience or linked?)
         # Since it's in Expander 3, maybe just remind user?
@@ -159,20 +160,28 @@ with st.sidebar:
 
                     exporter = PropsimASCIIExporter(p_config, calibration_config=cal_config)
                     
-                    # Run Export (Generate file in temp)
-                    out_path = exporter.export(st.session_state.simulation_results, output_path="propsim_output.asc")
+                    # Run Export (Generate files in temp)
+                    out_files = exporter.export(st.session_state.simulation_results, output_path="propsim_output.asc")
                     
-                    # Read back for download
-                    with open(out_path, "r") as f:
-                        file_content = f.read()
+                    # Create ZIP in memory
+                    import zipfile
+                    import io
+                    
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                        for fpath in out_files:
+                            if os.path.exists(fpath):
+                                zip_file.write(fpath, os.path.basename(fpath))
+                    
+                    zip_buffer.seek(0)
                     
                     st.download_button(
-                        label="下载 .asc 文件",
-                        data=file_content,
-                        file_name=f"propsim_mode{mode_char}_{f64_duration}s.asc",
-                        mime="text/plain"
+                        label="下载 .zip 文件 (含多个通道)",
+                        data=zip_buffer,
+                        file_name=f"propsim_mode{mode_char}_{f64_duration}s.zip",
+                        mime="application/zip"
                     )
-                    st.success("文件生成成功！请点击上方按钮下载。")
+                    st.success(f"文件生成成功！共生成 {len(out_files)} 个通道文件。请点击上方按钮下载 ZIP 包。")
                     
                 except Exception as e:
                     st.error(f"导出失败: {e}")
@@ -338,6 +347,25 @@ if st.session_state.simulation_results:
         probe_tx_power_contributions = results['probe_tx_power_contributions']
         cluster_probe_mapping = results['cluster_probe_mapping']
         lsps = results.get('lsps') # Safely get LSPs
+        # Ensure Ray components are available for Exporter if present
+        # Note: They are inside 'results' because session_state.simulation_results IS the raw return dict from simulator.run()
+        # Wait, let's check run_simulation logic in app.py
+        # st.session_state.simulation_results = simulator.run(...)
+        # So 'results' IS the full dictionary returned by simulator.py.
+        # Simulator.py returns: { ..., 'ray_components': ..., 'probe_phase_jitter_vector': ... }
+        # So ray_components SHOULD be there if simulator.py was updated.
+        
+        # Let's verify simulator.py content.
+        # I updated simulator.py in the previous turn to return 'ray_components'.
+        # So app.py receives it automatically because it stores the whole dict.
+        
+        # BUT, let's check GUI.py. GUI.py constructs a NEW dict 'results = {...}'.
+        # App.py assigns the return value DIRECTLY: 
+        # st.session_state.simulation_results = simulator.run(...)
+        
+        # So App.py SHOULD be fine?
+        # Let's re-read the App.py logic carefully.
+        pass # Placeholder to allow thinking.
         num_effective_probes, num_tx_antennas = A_matrix.shape
 
         st.header("仿真结果 (单次快照)")
@@ -428,25 +456,23 @@ if st.session_state.simulation_results:
             fig, ax = plt.subplots()
             
             if np.any(probe_tx_power_contributions):
-                shift = num_effective_probes // 2
+                # Remove shift/roll to match physical port indices directly
                 x_coords = np.arange(num_effective_probes)
-                original_indices = np.arange(num_effective_probes)
-                shifted_indices = np.roll(original_indices, shift)
                 
                 bottoms = np.zeros(num_effective_probes)
                 colors = plt.cm.get_cmap('tab10', num_tx_antennas)
 
                 for tx_idx in range(num_tx_antennas):
                     power_data = probe_tx_power_contributions[:, tx_idx]
-                    rolled_power_data = np.roll(power_data, shift)
-                    ax.bar(x_coords, rolled_power_data, bottom=bottoms, color=colors(tx_idx), label=f'Tx Ant {tx_idx}')
-                    bottoms += rolled_power_data
+                    ax.bar(x_coords, power_data, bottom=bottoms, color=colors(tx_idx), label=f'Tx Ant {tx_idx}')
+                    bottoms += power_data
 
-                ax.set_xlabel("Effective Probe ID (Centered)")
+                ax.set_xlabel("Effective Probe ID (Physical Index)")
                 ax.set_ylabel("Power (linear scale)")
-                ax.set_title("Power per Probe with Tx Contributions")
-                ax.set_xticks(x_coords)
-                ax.set_xticklabels(shifted_indices)
+                ax.set_title("Power per Probe (Direct Mapping)")
+                # Show some ticks but not too crowded
+                if num_effective_probes <= 32:
+                    ax.set_xticks(x_coords)
                 ax.tick_params(axis='x', rotation=90, labelsize='small')
                 ax.grid(True, axis='y', linestyle='--', alpha=0.7)
                 ax.legend()
@@ -463,10 +489,13 @@ if st.session_state.simulation_results:
                 st.dataframe(power_df)
 
         with col2:
-            st.subheader("目标簇角度分布 (极坐标)")
+            st.subheader("目标簇角度分布 (极坐标 - AoA)")
             probe_angles_rad = np.linspace(0, 2 * np.pi, num_probes, endpoint=False)
             clusters_sorted = sorted(clusters, key=lambda c: c.power, reverse=True)
-            cluster_aods_rad = np.deg2rad([c.aod_phi for c in clusters_sorted])
+            
+            # FIXED: Use AoA (Arrival) for Chamber Probes, NOT AoD (Departure)
+            cluster_aoas_rad = np.deg2rad([c.aoa_phi for c in clusters_sorted])
+            
             cluster_powers_db = np.array([c.power for c in clusters_sorted])
             power_min, power_max = (cluster_powers_db.min(), cluster_powers_db.max()) if clusters_sorted else (0,0)
             norm_powers = (cluster_powers_db - power_min) / (power_max - power_min) if (power_max - power_min) > 0 else np.ones_like(cluster_powers_db)
@@ -483,20 +512,22 @@ if st.session_state.simulation_results:
                 ax_polar.scatter(v_angles, np.ones(num_probes) * 1.1, s=80, c='blue', marker='o', label='V-Probes')
                 ax_polar.scatter(h_angles, np.ones(num_probes) * 1.1, s=80, c='red', marker='x', label='H-Probes')
                 for i in range(num_probes):
-                    ax_polar.text(v_angles[i], 1.2, str(2*i), ha='center', va='center', fontsize=7, color='blue')
-                    ax_polar.text(h_angles[i], 1.2, str(2*i + 1), ha='center', va='center', fontsize=7, color='red')
+                    # Label logical ports: V=2*i, H=2*i+1
+                    ax_polar.text(v_angles[i], 1.25, str(2*i), ha='center', va='center', fontsize=7, color='blue')
+                    ax_polar.text(h_angles[i], 1.25, str(2*i + 1), ha='center', va='center', fontsize=7, color='red')
             else:
                 ax_polar.scatter(probe_angles_rad, np.ones(num_probes) * 1.1, s=100, c='blue', marker='X', label='Probes')
                 for i, angle in enumerate(probe_angles_rad):
                     ax_polar.text(angle, 1.2, str(i), ha='center', va='center', fontsize=8, color='blue')
 
-            for i, (angle, color) in enumerate(zip(cluster_aods_rad, cluster_colors)):
+            for i, (angle, color) in enumerate(zip(cluster_aoas_rad, cluster_colors)):
                 ax_polar.plot([angle, angle], [0, 1], color=color, linewidth=2)
             
-            ax_polar.set_title("Probe and Target Cluster Angles")
+            ax_polar.set_title("Probe Positions vs Target Cluster AoA (0°=East)")
             ax_polar.set_yticklabels([])
-            ax_polar.set_theta_zero_location('N')
-            ax_polar.set_theta_direction(-1)
+            # Removed custom theta location/direction to match Simulator's math (0=East, CCW)
+            # ax_polar.set_theta_zero_location('N')
+            # ax_polar.set_theta_direction(-1)
             ax_polar.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize='small')
 
             sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=power_min, vmax=power_max))

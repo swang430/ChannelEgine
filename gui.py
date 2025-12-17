@@ -113,6 +113,7 @@ class ChannelModelApp(tk.Tk):
             
             self._create_entry(ota_frame, "ota_num_probes", "探头数量:", "16", None, 1)
             self._create_entry(ota_frame, "ota_radius_m", "探头半径 (m):", "1.5", None, 2)
+            # Default to 'ray' for high fidelity dynamic simulation
             self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 3)
             self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 4)
             
@@ -121,8 +122,8 @@ class ChannelModelApp(tk.Tk):
             ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=6, column=0, columnspan=2, sticky='w')
             
             self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 7)
-            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.005", None, 8)
-            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "100e6", None, 9)
+            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 8)
+            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "1000.0", None, 9)
             
             # Calibration Loader
             cal_frame = ttk.Frame(ota_frame)
@@ -449,7 +450,9 @@ class ChannelModelApp(tk.Tk):
                     'pathloss_db': ota_results['pathloss_db'],
                     'is_los': ota_results['is_los'],
                     'clusters': ota_results['clusters'],
-                    'transmit_mapping_matrix_A': ota_results['transmit_mapping_matrix_A'] # Required for F64 Export
+                    'transmit_mapping_matrix_A': ota_results['transmit_mapping_matrix_A'], # Required for F64 Export
+                    'ray_components': ota_results.get('ray_components'), # Required for Doppler Export
+                    'probe_phase_jitter_vector': ota_results.get('probe_phase_jitter_vector')
                 }
 
             else:
@@ -718,8 +721,8 @@ class ChannelModelApp(tk.Tk):
             
             out_path = exporter.export(self.last_results, output_path=filepath)
             
-            self.log(f"Successfully exported to {out_path}")
-            messagebox.showinfo("Success", f"Export Complete.\nMode: {mode_str}\nFile: {out_path}")
+            self.log(f"Successfully exported Propsim files (set) based on {filepath}")
+            messagebox.showinfo("Success", f"Export Complete.\nMode: {mode_str}\n\nGenerated multiple .asc files (one per Tx-Probe link).\nMain file reference: {out_path}")
             
         except Exception as e:
             import traceback

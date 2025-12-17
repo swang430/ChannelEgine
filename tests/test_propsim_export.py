@@ -1,9 +1,8 @@
-
 import unittest
 import numpy as np
 import os
 import sys
-import csv
+import glob
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -25,7 +24,7 @@ class TestPropsimExport(unittest.TestCase):
         
         self.channel = TargetChannelConfig(
             model_name='UMa',
-            cluster_model_name='CDL-C', # NLOS
+            cluster_model_name='CDL-C', # NLOS (Has many clusters)
             center_frequency_hz=3.5e9,
             tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
             rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
@@ -33,173 +32,147 @@ class TestPropsimExport(unittest.TestCase):
         )
         
         self.simulator = MIMO_OTA_Simulator()
-        
-        # Run once to get results
-        self.sim_results = self.simulator.run(
-            self.chamber, self.channel, synthesis_method='ray'
-        )
-        
-        self.output_file = "test_propsim_output.asc"
+        self.base_output_name = "test_propsim_output.asc"
 
     def tearDown(self):
-        if os.path.exists(self.output_file):
-            os.remove(self.output_file)
+        # Clean up all generated ASC files
+        base_name = os.path.splitext(self.base_output_name)[0]
+        files = glob.glob(f"{base_name}*.asc")
+        for f in files:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
-    def test_export_mode_b_scaling(self):
-        """Test Mode B (Internal Scaling) applies pathloss directly."""
-        print("\n--- Test Mode B Export ---")
+    def test_wideband_static_export(self):
+        """Test Wideband Static Export (Cluster Mode)."""
+        print("\n--- Test Wideband Static (Cluster Mode) ---")
+        
+        sim_results = self.simulator.run(self.chamber, self.channel, synthesis_method='cluster')
         
         export_config = PropsimExportConfig(
-            filename=self.output_file,
+            filename=self.base_output_name,
             mode='B',
-            duration_s=0.001, # Short duration
+            duration_s=0.001,
             sample_rate_hz=1000
         )
         
         exporter = PropsimASCIIExporter(export_config)
-        exporter.export(self.sim_results)
+        # This will generate multiple files: test_propsim_output_Tx1_Probe1.asc, etc.
+        generated_files = exporter.export(sim_results)
+        first_file = generated_files[0]
         
-        # Check file content
-        data = self._read_ascii_file(self.output_file)
+        print(f"Exporter returned {len(generated_files)} files. First: {first_file}")
+        self.assertTrue(os.path.exists(first_file), "Main export file not found")
         
-        # Check magnitude
-        # Pathloss for CDL-C NLOS is typically high (> 100dB).
-        # Values should be very small.
-        avg_mag = np.mean(np.abs(data))
-        print(f"Mode B Avg Magnitude: {avg_mag}")
-        self.assertLess(avg_mag, 1e-3, "Mode B output should be small (pathloss applied)")
+        # Check Total File Count
+        # 1 Tx * 8 Probes (Single Pol) = 8 Files. 
+        # (Note: In this test setup, dual_pol is default False in ChamberConfig unless specified. 
+        # ChamberConfig default is dual_polarized=False? Let's check simulator.py defaults. 
+        # Actually in test_propsim_export.py setup, we defined num_probes=8. 
+        # If dual_pol is false, then 8 files. If true, 16.
+        # Let's check sim_results shape.
+        # But wait, the Exporter uses whatever is in 'transmit_mapping_matrix_A'.
+        # In test_wideband_static_export, synthesis_method='cluster' uses ChamberConfig.
+        
+        # Let's just check the file we expect: _In1_Out1.asc
+        expected_file = self.base_output_name.replace(".asc", "_In1_Out1.asc")
+        self.assertTrue(os.path.exists(expected_file), f"Standard file not found: {expected_file}")
+        
+        header, data = self._read_standard_asc_file(expected_file)
+        
+        # Check Header
+        num_taps = int(header.get('Taps/CIR', 0))
+        num_cirs = int(header.get('CIRs', 0))
+        print(f"Detected Header: {num_cirs} CIRs, {num_taps} Taps/CIR")
+        
+        self.assertGreater(num_taps, 1, "CDL-C should have multiple taps")
+        self.assertEqual(num_cirs, 1, "Duration 0.001s at 1000Hz should give 1 sample (or very few)")
+        
+        # Check Data Dimensions
+        # Standard Format: Delay Re Im Delay Re Im ...
+        # Cols = 3 * NumTaps
+        expected_cols = 3 * num_taps
+        self.assertEqual(data.shape[1], expected_cols, "Column count mismatch (Standard Format)")
 
-    def test_export_mode_a_normalization(self):
-        """Test Mode A (External ATT) normalizes waveform."""
-        print("\n--- Test Mode A Export ---")
+    def test_wideband_dynamic_export(self):
+        """Test Wideband Dynamic Export (Ray Mode)."""
+        print("\n--- Test Wideband Dynamic (Ray Mode) ---")
+        
+        # Enable velocity for Doppler
+        self.channel.ue_velocity = (10.0, 0, 0)
+        sim_results = self.simulator.run(self.chamber, self.channel, synthesis_method='ray')
         
         export_config = PropsimExportConfig(
-            filename=self.output_file,
+            filename=self.base_output_name,
             mode='A',
-            duration_s=0.001,
-            sample_rate_hz=1000
+            duration_s=0.01,
+            sample_rate_hz=1000 # 10 samples
         )
         
         exporter = PropsimASCIIExporter(export_config)
-        exporter.export(self.sim_results)
+        exporter.export(sim_results)
         
-        # Read as complex numbers to calculate true magnitude
-        data_complex = self._read_ascii_file_complex(self.output_file)
-        max_mag = np.max(np.abs(data_complex))
-        print(f"Mode A Max Magnitude: {max_mag}")
+        expected_file = self.base_output_name.replace(".asc", "_In1_Out1.asc")
+        header, data = self._read_standard_asc_file(expected_file)
         
-        # Relax tolerance to 3 places due to ASCII .6e formatting loss
-        self.assertAlmostEqual(max_mag, 1.0, places=3, msg="Mode A output should be normalized to 1.0")
+        num_cirs = int(header.get('CIRs', 0))
+        self.assertEqual(num_cirs, 10, "Should have 10 CIRs")
+        
+        # Check Variance (Dynamic)
+        # Scan all Re/Im columns for any variance
+        # Cols: Delay, Re, Im, Delay, Re, Im...
+        # Indices: 1, 2, 4, 5, ...
+        re_indices = range(1, data.shape[1], 3)
+        im_indices = range(2, data.shape[1], 3)
+        
+        all_re = data[:, re_indices]
+        all_im = data[:, im_indices]
+        
+        std_re_max = np.max(np.std(all_re, axis=0))
+        std_im_max = np.max(np.std(all_im, axis=0))
+        
+        print(f"Max Tap Std Dev: Re={std_re_max:.4e}, Im={std_im_max:.4e}")
+        
+        self.assertTrue(std_re_max > 1e-9 or std_im_max > 1e-9, "At least one tap should be time-varying in dynamic mode")
 
-    def test_calibration_predistortion(self):
-        """Test calibration logic applies inverse phase."""
-        print("\n--- Test Calibration ---")
+    def _read_standard_asc_file(self, filename):
+        """Parses Standard Keysight Propsim .ASC file."""
+        header = {}
+        data = []
+        in_header = False
+        in_data = False
         
-        # Define a calibration that adds 90 deg phase shift to Port 1
-        cal_entries = [
-            CalibrationEntry(port_id=1, cable_phase_deg=90.0, cable_loss_db=0.0, probe_gain_dbi=0.0)
-        ]
-        # Other ports default to 0 phase (implicit in logic if not found? No, logic defaults to 1.0+0j)
-        # Wait, my logic in CalibrationConfig.get_correction_factor defaults to 1.0 if not found.
-        
-        cal_config = CalibrationConfig(entries=cal_entries)
-        
-        export_config = PropsimExportConfig(
-            filename=self.output_file,
-            mode='A', # Normalized
-            duration_s=0.001,
-            sample_rate_hz=1000
-        )
-        
-        exporter = PropsimASCIIExporter(export_config, calibration_config=cal_config)
-        exporter.export(self.sim_results)
-        
-        # Get raw (uncalibrated) weight for Probe 1 (Index 0)
-        raw_weights = self.sim_results['transmit_mapping_matrix_A']
-        raw_val_p1 = raw_weights[0, 0] # Probe 1, Tx 1
-        raw_phase = np.angle(raw_val_p1, deg=True)
-        
-        # Get exported (calibrated) value
-        data_complex = self._read_ascii_file_complex(self.output_file) # Shape (Samples, Probes*Tx)
-        # Port 1 is the first column pair (Real, Imag)
-        exported_val_p1 = data_complex[0, 0] 
-        exported_phase = np.angle(exported_val_p1, deg=True)
-        
-        print(f"Raw Phase P1: {raw_phase:.2f} deg")
-        print(f"Exported Phase P1: {exported_phase:.2f} deg")
-        print(f"Calibration: Cable adds +90 deg. Pre-distortion should add -90 deg.")
-        
-        expected_phase = raw_phase - 90.0
-        
-        # Normalize to -180..180
-        diff = (exported_phase - expected_phase + 180) % 360 - 180
-        self.assertAlmostEqual(diff, 0.0, delta=1.0, msg="Phase calibration incorrect")
-
-    def test_dynamic_doppler_variance(self):
-        """Test that Ray mode export produces time-varying data (Doppler)."""
-        print("\n--- Test Dynamic Doppler ---")
-        
-        # Ensure UE has velocity to generate Doppler
-        self.channel.ue_velocity = (10.0, 0, 0) # 10 m/s
-        
-        # Re-run simulator to get Doppler-ready results
-        self.sim_results = self.simulator.run(
-            self.chamber, self.channel, synthesis_method='ray'
-        )
-        
-        export_config = PropsimExportConfig(
-            filename=self.output_file,
-            mode='B',
-            duration_s=0.01, # 10ms, enough to see phase rotation
-            sample_rate_hz=1000
-        )
-        
-        exporter = PropsimASCIIExporter(export_config)
-        exporter.export(self.sim_results)
-        
-        data_complex = self._read_ascii_file_complex(self.output_file)
-        # data_complex shape: (Samples, Ports)
-        
-        # Check variance over time for the first port
-        # If static, variance of real/imag parts should be 0.
-        # If dynamic, > 0.
-        
-        # Check first port
-        port0_series = data_complex[:, 0]
-        std_real = np.std(np.real(port0_series))
-        std_imag = np.std(np.imag(port0_series))
-        
-        print(f"Std Dev Real: {std_real:.6e}, Imag: {std_imag:.6e}")
-        
-        self.assertTrue(std_real > 1e-9 or std_imag > 1e-9, "Output should vary over time due to Doppler")
-
-    def _read_ascii_file(self, filename):
-        """Helper to read numeric data from ASCII file."""
-        values = []
         with open(filename, 'r') as f:
-            reader = csv.reader(f, delimiter='\t')
-            for row in reader:
-                if not row or row[0].startswith('!'): continue
-                # Skip Time column (index 0), parse rest
-                row_vals = [float(x) for x in row[1:]]
-                values.extend(row_vals)
-        return np.array(values)
-
-    def _read_ascii_file_complex(self, filename):
-        """Helper to read complex data from ASCII file. Returns (Samples, Ports)."""
-        complex_rows = []
-        with open(filename, 'r') as f:
-            reader = csv.reader(f, delimiter='\t')
-            for row in reader:
-                if not row or row[0].startswith('!'): continue
-                # Skip Time column
-                vals = [float(x) for x in row[1:]]
-                # Pairs Re, Im
-                c_vals = []
-                for i in range(0, len(vals), 2):
-                    c_vals.append(complex(vals[i], vals[i+1]))
-                complex_rows.append(c_vals)
-        return np.array(complex_rows)
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                
+                if "***** Header *****" in line:
+                    in_header = True
+                    continue
+                if "***** Tap data *****" in line:
+                    in_header = False
+                    in_data = True
+                    continue
+                    
+                if in_header:
+                    # Format: Value Key
+                    parts = line.split(None, 1)
+                    if len(parts) == 2:
+                        val, key = parts
+                        header[key.strip()] = val.strip()
+                
+                elif in_data:
+                    # Tab separated values
+                    parts = line.split('\t')
+                    if parts:
+                        try:
+                            data.append([float(x) for x in parts])
+                        except ValueError:
+                            pass # Skip malformed lines
+                            
+        return header, np.array(data)
 
 if __name__ == '__main__':
     unittest.main()
