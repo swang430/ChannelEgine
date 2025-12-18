@@ -4,6 +4,8 @@ import numpy as np
 import json
 import threading
 import queue
+import os
+import zipfile
 
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.channel_generator import ChannelGenerator
@@ -113,21 +115,22 @@ class ChannelModelApp(tk.Tk):
             
             self._create_entry(ota_frame, "ota_num_probes", "探头数量:", "16", None, 1)
             self._create_entry(ota_frame, "ota_radius_m", "探头半径 (m):", "1.5", None, 2)
+            self._create_entry(ota_frame, "ota_dual_pol", "双极化探头:", True, [True, False], 3)
             # Default to 'ray' for high fidelity dynamic simulation
-            self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 3)
-            self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 4)
+            self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 4)
+            self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 5)
             
             # Propsim Hardware Export
-            ttk.Separator(ota_frame, orient='horizontal').grid(row=5, column=0, columnspan=2, sticky='ew', pady=10)
-            ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=6, column=0, columnspan=2, sticky='w')
+            ttk.Separator(ota_frame, orient='horizontal').grid(row=6, column=0, columnspan=2, sticky='ew', pady=10)
+            ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=7, column=0, columnspan=2, sticky='w')
             
-            self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 7)
-            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 8)
-            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "1000.0", None, 9)
+            self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 8)
+            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 9)
+            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "1000.0", None, 10)
             
             # Calibration Loader
             cal_frame = ttk.Frame(ota_frame)
-            cal_frame.grid(row=10, column=0, columnspan=2, sticky='ew', pady=2)
+            cal_frame.grid(row=11, column=0, columnspan=2, sticky='ew', pady=2)
             self.load_cal_button = ttk.Button(cal_frame, text="Load Cal CSV", width=12, command=self.load_calibration_file)
             self.load_cal_button.pack(side=tk.LEFT, padx=(5, 5))
             self.cal_file_label = ttk.Label(cal_frame, text="No File Selected", font=("Arial", 9, "italic"))
@@ -135,7 +138,7 @@ class ChannelModelApp(tk.Tk):
             self.current_cal_config = None 
 
             self.export_f64_button = ttk.Button(ota_frame, text="Export to F64", command=self.export_to_propsim)
-            self.export_f64_button.grid(row=11, column=0, columnspan=2, pady=5)
+            self.export_f64_button.grid(row=12, column=0, columnspan=2, pady=5)
             
         else:
             ttk.Label(ota_frame, text="MIMO OTA 库未安装").pack()
@@ -152,7 +155,7 @@ class ChannelModelApp(tk.Tk):
         state = tk.NORMAL if is_enabled else tk.DISABLED
         
         # OTA Gen Params
-        for key in ["ota_num_probes", "ota_radius_m", "ota_method", "ota_jitter"]:
+        for key in ["ota_num_probes", "ota_radius_m", "ota_dual_pol", "ota_method", "ota_jitter"]:
             self.controls[key]['label'].config(state=state)
             self.controls[key]['widget'].config(state=state)
             
@@ -405,7 +408,7 @@ class ChannelModelApp(tk.Tk):
                     num_probes=int(params["ota_num_probes"]),
                     radius_m=float(params["ota_radius_m"]),
                     distribution='ring',
-                    dual_polarized=False # GUI doesn't support dual-pol probe selection yet
+                    dual_polarized=params.get("ota_dual_pol", False) # Use GUI value, default False if missing
                 )
                 
                 # Map antenna config to OTA format
@@ -452,7 +455,8 @@ class ChannelModelApp(tk.Tk):
                     'clusters': ota_results['clusters'],
                     'transmit_mapping_matrix_A': ota_results['transmit_mapping_matrix_A'], # Required for F64 Export
                     'ray_components': ota_results.get('ray_components'), # Required for Doppler Export
-                    'probe_phase_jitter_vector': ota_results.get('probe_phase_jitter_vector')
+                    'probe_phase_jitter_vector': ota_results.get('probe_phase_jitter_vector'),
+                    'channel_impulse_response': ota_results.get('channel_impulse_response') # Required for Exporter
                 }
 
             else:
@@ -719,10 +723,19 @@ class ChannelModelApp(tk.Tk):
             # I will assume I fix run_simulation in the next step.
             # For now, I'll write the logic assuming 'transmit_mapping_matrix_A' IS there.
             
-            out_path = exporter.export(self.last_results, output_path=filepath)
+            out_files = exporter.export(self.last_results, output_path=filepath)
             
-            self.log(f"Successfully exported Propsim files (set) based on {filepath}")
-            messagebox.showinfo("Success", f"Export Complete.\nMode: {mode_str}\n\nGenerated multiple .asc files (one per Tx-Probe link).\nMain file reference: {out_path}")
+            # Zip the generated files
+            zip_filename = os.path.splitext(filepath)[0] + ".zip"
+            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for fpath in out_files:
+                    if os.path.exists(fpath):
+                        zf.write(fpath, os.path.basename(fpath))
+                        # Remove the original .asc file to keep directory clean
+                        os.remove(fpath)
+            
+            self.log(f"Successfully exported {len(out_files)} files and compressed to {zip_filename}")
+            messagebox.showinfo("Success", f"Export Complete.\nMode: {mode_str}\n\nGenerated {len(out_files)} channel files.\nCompressed into: {zip_filename}")
             
         except Exception as e:
             import traceback
