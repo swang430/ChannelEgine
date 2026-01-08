@@ -11,6 +11,7 @@ from .models.sma_models import SMa_ChannelCondition, SMa_Pathloss, SMa_Fading
 from .models.umi_open_area_models import UMi_OpenArea_ChannelCondition, UMi_OpenArea_Pathloss, UMi_OpenArea_Fading
 from .models.inf_models import InF_ChannelCondition, InF_Pathloss, InF_Fading
 from .models.spatial_correlation import get_spatial_correlation_matrix
+from .common.geometry import get_antenna_positions
 
 class ChannelGenerator:
     """
@@ -56,6 +57,55 @@ class ChannelGenerator:
         else:
             raise NotImplementedError(f"场景 '{scenario}' 的LSP生成暂不支持。")
 
+    def _ensure_antenna_positions(self, lambda_0: float) -> None:
+        ant_config = self.config.antenna_config
+        if ant_config.tx_positions is None:
+            ant_config.tx_positions = get_antenna_positions(
+                ant_config.tx_array_type,
+                ant_config.num_tx_rows, ant_config.num_tx_cols,
+                ant_config.tx_spacing_h * lambda_0,
+                ant_config.tx_spacing_v * lambda_0
+            )
+        if ant_config.rx_positions is None:
+            ant_config.rx_positions = get_antenna_positions(
+                ant_config.rx_array_type,
+                ant_config.num_rx_rows, ant_config.num_rx_cols,
+                ant_config.rx_spacing_h * lambda_0,
+                ant_config.rx_spacing_v * lambda_0
+            )
+
+    @staticmethod
+    def _unit_vector(zenith_deg: float, azimuth_deg: float) -> np.ndarray:
+        theta = np.deg2rad(zenith_deg)
+        phi = np.deg2rad(azimuth_deg)
+        return np.array([
+            np.cos(theta) * np.cos(phi),
+            np.cos(theta) * np.sin(phi),
+            np.sin(theta)
+        ])
+
+    def _synthesize_plane_wave(self, k_hat_rx: np.ndarray, k_hat_tx: np.ndarray, lambda_0: float) -> np.ndarray:
+        ant_config = self.config.antenna_config
+        k_factor = 2 * np.pi / lambda_0
+        a_rx = np.exp(1j * k_factor * (ant_config.rx_positions @ k_hat_rx))
+        a_tx = np.exp(1j * k_factor * (ant_config.tx_positions @ k_hat_tx))
+        return a_rx[:, None] @ a_tx[None, :]
+
+    def _synthesize_los_component(self, lambda_0: float) -> np.ndarray:
+        ant_config = self.config.antenna_config
+        num_rx = ant_config.num_rx_rows * ant_config.num_rx_cols
+        num_tx = ant_config.num_tx_rows * ant_config.num_tx_cols
+        bs_pos = self.config.bs_positions[0]
+        ue_pos = self.config.ue_positions[0]
+        d_vec = ue_pos - bs_pos
+        dist = np.linalg.norm(d_vec)
+        if dist < 1e-9:
+            return np.zeros((num_rx, num_tx), dtype=np.complex128)
+        k_hat_tx = d_vec / dist
+        k_hat_rx = -k_hat_tx
+        los_phase = np.exp(-1j * 2 * np.pi * dist / lambda_0)
+        return los_phase * self._synthesize_plane_wave(k_hat_rx, k_hat_tx, lambda_0)
+
     def generate_channel_realization(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print, use_median_lsps: Optional[bool] = None) -> tuple:
         """
         生成单次的信道实现。这是该类的核心方法，实现了混合信道模型的“三步走”流程。
@@ -82,7 +132,7 @@ class ChannelGenerator:
         
         use_median = use_median_lsps if use_median_lsps is not None else self.use_median_lsps
         
-        lsps = self.fading_model.generate_lsps(is_los, fc_ghz, use_median_lsps=use_median)
+        lsps = self.fading_model.generate_lsps(self.config, is_los, use_median_lsps=use_median)
 
         if logger: 
             logger(f"  - 大尺度环境: {self.config.scenario_name}")
@@ -225,18 +275,18 @@ class ChannelGenerator:
         H_total_normalized = np.zeros((num_rx, num_tx), dtype=np.complex128)
         c = 3e8
         lambda_0 = c / self.config.center_frequency_hz
+        self._ensure_antenna_positions(lambda_0)
 
         # 步骤 9, 10, 11: 对所有簇进行循环，计算并叠加其贡献
         for cluster in clusters:
-            # 生成IID瑞利衰落矩阵
-            H_iid = (np.random.randn(num_rx, num_tx) + 1j * np.random.randn(num_rx, num_tx)) / np.sqrt(2)
-            
-            # 步骤 8: 应用空间相关性 (Per-Cluster)
             if is_deterministic:
-                # 确定性模型（如CDL）不使用统计相关矩阵，而是依赖射线叠加
-                # 这里 H_iid 代表了簇内的随机相位变化
-                H_corr = H_iid
+                k_hat_rx = self._unit_vector(cluster.zoa_theta, cluster.aoa_phi)
+                k_hat_tx = self._unit_vector(cluster.zod_theta, cluster.aod_phi)
+                H_corr = self._synthesize_plane_wave(k_hat_rx, k_hat_tx, lambda_0)
             else:
+                # 生成IID瑞利衰落矩阵
+                H_iid = (np.random.randn(num_rx, num_tx) + 1j * np.random.randn(num_rx, num_tx)) / np.sqrt(2)
+
                 # 随机模型 (Stochastic): 为每个簇计算独立的空间相关性
                 # 使用该簇特定的角度和LSP中的角度扩展
                 R_rx = get_spatial_correlation_matrix(
@@ -277,6 +327,14 @@ class ChannelGenerator:
             # 累加当前簇的贡献
             H_total_normalized += np.sqrt(cluster.power) * H_corr * doppler_term
 
+        if lsps.k_factor_linear > 0:
+            k_linear = lsps.k_factor_linear
+            H_los = self._synthesize_los_component(lambda_0)
+            H_total_normalized = (
+                np.sqrt(k_linear / (k_linear + 1)) * H_los +
+                np.sqrt(1 / (k_linear + 1)) * H_total_normalized
+            )
+
         return H_total_normalized
 
     def export_sos_parameters(self) -> List[dict]:
@@ -297,8 +355,7 @@ class ChannelGenerator:
         h_ut = self.config.ue_positions[0, 2]
         d_2d = np.linalg.norm(self.config.bs_positions[0, :2] - self.config.ue_positions[0, :2])
         is_los = self.condition_model.get_condition(d_2d, h_ut)
-        fc_ghz = self.config.center_frequency_hz / 1e9
-        lsps = self.fading_model.generate_lsps(is_los, fc_ghz, use_median_lsps=self.use_median_lsps)
+        lsps = self.fading_model.generate_lsps(self.config, is_los, use_median_lsps=self.use_median_lsps)
         
         if self.cluster_model_name.startswith('CDL-') or self.cluster_model_name == 'SCME':
             clusters = self._load_deterministic_clusters(self.cluster_model_name)

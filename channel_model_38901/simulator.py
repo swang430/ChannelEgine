@@ -1,4 +1,5 @@
 from typing import Optional, Callable, Dict
+from pathlib import Path
 from .common.data_models import ScenarioConfig, EngineCluster, LargeScaleParameters
 from .parameters.parameter_loader import ParameterLoader
 from .channel_generator import ChannelGenerator
@@ -23,8 +24,8 @@ class ChannelSimulator:
             use_median_lsps (bool, optional): 是否使用大尺度参数（LSP）的中位值，而不是从统计分布中随机抽样。
                                              这对于需要确定性LSP的测试非常有用。默认为 False。
         """
-        param_file = 'channel_model_38901/parameters/parameters1013_tr38901_v19.0.0.json'
-        self.params = ParameterLoader.load_parameters(param_file)
+        param_file = Path(__file__).resolve().parent / "parameters" / "parameters1013_tr38901_v19.0.0.json"
+        self.params = ParameterLoader.load_parameters(str(param_file))
         
         self.config = ScenarioConfig(
             scenario_name=scenario_name,
@@ -36,6 +37,12 @@ class ChannelSimulator:
         )
         
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=use_median_lsps)
+        self._last_results = None
+        self._last_lsps = None
+
+    def _invalidate_cache(self):
+        self._last_results = None
+        self._last_lsps = None
 
     def run(self, force_condition: Optional[str] = None, time_s: float = 0.0, logger: Optional[Callable[[str], None]] = print, use_median_lsps: Optional[bool] = None) -> Dict:
         """
@@ -64,7 +71,7 @@ class ChannelSimulator:
             force_condition=force_condition, time_s=time_s, logger=logger, use_median_lsps=use_median_lsps
         )
         
-        return {
+        results = {
             'channel_matrix': H_final,
             'channel_matrix_normalized': H_normalized,
             'clusters': clusters,
@@ -72,17 +79,22 @@ class ChannelSimulator:
             'pathloss_db': pathloss_db,
             'is_los': is_los
         }
+        self._last_results = results
+        self._last_lsps = lsps
+        return results
 
     def set_bs_ue_positions(self, bs_positions: np.ndarray, ue_positions: np.ndarray):
         """更新基站 (BS) 和用户设备 (UE) 的位置。"""
         self.config.bs_positions = bs_positions
         self.config.ue_positions = ue_positions
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self._invalidate_cache()
 
     def set_velocities(self, ue_velocities: np.ndarray):
         """更新用户设备 (UE) 的速度。"""
         self.config.ue_velocities = ue_velocities
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self._invalidate_cache()
 
     def set_antenna_config(self, num_tx_rows, num_tx_cols, num_rx_rows, num_rx_cols, 
                            tx_spacing_h=0.5, tx_spacing_v=0.5, rx_spacing_h=0.5, rx_spacing_v=0.5, 
@@ -119,29 +131,20 @@ class ChannelSimulator:
             self.config.antenna_config.rx_spacing_v * lam
         )
         
-        # DEBUG: Print calculated Rx Y-coordinates to check spacing
-        # Assuming ULA along Y-axis or X-axis depending on implementation
-        if self.config.antenna_config.rx_positions.shape[0] > 1:
-            p0 = self.config.antenna_config.rx_positions[0]
-            p1 = self.config.antenna_config.rx_positions[1]
-            dist = np.linalg.norm(p0 - p1)
-            print(f"[DEBUG set_antenna_config] Rx Spacing: {self.config.antenna_config.rx_spacing_h} lambda")
-            print(f"[DEBUG set_antenna_config] Frequency: {self.config.center_frequency_hz/1e9} GHz, Lambda: {lam*100:.2f} cm")
-            print(f"[DEBUG set_antenna_config] Rx Pos 0: {p0}")
-            print(f"[DEBUG set_antenna_config] Rx Pos 1: {p1}")
-            print(f"[DEBUG set_antenna_config] Calculated Physical Distance: {dist*100:.2f} cm ({dist/lam:.2f} lambda)")
-
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self._invalidate_cache()
 
     def set_scenario(self, scenario_name: str, cluster_model_name: Optional[str] = None):
         """更新仿真场景和簇模型。"""
         self.config.scenario_name = scenario_name
         self.config.cluster_model_name = cluster_model_name
         self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self._invalidate_cache()
         
     def set_median_lsp_usage(self, use_median_lsps: bool):
         """设置是否使用LSP中位值。"""
         self.generator.use_median_lsps = use_median_lsps
+        self._invalidate_cache()
 
     def get_config(self) -> ScenarioConfig:
         """返回当前的仿真配置对象。"""
@@ -149,9 +152,10 @@ class ChannelSimulator:
 
     def get_lsps(self) -> Optional[LargeScaleParameters]:
         """获取最近一次生成的大尺度参数。"""
-        # 注意: 当前实现会重新运行一次仿真来获取LSP，未来可以优化。
-        _, _, _, lsps, _, _ = self.generator.generate_channel_realization(logger=None)
-        return lsps
+        if self._last_lsps is None:
+            _, _, _, lsps, _, _ = self.generator.generate_channel_realization(logger=None)
+            self._last_lsps = lsps
+        return self._last_lsps
 
     def export_fpga_sos_params(self):
         """

@@ -1,10 +1,15 @@
 import numpy as np
 import pytest
 import os
+import re
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.channel_generator import ChannelGenerator
 
-GOLDEN_FILES = [f for f in os.listdir('tests') if f.startswith('golden_') and f.endswith('.npz')]
+GOLDEN_PATTERN = re.compile(r"^golden_.+_(LOS|NLOS)_\d+x\d+_\d+\.npz$")
+GOLDEN_FILES = [
+    f for f in os.listdir('tests')
+    if f.startswith('golden_') and f.endswith('.npz') and GOLDEN_PATTERN.match(f)
+]
 
 @pytest.mark.parametrize("golden_file_name", GOLDEN_FILES)
 def test_regression(golden_file_name):

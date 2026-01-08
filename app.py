@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import csv
+import io
 
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
 from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, ProbeAntennaConfig, PropsimExportConfig, CalibrationConfig, CalibrationEntry
@@ -26,6 +28,50 @@ def run_simulation(target_config_dict, chamber_config_dict):
     except Exception as e:
         st.error(f"仿真失败: {e}")
         return None
+
+def parse_calibration_entries(cal_file):
+    if cal_file is None:
+        return []
+    try:
+        stringio = io.StringIO(cal_file.getvalue().decode("utf-8"))
+        reader = csv.DictReader(stringio)
+    except Exception as e:
+        st.error(f"校准文件解析失败: {e}")
+        return []
+
+    entries = []
+    for row in reader:
+        row_lower = {k.lower().strip(): v for k, v in row.items() if k}
+        if not row_lower:
+            continue
+
+        def get_float(keys, default=0.0):
+            for key in keys:
+                if key in row_lower and str(row_lower[key]).strip() != "":
+                    return float(row_lower[key])
+            return default
+
+        try:
+            port_id = int(get_float(['port_id', 'port', 'id'], default=-1))
+            if port_id < 1:
+                continue
+            loss = get_float(['cable_loss_db', 'loss', 'loss_db'])
+            phase = get_float(['cable_phase_deg', 'phase', 'phase_deg'])
+            gain = get_float(['probe_gain_dbi', 'gain', 'gain_dbi'])
+            entries.append(CalibrationEntry(port_id=port_id, cable_loss_db=loss, cable_phase_deg=phase, probe_gain_dbi=gain))
+        except (ValueError, TypeError):
+            continue
+
+    return entries
+
+def build_calibration_vector(entries, num_ports):
+    if not entries:
+        return None
+    cal_config = CalibrationConfig(entries=entries)
+    cal_vector = np.ones((num_ports, 1), dtype=complex)
+    for port_id in range(1, num_ports + 1):
+        cal_vector[port_id - 1, 0] = cal_config.get_system_response(port_id)
+    return cal_vector
 
 # --- UI: Helper function for antenna config ---
 def antenna_panel(antenna_type: str):
@@ -77,6 +123,11 @@ with st.sidebar:
     with st.expander("3. 物理参数与校准", expanded=False):
         probe_gain_dBi = st.number_input("探头天线增益 (dBi)", -10.0, 20.0, 0.0, 0.1)
         qz_radius_m = st.number_input("静区半径 (m)", 0.1, 2.0, 0.3, 0.05)
+        calibration_usage = st.selectbox(
+            "校准应用范围",
+            ("仅导出预失真（不影响仿真）", "仿真中引入硬件响应（导出不预失真）"),
+            key="cal_usage"
+        )
         cal_file = st.file_uploader("上传校准文件 (.csv)", type=['csv'], help="包含 Port, Loss, Phase, Gain 等列")
 
     with st.expander("4. 天线配置 (Antenna)", expanded=False):
@@ -113,7 +164,10 @@ with st.sidebar:
         # Since it's in Expander 3, maybe just remind user?
         # But user might look here. Let's rely on Expander 3 input.
         if cal_file is not None:
-            st.success("已加载校准文件。")
+            if calibration_usage.startswith("仅导出预失真"):
+                st.success("已加载校准文件（仅用于导出预失真）。")
+            else:
+                st.success("已加载校准文件（用于仿真硬件响应，导出不预失真）。")
         else:
             st.info("未加载校准文件，将使用理想参数。")
         
@@ -135,26 +189,9 @@ with st.sidebar:
                         filename="propsim_channel.asc" # Temp name
                     )
                     
-                    # Parse Cal File if present
                     cal_config = None
-                    if cal_file is not None:
-                        import csv
-                        import io
-                        stringio = io.StringIO(cal_file.getvalue().decode("utf-8"))
-                        reader = csv.DictReader(stringio)
-                        entries = []
-                        for row in reader:
-                            row_lower = {k.lower().strip(): v for k, v in row.items()}
-                            def get_float(keys, default=0.0):
-                                for k in keys:
-                                    if k in row_lower: return float(row_lower[k])
-                                return default
-                            
-                            p_id = int(get_float(['port_id', 'port', 'id']))
-                            loss = get_float(['cable_loss_db', 'loss', 'loss_db'])
-                            phase = get_float(['cable_phase_deg', 'phase', 'phase_deg'])
-                            gain = get_float(['probe_gain_dbi', 'gain', 'gain_dbi'])
-                            entries.append(CalibrationEntry(port_id=p_id, cable_loss_db=loss, cable_phase_deg=phase, probe_gain_dbi=gain))
+                    if cal_file is not None and calibration_usage.startswith("仅导出预失真"):
+                        entries = parse_calibration_entries(cal_file)
                         if entries:
                             cal_config = CalibrationConfig(entries=entries)
 
@@ -189,34 +226,14 @@ with st.sidebar:
                 st.warning("请先运行 '单次快照 (Single Snapshot)' 模式以生成信道数据。")
 
     if st.button("开始仿真", type="primary"):
-        cal_vector = None
-        if cal_file is not None:
-            try:
-                # Reset pointer for re-reading if needed, though streamlit usually handles it.
-                # Actually, parsing cal file for 'calibration_vector' (simulator input) vs 'CalibrationConfig' (exporter input)
-                # Simulator input 'calibration_vector' is a simple complex array.
-                # Exporter input 'CalibrationConfig' is rich struct.
-                # We should parse once.
-                cal_file.seek(0)
-                df = pd.read_csv(cal_file, header=None)
-                # Assuming simple format: real, imag for simulator vector?
-                # Wait, the prompt implies "Port, Loss, Phase..." CSV format for the Exporter.
-                # But 'calibration_vector' in ChamberConfig usually expects complex numbers for B-matrix synthesis.
-                # If we use the rich CSV, we need to convert it to complex vector for ChamberConfig.
-                # Let's assume user uploads the RICH CSV now.
-                
-                # Logic: We need to parse rich CSV into complex vector for ChamberConfig
-                # H_sys = sqrt(gain_linear * loss_linear) * exp(j * phase)
-                # ChamberConfig.calibration_vector expects Pre-distortion? Or System Response?
-                # Usually Simulator applies B * W. If we want W to correct for Sys, 
-                # Simulator B matrix generation might include probe gain.
-                # Actually, let's keep it simple: ChamberConfig.calibration_vector is for B-matrix CORRECTION inside simulator?
-                # Or we just pass None to simulator and handle everything in Exporter?
-                # YES. Exporter handles the output link. Simulator handles the chamber.
-                # Let's ignore cal_file for ChamberConfig (set to None) to avoid double correction or confusion.
-                pass
-            except Exception as e:
-                st.error(f"校准文件解析失败: {e}")
+        calibration_vector = None
+        if cal_file is not None and calibration_usage.startswith("仿真中引入硬件响应"):
+            entries = parse_calibration_entries(cal_file)
+            num_effective_probes = num_probes * (2 if dual_polarized else 1)
+            if entries:
+                if any(entry.port_id > num_effective_probes for entry in entries):
+                    st.warning("校准文件端口数量超过当前探头数量，超出部分将被忽略。")
+                calibration_vector = build_calibration_vector(entries, num_effective_probes)
 
         chamber_config_params = {
             "num_probes": num_probes,
@@ -225,7 +242,7 @@ with st.sidebar:
             "radius_m": radius_m,
             "probe_antenna": {"gain_dBi": probe_gain_dBi, "pattern": "Isotropic"},
             "quiet_zone_radius_m": qz_radius_m,
-            "calibration_vector": None # Handle calibration in Export stage
+            "calibration_vector": calibration_vector
         }
         target_config_params = {
             "model_name": model_name,

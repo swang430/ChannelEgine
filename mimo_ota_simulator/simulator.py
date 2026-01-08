@@ -1,6 +1,5 @@
 import numpy as np
 from typing import Dict, Literal, List
-import os
 import warnings
 
 from .data_models import ChamberConfig, TargetChannelConfig
@@ -110,21 +109,7 @@ class MIMO_OTA_Simulator:
         num_physical_probes = chamber_config.num_probes
         num_effective_probes = num_physical_probes * 2 if chamber_config.dual_polarized else num_physical_probes
         probe_angles_rad = np.linspace(0, 2 * np.pi, num_physical_probes, endpoint=False)
-        aoa_rad = np.deg2rad(cluster.aod_phi) # Note: Is this AoA or AoD? Usually Rx side weights use AoA.
-        # FIX: The input cluster has aod_phi and aoa_phi. For OTA probes (Rx side), we MUST use aoa_phi.
-        # The previous code used cluster.aod_phi which might be wrong if passed directly, 
-        # but in 'ray' loop we construct temp cluster with aoa_phi in both slots? 
-        # Let's check usage. In 'cluster' mode: w_map = self._calculate_weights_for_cluster(cluster, ...).
-        # Standard cluster has aod/aoa. OTA probes are at Rx. We need AoA.
-        # Let's correct this line to use aoa_phi if available, but keep variable name if unsure.
-        # Actually, let's look at `ray` loop: temp_ray_cluster = EngineCluster(..., aoa_phi=aoa_ray, ...).
-        # So we should use `cluster.aoa_phi`.
-        
         target_angle_rad = np.deg2rad(cluster.aoa_phi)
-        
-        as_rad = np.deg2rad(cluster.as_aod) # Again, should be as_aoa for Rx side?
-        # Let's look at cluster mode usage. It passes the raw cluster.
-        # We should use `cluster.as_aoa`.
         target_as_rad = np.deg2rad(cluster.as_aoa)
 
         # --- ADAPTIVE BROADENING FIX ---
@@ -304,13 +289,9 @@ class MIMO_OTA_Simulator:
                     # 1. Calculate Ray Angles
                     aoa_ray = cluster.aoa_phi + c_scale * alpha * cluster.as_aoa
                     aod_ray = cluster.aod_phi + c_scale * alpha * cluster.as_aod
-                    # zoa_ray = cluster.zoa_theta + c_scale * alpha * cluster.as_zoa # Not used for ring weights (2D)
+                    zoa_ray = cluster.zoa_theta + c_scale * alpha * cluster.as_zoa
                     zod_ray = cluster.zod_theta + c_scale * alpha * cluster.as_zod
                     
-                    # DEBUG: Check angles
-                    if i == 0 and m == 0:
-                        print(f"[DEBUG RAY] Cluster 0 Ray 0: AoA={aoa_ray:.2f}, ZoD={zod_ray:.2f}, Power={cluster.power:.4f}")
-
                     # 2. Calculate Probe Weights for this Ray (Point Source Mode)
                     # We treat each ray as a point source. 
                     # CRITICAL FIX: Do NOT use AS=0 (Nearest Neighbor). This causes phase quantization.
@@ -360,7 +341,7 @@ class MIMO_OTA_Simulator:
                     # k_hat_rx points INTO the UE. 
                     # Doppler shift = (v . k_hat_rx) / lambda.
                     # k_hat_rx (spherical) from AoA/ZoA.
-                    theta_r_rad = np.deg2rad(cluster.zoa_theta) # ZoA (from Zenith)
+                    theta_r_rad = np.deg2rad(zoa_ray) # ZoA (from Zenith)
                     phi_r_rad = np.deg2rad(aoa_ray) # AoA
                     
                     k_hat_rx = np.array([
@@ -414,6 +395,7 @@ class MIMO_OTA_Simulator:
 
         effective_H_matrix = B_matrix @ transmit_mapping_matrix_A
         return {
+            "center_frequency_hz": channel_config.center_frequency_hz,
             "target_H_matrix": target_H_matrix,
             "transmit_mapping_matrix_A": transmit_mapping_matrix_A,
             "effective_H_matrix": effective_H_matrix,

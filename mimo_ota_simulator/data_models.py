@@ -46,6 +46,17 @@ class CalibrationConfig(BaseModel):
     """Collection of calibration data for the entire chamber."""
     entries: List[CalibrationEntry] = Field(..., description="List of calibration entries per port")
     
+    def get_system_response(self, port_id: int) -> complex:
+        """Returns the complex system response factor (Cable + Probe) for a given port."""
+        for entry in self.entries:
+            if entry.port_id == port_id:
+                loss_linear = 10**(-entry.cable_loss_db / 10.0)
+                gain_linear = 10**(entry.probe_gain_dbi / 10.0)
+                total_gain_mag = np.sqrt(loss_linear * gain_linear)
+                phase_rad = np.deg2rad(entry.cable_phase_deg)
+                return total_gain_mag * np.exp(1j * phase_rad)
+        return 1.0 + 0j
+
     def get_correction_factor(self, port_id: int) -> complex:
         """Returns the complex correction factor (Pre-distortion) for a given port."""
         for entry in self.entries:
@@ -59,14 +70,9 @@ class CalibrationConfig(BaseModel):
                 # So H_eff = H_target / H_sys
                 # Correction = 1 / H_sys
                 
-                loss_linear = 10**(-entry.cable_loss_db / 10.0) # Power ratio < 1
-                gain_linear = 10**(entry.probe_gain_dbi / 10.0) # Power ratio > 1
-                total_gain_mag = np.sqrt(loss_linear * gain_linear) # Voltage ratio
-                
-                phase_rad = np.deg2rad(entry.cable_phase_deg)
-                h_sys = total_gain_mag * np.exp(1j * phase_rad)
-                
-                if abs(h_sys) < 1e-9: return 0j
+                h_sys = self.get_system_response(port_id)
+                if abs(h_sys) < 1e-9:
+                    return 0j
                 return 1.0 / h_sys
         return 1.0 + 0j
 

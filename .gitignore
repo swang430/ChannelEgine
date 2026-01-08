@@ -74,6 +74,9 @@ venv.bak/
 
 # Specific to this project
 mimo_ota_simulator/channel_model_38901/
+propsim_output*.asc
+*_In*_Out*.asc
+tests/propsim_modeA_*.asc
 
 # Statistical test cache files
 tests/cache/*.pkl

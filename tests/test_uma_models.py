@@ -45,7 +45,14 @@ class TestUMaModels(unittest.TestCase):
 
     def test_uma_fading_generation(self):
         """Test that UMa fading model generates a valid LSP set."""
-        lsps = self.uma_fading.generate_lsps(is_los=True, fc_ghz=3.5)
+        config = ScenarioConfig(
+            scenario_name='UMa',
+            center_frequency_hz=3.5e9,
+            bs_positions=np.array([[0, 0, 25]]),
+            ue_positions=np.array([[100, 0, 1.5]]),
+            ue_velocities=np.array([[0, 0, 0]])
+        )
+        lsps = self.uma_fading.generate_lsps(config, is_los=True)
         self.assertIsInstance(lsps, LargeScaleParameters)
         self.assertGreater(lsps.delay_spread_s, 0)
         self.assertGreater(lsps.k_factor_linear, 0)

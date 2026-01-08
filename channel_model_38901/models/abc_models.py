@@ -45,13 +45,13 @@ class ABC_FadingModel(ABC):
     """
 
     @abstractmethod
-    def generate_lsps(self, is_los: bool, fc_ghz: float, use_median_lsps: bool = False) -> LargeScaleParameters:
+    def generate_lsps(self, config: ScenarioConfig, is_los: bool, use_median_lsps: bool = False) -> LargeScaleParameters:
         """ 
         生成一组大尺度参数。
 
         Args:
+            config (ScenarioConfig): 场景配置（包含几何与频率信息）。
             is_los (bool): 是否为LOS。
-            fc_ghz (float): 中心频率（GHz）。
             use_median_lsps (bool, optional): 是否使用LSP中位数。默认为False。
 
         Returns:

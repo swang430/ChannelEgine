@@ -54,6 +54,8 @@ class PropsimASCIIExporter:
             print("[Propsim Exporter] Generating Wideband Static data...")
             data_tensor, delays = self._compute_static_tensor(sim_result, impulse_response)
             
+        carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
+
         # Write Files (One per Link / Logical Channel)
         # F64 Architecture: 1 Channel = 1 Input -> 1 Output path.
         # For 2x2 MIMO with 16 Dual-Pol probes: 2 Inputs * 32 Outputs = 64 Files.
@@ -75,12 +77,12 @@ class PropsimASCIIExporter:
                 # Extract Link Data: (Samples, Taps)
                 link_data = data_tensor[:, p, tx, :] # Complex
                 
-                self._write_single_asc_file(fpath, link_data, delays)
+                self._write_single_asc_file(fpath, link_data, delays, carrier_frequency_hz)
                 generated_files.append(fpath)
                 
         return generated_files
 
-    def _write_single_asc_file(self, fpath: str, data: np.ndarray, delays: np.ndarray):
+    def _write_single_asc_file(self, fpath: str, data: np.ndarray, delays: np.ndarray, carrier_frequency_hz: float):
         """
         Writes a single standard .ASC file.
         data: (Samples, Taps) complex
@@ -94,9 +96,7 @@ class PropsimASCIIExporter:
             f.write(f"{num_samples} CIRs\n")
             f.write(f"{num_taps} Taps/CIR\n")
             f.write(f"{self.config.sample_rate_hz:.1f} CIR_Update_Rate\n")
-            # Optional: Carrier Frequency (useful for F64 to know)
-            # We assume it's passed or default
-            f.write("3500000000.0 Carrier_Frequency\n") # Placeholder or from config
+            f.write(f"{carrier_frequency_hz:.1f} Carrier_Frequency\n")
             f.write("***** Tap data *****\n")
             # Note: No column header line in standard ASC data block
             

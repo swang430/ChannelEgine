@@ -38,7 +38,7 @@ def create_golden_file():
     # Ensure the output path is inside the tests directory
     output_dir = 'tests'
     os.makedirs(output_dir, exist_ok=True)
-    file_path = os.path.join(output_dir, 'golden_results.npz')
+    file_path = os.path.join(output_dir, 'golden_mimo_ota_results.npz')
     
     np.savez_compressed(file_path, golden_A=golden_A_matrix)
 

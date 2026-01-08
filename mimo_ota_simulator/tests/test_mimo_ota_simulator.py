@@ -2,6 +2,7 @@
 import pytest
 import numpy as np
 import os
+from types import SimpleNamespace
 from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
 from channel_model_38901.common.data_models import EngineCluster
@@ -15,9 +16,9 @@ class TestCoreAlgorithms:
         """
         Tests the new weight calculation based on Gaussian distribution for Angle Spread.
         """
-        chamber_config = ChamberConfig(num_probes=16, dual_polarized=False, distribution='ring', radius_m=1, calibration_matrix_B=np.ones((1,16)))
+        chamber_config = ChamberConfig(num_probes=16, dual_polarized=False, distribution='ring', radius_m=1)
         # A cluster with a clear direction and some spread
-        cluster = EngineCluster(aod_phi=45.0, as_aod=10.0) # AoA=45 deg, AS=10 deg
+        cluster = EngineCluster(aoa_phi=45.0, as_aoa=10.0) # AoA=45 deg, AS=10 deg
 
         weights = simulator._calculate_weights_for_cluster(cluster, chamber_config, num_candidate_probes=4)
         
@@ -46,8 +47,7 @@ class TestFullSimulation:
             num_probes=16,
             dual_polarized=True,
             distribution='ring',
-            radius_m=1.5,
-            calibration_matrix_B=np.ones((2, 32))
+            radius_m=1.5
         )
         channel_config = TargetChannelConfig(
             tx_antenna=AntennaArrayConfig(num_cols=4),
@@ -58,20 +58,22 @@ class TestFullSimulation:
     def test_pinv_synthesis_and_config_passing(self, default_configs, mocker):
         """
         Enhanced Sanity Check for the 'pinv' method.
-        1. Mocks the ChannelGenerator class.
+        1. Mocks the ChannelSimulator class.
         2. Verifies that the simulator initializes the generator with the correct config.
         3. Verifies the output matrix shape.
         """
         chamber_config, channel_config = default_configs
 
-        # Mock the entire ChannelGenerator class to inspect its initialization
-        mock_generator_class = mocker.patch('mimo_ota_simulator.simulator.ChannelGenerator')
-        
-        # Configure the MOCKED INSTANCE that will be created
-        mock_instance = mock_generator_class.return_value
-        mock_instance.generate_channel_realization.return_value = (
-            np.ones((2, 4)), None, [], None, None, None
-        )
+        mock_sim_class = mocker.patch('mimo_ota_simulator.simulator.ChannelSimulator')
+        mock_sim = mock_sim_class.return_value
+        mock_sim.config = SimpleNamespace(antenna_config=SimpleNamespace())
+        mock_sim.run.return_value = {
+            'channel_matrix': np.ones((2, 4)),
+            'clusters': [],
+            'lsps': None,
+            'pathloss_db': 0.0,
+            'is_los': True
+        }
 
         # Run the simulation
         simulator = MIMO_OTA_Simulator()
@@ -82,25 +84,34 @@ class TestFullSimulation:
         A = results['transmit_mapping_matrix_A']
         assert A.shape == (32, 4)
 
-        # 2. Verify that the ChannelGenerator was called correctly
-        mock_generator_class.assert_called_once()
-        args, _ = mock_generator_class.call_args
-        
-        # 3. Inspect the EngineScenarioConfig passed to the generator
-        engine_config_arg = args[0]
-        assert engine_config_arg.scenario_name == channel_config.model_name
-        assert engine_config_arg.center_frequency_hz == channel_config.center_frequency_hz
-        assert engine_config_arg.antenna_config.num_tx_cols == channel_config.tx_antenna.num_cols
-        assert engine_config_arg.antenna_config.num_rx_rows == channel_config.rx_antenna.num_rows
+        # 2. Verify that the ChannelSimulator was called correctly
+        mock_sim_class.assert_called_once_with(
+            scenario_name=channel_config.model_name,
+            center_frequency_hz=channel_config.center_frequency_hz,
+            cluster_model_name=channel_config.cluster_model_name,
+            use_median_lsps=channel_config.use_median_lsps
+        )
+        mock_sim.set_bs_ue_positions.assert_called_once()
+        mock_sim.set_velocities.assert_called_once()
+        mock_sim.set_antenna_config.assert_called_once()
 
     def test_cluster_synthesis(self, default_configs, mocker):
         chamber_config, channel_config = default_configs
-        # Add as_aod to the mock clusters
+        # Add as_aoa to the mock clusters
         mock_clusters = [
-            EngineCluster(aoa_phi=45, as_aod=5.0, power=1.0, h_matrix=np.ones((2, 4), dtype=complex)),
-            EngineCluster(aoa_phi=90, as_aod=8.0, power=1.0, h_matrix=np.ones((2, 4), dtype=complex) * 2)
+            EngineCluster(aoa_phi=45, as_aoa=5.0, power=1.0, h_matrix=np.ones((2, 4), dtype=complex)),
+            EngineCluster(aoa_phi=90, as_aoa=8.0, power=1.0, h_matrix=np.ones((2, 4), dtype=complex) * 2)
         ]
-        mocker.patch('mimo_ota_simulator.simulator.ChannelGenerator.generate_channel_realization', return_value=(np.ones((2, 4)), None, mock_clusters, None, None, None))
+        mock_sim_class = mocker.patch('mimo_ota_simulator.simulator.ChannelSimulator')
+        mock_sim = mock_sim_class.return_value
+        mock_sim.config = SimpleNamespace(antenna_config=SimpleNamespace())
+        mock_sim.run.return_value = {
+            'channel_matrix': np.ones((2, 4)),
+            'clusters': mock_clusters,
+            'lsps': None,
+            'pathloss_db': 0.0,
+            'is_los': True
+        }
         simulator = MIMO_OTA_Simulator()
         results = simulator.run(chamber_config, channel_config, synthesis_method='cluster')
         A = results['transmit_mapping_matrix_A']
@@ -112,7 +123,7 @@ def test_regression_against_golden_file():
     Regression Test: Compares the current output against a pre-computed 'golden' file.
     """
     # 1. Load the golden results
-    golden_file_path = 'tests/golden_results.npz'
+    golden_file_path = 'tests/golden_mimo_ota_results.npz'
     assert os.path.exists(golden_file_path), "Golden file not found. Please generate it first."
     golden_data = np.load(golden_file_path)
     golden_A = golden_data['golden_A']
@@ -122,8 +133,7 @@ def test_regression_against_golden_file():
         num_probes=8,
         dual_polarized=False,
         distribution='ring',
-        radius_m=1.0,
-        calibration_matrix_B=np.eye(2, 8)
+        radius_m=1.0
     )
     channel_config = TargetChannelConfig(
         model_name='UMi-StreetCanyon',
