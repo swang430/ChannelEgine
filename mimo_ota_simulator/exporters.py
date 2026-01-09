@@ -25,7 +25,7 @@ class PropsimASCIIExporter:
         self.config = export_config
         self.calibration = calibration_config
 
-    def export(self, sim_result: Dict, output_path: str = None) -> str:
+    def export(self, sim_result: Dict, output_path: str = None, direction: str = "dl") -> str:
         """
         Main export function. 
         Generates individual .asc files for each Probe-Tx link.
@@ -39,20 +39,34 @@ class PropsimASCIIExporter:
         base_name = os.path.splitext(os.path.basename(output_path))[0]
         if not base_dir: base_dir = "."
         
-        ray_components = sim_result.get('ray_components')
-        impulse_response = sim_result.get('channel_impulse_response')
+        if direction not in ("dl", "ul"):
+            raise ValueError(f"Unknown export direction: {direction}")
+
+        if direction == "ul":
+            ray_components = sim_result.get('ray_components_ul')
+            impulse_response = sim_result.get('channel_impulse_response_ul')
+        else:
+            ray_components = sim_result.get('ray_components')
+            impulse_response = sim_result.get('channel_impulse_response')
+        if impulse_response is None:
+            raise ValueError(f"Missing impulse response for direction '{direction}'.")
         
         # Prepare Data Tensors (Time, Probes, Tx, Taps)
         # We process everything into a unified structure before writing.
         # This simplifies the specific logic for Static vs Dynamic.
         
+        apply_calibration = direction != "ul"
         if ray_components:
             print("[Propsim Exporter] Generating Wideband Dynamic Doppler data...")
             # Returns: (NumSamples, NumProbes, NumTx, NumTaps) complex, and (NumTaps) delays
-            data_tensor, delays = self._compute_dynamic_tensor(sim_result, impulse_response, ray_components)
+            data_tensor, delays = self._compute_dynamic_tensor(
+                sim_result, impulse_response, ray_components, apply_calibration=apply_calibration
+            )
         else:
             print("[Propsim Exporter] Generating Wideband Static data...")
-            data_tensor, delays = self._compute_static_tensor(sim_result, impulse_response)
+            data_tensor, delays = self._compute_static_tensor(
+                sim_result, impulse_response, apply_calibration=apply_calibration
+            )
             
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
 
@@ -118,7 +132,7 @@ class PropsimASCIIExporter:
                 
                 f.write("\t".join(row) + "\n")
 
-    def _compute_static_tensor(self, sim_result: Dict, impulse_response: List[Dict]):
+    def _compute_static_tensor(self, sim_result: Dict, impulse_response: List[Dict], apply_calibration: bool = True):
         """
         Returns (Samples, Probes, Tx, Taps) and (Taps) delays.
         Values are constant over time.
@@ -138,7 +152,7 @@ class PropsimASCIIExporter:
         
         # Apply Cal & Scaling
         scaling_factor = self._calculate_scaling_factor(sim_result, sorted_taps)
-        cal_vector = self._get_calibration_vector(num_probes) # (P, 1)
+        cal_vector = self._get_calibration_vector(num_probes, apply_calibration=apply_calibration) # (P, 1)
         
         for k, tap in enumerate(sorted_taps):
             # coeff is (P, T)
@@ -154,7 +168,7 @@ class PropsimASCIIExporter:
         
         return full_tensor, delays
 
-    def _compute_dynamic_tensor(self, sim_result: Dict, impulse_response: List[Dict], ray_components: List[Dict]):
+    def _compute_dynamic_tensor(self, sim_result: Dict, impulse_response: List[Dict], ray_components: List[Dict], apply_calibration: bool = True):
         """
         Returns (Samples, Probes, Tx, Taps) and (Taps) delays.
         Values evolve with Doppler.
@@ -178,7 +192,7 @@ class PropsimASCIIExporter:
         
         # Pre-calc Scaling & Cal
         scaling_factor = self._calculate_scaling_factor(sim_result, sorted_taps)
-        cal_vector = self._get_calibration_vector(num_probes)
+        cal_vector = self._get_calibration_vector(num_probes, apply_calibration=apply_calibration)
         
         # Pre-compute Effective Rays per Tap
         tap_engines = []
@@ -247,9 +261,9 @@ class PropsimASCIIExporter:
                 return scale
         return 1.0
 
-    def _get_calibration_vector(self, num_probes):
+    def _get_calibration_vector(self, num_probes, apply_calibration: bool = True):
         cal = np.ones((num_probes, 1), dtype=complex)
-        if self.calibration:
+        if self.calibration and apply_calibration:
             for p in range(num_probes):
                 cal[p, 0] = self.calibration.get_correction_factor(p + 1)
         return cal

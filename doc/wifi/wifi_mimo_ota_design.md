@@ -131,6 +131,15 @@ H(f_k) = Σ_tap h_tap * exp(-j 2π f_k τ_tap)
 - `calibrated`: 先引入响应，再预失真补偿
 - `uncalibrated`: 保留硬件误差影响
 
+## 6.3 WiFi 场景与路径损耗现状说明
+- TGn/TGax 的 Model A–F 主要描述小尺度多径（PDP/角度/簇结构），最大时延随 A→F 增大，可用于“环境尺度/复杂度”的定性选择。
+- 目前 WiFi 路径损耗**仅采用自由空间损耗（FSPL）占位**，不绑定 A–F 场景，也未引入 TGax 建议的断点距离/分段指数/阴影衰落模型。
+- 现状保持：`PL = 20*log10(d_m) + 20*log10(fc_hz) - 147.55`。
+
+后续优化方向（待定）：
+- 引入 TGax 建议的“断点距离 + 分段路径损耗指数 + 阴影衰落标准差”模型，并与 A–F 场景做可选绑定或独立选择。
+- 若做系统级 WiFi 场景，可选复用 3GPP TR 38.901 的路径损耗/LOS 概率模型（当前仅用于 3GPP 标准分支）。
+
 ## 7. OTA 映射与导出
 ### 7.1 OTA 映射
 - `pinv`: `A = pinv(B) @ H_target`（数值逼近）
@@ -144,6 +153,7 @@ WiFi 默认建议：`ray`，`pinv` 作为对照，`cluster` 作为轻量模式�
 - `propsim_ul_*.asc`
 
 文件头部需包含真实 `Carrier_Frequency` 与 `CIR_Update_Rate`。
+默认采用保守策略：UL/DL 独立文件，设备若支持双向复用可只加载 DL 文件。
 
 ## 8. UI 与配置
 在 `app.py` / `gui.py` 增加：

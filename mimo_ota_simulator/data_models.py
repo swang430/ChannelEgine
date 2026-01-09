@@ -18,9 +18,11 @@ class TargetChannelConfig(BaseModel):
     Comprehensive configuration for the target wireless channel to be emulated.
     """
     # Scenario & Geometry
-    model_name: str = Field('UMa', description="Name of the standard channel model (Large-Scale Environment)")
+    standard: Literal['3gpp', 'wifi'] = Field('3gpp', description="Channel standard: 3gpp or wifi")
+    model_name: str = Field('UMa', description="Name of the standard channel model (scenario or TGax model)")
     cluster_model_name: Optional[str] = Field('Stochastic', description="Name of the small-scale cluster model")
     center_frequency_hz: float = Field(2.4e9, description="Center frequency in Hz")
+    bandwidth_hz: float = Field(20e6, description="Channel bandwidth in Hz (WiFi)")
     bs_position: Tuple[float, float, float] = Field((0, 0, 25), description="3D position of the Base Station")
     ue_position: Tuple[float, float, float] = Field((100, 0, 1.5), description="3D position of the User Equipment")
     ue_velocity: Tuple[float, float, float] = Field((0, 0, 0), description="3D velocity vector of the UE in m/s")
@@ -33,6 +35,20 @@ class TargetChannelConfig(BaseModel):
     force_condition: Optional[Literal['LOS', 'NLOS']] = Field(None, description="Force Line-of-Sight or Non-Line-of-Sight")
     random_seed: Optional[int] = Field(None, description="Seed for the random number generator")
     use_median_lsps: bool = Field(False, description="Use median LSP values instead of random sampling")
+
+    # WiFi Options
+    enable_ofdm: bool = Field(False, description="Enable WiFi OFDM subcarrier generation")
+    n_fft: Optional[int] = Field(None, description="WiFi OFDM FFT size")
+    phase_policy: Literal['zero', 'random'] = Field('zero', description="WiFi tap phase policy")
+    normalize_power: bool = Field(True, description="Normalize WiFi tap power to sum to 1")
+    delay_scale: Optional[float] = Field(None, description="WiFi tap delay scaling factor")
+
+    # Reciprocity Options
+    enable_ul_dl: bool = Field(False, description="Enable UL/DL simultaneous generation")
+    reciprocity_transform: Literal['transpose', 'conjugate_transpose'] = Field(
+        'conjugate_transpose',
+        description="Reciprocity transform for UL channel"
+    )
 
 class CalibrationEntry(BaseModel):
     """Calibration data for a single RF chain (Cable + Attenuator + Probe)."""

@@ -105,10 +105,32 @@ if 'synthesis_method' not in st.session_state:
 with st.sidebar:
     st.header("控制面板")
     with st.expander("1. 场景与几何 (Scenario)", expanded=False):
-        model_name = st.selectbox('大尺度环境', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
-        cluster_model_name = st.selectbox('小尺度簇模型', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
+        standard = st.selectbox('标准', ('3GPP', 'WiFi'), key='standard')
+        if standard == '3GPP':
+            model_name = st.selectbox('大尺度环境', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
+            cluster_model_name = st.selectbox('小尺度簇模型', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
+        else:
+            model_name = st.selectbox('WiFi 模型', ('TGax-A', 'TGax-B', 'TGax-C', 'TGax-D', 'TGax-E', 'TGax-F'), key='wifi_model_name')
+            cluster_model_name = None
         center_frequency_hz = st.number_input('中心频率 (GHz)', 0.5, 100.0, 3.5, 0.1, key='freq') * 1e9
         ue_velocity_kph = st.slider('UE 移动速度 (km/h)', 0, 120, 3, key='speed')
+        if standard == 'WiFi':
+            bandwidth_mhz = st.number_input('WiFi 带宽 (MHz)', 5.0, 320.0, 80.0, 5.0, key='wifi_bw')
+            enable_ofdm = st.checkbox('OFDM 子载波计算', value=False, key='wifi_ofdm')
+            n_fft_text = st.text_input('FFT 大小 (可选)', value="", key='wifi_nfft')
+            phase_policy_label = st.selectbox('Tap 相位', ('固定', '随机'), key='wifi_phase')
+            normalize_power = st.checkbox('Tap 功率归一', value=True, key='wifi_norm')
+            manual_delay_scale = st.checkbox('手动延迟缩放', value=False, key='wifi_delay_manual')
+            delay_scale = None
+            if manual_delay_scale:
+                delay_scale = st.number_input('延迟缩放系数', 0.01, 10.0, 1.0, 0.01, key='wifi_delay_scale')
+        else:
+            bandwidth_mhz = 20.0
+            enable_ofdm = False
+            n_fft_text = ""
+            phase_policy_label = '固定'
+            normalize_power = True
+            delay_scale = None
 
     with st.expander("2. 暗室配置 (Chamber)", expanded=False):
         num_probes = st.slider('探头数量', 1, 64, 16, 1, key="num_probes")
@@ -143,6 +165,8 @@ with st.sidebar:
         force_condition = st.selectbox('LOS/NLOS 条件', ('默认 (Default)', '强制 LOS', '强制 NLOS'), key='los')
         use_median_lsps = st.checkbox('使用 LSP 中值', value=False, help="跳过随机采样，使用大尺度参数的中位值。")
         probe_phase_jitter = st.checkbox('模拟探头相位抖动', value=False, help="为探头添加随机相位噪声 (+/- 10度) 以模拟硬件误差。")
+        enable_ul_dl = st.checkbox('UL/DL 双向生成', value=False, help="生成 UL/DL 两套结果（互易镜像，不包含独立 UL 信道建模）。")
+        reciprocity_transform_label = st.selectbox('互易变换', ('共轭转置', '转置'), key='reciprocity', help="仅互易镜像：对 DL 结果做转置/共轭转置得到 UL。")
         
         num_drops = 1
         if run_mode == '统计验证 (Statistical Validation)':
@@ -172,6 +196,7 @@ with st.sidebar:
             st.info("未加载校准文件，将使用理想参数。")
         
         # 3. Generate Button
+        export_ul_files = st.checkbox('导出 UL 文件', value=False, key='export_ul')
         if st.button("生成 F64 文件"):
             if st.session_state.simulation_results and st.session_state.simulation_results.get('mode') == 'single':
                 # We need raw weights. Did we save them?
@@ -198,7 +223,12 @@ with st.sidebar:
                     exporter = PropsimASCIIExporter(p_config, calibration_config=cal_config)
                     
                     # Run Export (Generate files in temp)
-                    out_files = exporter.export(st.session_state.simulation_results, output_path="propsim_output.asc")
+                    out_files = exporter.export(st.session_state.simulation_results, output_path="propsim_output_dl.asc", direction="dl")
+                    if export_ul_files:
+                        if st.session_state.simulation_results.get('channel_impulse_response_ul') is None:
+                            st.warning("当前结果不包含 UL 数据，请启用 UL/DL 双向生成后重新仿真。")
+                        else:
+                            out_files += exporter.export(st.session_state.simulation_results, output_path="propsim_output_ul.asc", direction="ul")
                     
                     # Create ZIP in memory
                     import zipfile
@@ -244,10 +274,28 @@ with st.sidebar:
             "quiet_zone_radius_m": qz_radius_m,
             "calibration_vector": calibration_vector
         }
+        n_fft = None
+        if n_fft_text.strip():
+            try:
+                n_fft = int(n_fft_text)
+            except ValueError:
+                st.warning("FFT 大小无效，将使用自动推导。")
+                n_fft = None
+        phase_policy = 'random' if phase_policy_label == '随机' else 'zero'
+
         target_config_params = {
+            "standard": "wifi" if standard == "WiFi" else "3gpp",
             "model_name": model_name,
-            "cluster_model_name": cluster_model_name if cluster_model_name != 'Stochastic' else None,
+            "cluster_model_name": cluster_model_name if cluster_model_name and cluster_model_name != 'Stochastic' else None,
             "center_frequency_hz": center_frequency_hz,
+            "bandwidth_hz": bandwidth_mhz * 1e6,
+            "enable_ofdm": enable_ofdm,
+            "n_fft": n_fft,
+            "phase_policy": phase_policy,
+            "normalize_power": normalize_power,
+            "delay_scale": delay_scale,
+            "enable_ul_dl": enable_ul_dl,
+            "reciprocity_transform": "conjugate_transpose" if reciprocity_transform_label == '共轭转置' else "transpose",
             "ue_velocity": (ue_velocity_kph * 1000 / 3600, 0, 0),
             "tx_antenna": tx_antenna_config.model_dump(),
             "rx_antenna": rx_antenna_config.model_dump(),

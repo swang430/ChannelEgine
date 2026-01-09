@@ -22,6 +22,14 @@ except ImportError:
     MIMO_OTA_AVAILABLE = False
     print("Warning: mimo_ota_simulator not found. OTA features disabled.")
 
+try:
+    from wifi_channel_model.simulator import WiFiChannelSimulator
+    from wifi_channel_model.common.data_models import WiFiScenarioConfig
+    WIFI_AVAILABLE = True
+except ImportError:
+    WIFI_AVAILABLE = False
+    print("Warning: wifi_channel_model not found. WiFi features disabled.")
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
@@ -43,9 +51,45 @@ class ChannelModelApp(tk.Tk):
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- Left Column (Fixed Width-ish, fill Y) ---
-        left_col = ttk.Frame(main_frame)
-        left_col.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10), anchor='n')
+        # --- Left Column (Scrollable) ---
+        left_container = ttk.Frame(main_frame)
+        left_container.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10), anchor='n')
+
+        left_canvas = tk.Canvas(left_container, borderwidth=0, highlightthickness=0)
+        left_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_scrollbar.set)
+        left_canvas.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+        left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        left_col = ttk.Frame(left_canvas)
+        left_window = left_canvas.create_window((0, 0), window=left_col, anchor="nw")
+
+        def _on_left_frame_configure(event):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            left_canvas.itemconfig(left_window, width=left_canvas.winfo_width())
+
+        left_col.bind("<Configure>", _on_left_frame_configure)
+
+        def _on_left_canvas_configure(event):
+            left_canvas.itemconfig(left_window, width=event.width)
+
+        left_canvas.bind("<Configure>", _on_left_canvas_configure)
+
+        def _on_left_mousewheel(event):
+            lx = left_container.winfo_rootx()
+            ly = left_container.winfo_rooty()
+            if not (lx <= event.x_root <= lx + left_container.winfo_width() and ly <= event.y_root <= ly + left_container.winfo_height()):
+                return
+            if event.delta:
+                left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            elif event.num == 4:
+                left_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                left_canvas.yview_scroll(1, "units")
+
+        left_canvas.bind_all("<MouseWheel>", _on_left_mousewheel)
+        left_canvas.bind_all("<Button-4>", _on_left_mousewheel)
+        left_canvas.bind_all("<Button-5>", _on_left_mousewheel)
         
         general_param_frame = ttk.LabelFrame(left_col, text="通用参数", padding="10")
         general_param_frame.pack(fill=tk.X, pady=(0, 10))
@@ -92,10 +136,20 @@ class ChannelModelApp(tk.Tk):
     def _create_parameter_widgets(self, general_frame, ota_frame, tx_frame, rx_frame):
         environments = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF']
         cluster_models = ['Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME']
+        standards = ['3GPP', 'WiFi']
+        wifi_models = ['TGax-A', 'TGax-B', 'TGax-C', 'TGax-D', 'TGax-E', 'TGax-F']
         
         general_params = {
+            "standard": ("标准:", "3GPP", standards),
             "scenario_name": ("大尺度环境:", "UMa", environments),
             "cluster_model_name": ("小尺度簇模型:", "Stochastic", cluster_models),
+            "wifi_model_name": ("WiFi 模型:", "TGax-D", wifi_models),
+            "wifi_bandwidth_mhz": ("WiFi 带宽 (MHz):", "80", None),
+            "wifi_enable_ofdm": ("WiFi OFDM:", False, [True, False]),
+            "wifi_n_fft": ("WiFi FFT 大小:", "", None),
+            "wifi_phase_policy": ("WiFi Tap 相位:", "zero", ["zero", "random"]),
+            "wifi_normalize_power": ("WiFi 功率归一:", True, [True, False]),
+            "wifi_delay_scale": ("WiFi 延迟缩放:", "", None),
             "center_frequency_ghz": ("中心频率 (GHz):", "3.5", None),
             "los_condition": ("LOS 条件:", "Automatic", ["Automatic", "LOS", "NLOS"]),
             "use_median_lsps": ("使用LSP中值:", False, [True, False]),
@@ -104,6 +158,7 @@ class ChannelModelApp(tk.Tk):
         }
         for i, (key, (text, default, values)) in enumerate(general_params.items()):
             self._create_entry(general_frame, key, text, default, values, i)
+        self.controls["standard"]["var"].trace_add('write', lambda *args: self.update_standard_ui())
 
         # OTA Parameters
         self.ota_vars = {}
@@ -119,18 +174,21 @@ class ChannelModelApp(tk.Tk):
             # Default to 'ray' for high fidelity dynamic simulation
             self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 4)
             self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 5)
+            self._create_entry(ota_frame, "ota_ul_dl", "UL/DL 双向(互易镜像):", False, [True, False], 6)
+            self._create_entry(ota_frame, "ota_reciprocity", "互易变换(镜像):", "conjugate_transpose", ["conjugate_transpose", "transpose"], 7)
             
             # Propsim Hardware Export
-            ttk.Separator(ota_frame, orient='horizontal').grid(row=6, column=0, columnspan=2, sticky='ew', pady=10)
-            ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=7, column=0, columnspan=2, sticky='w')
+            ttk.Separator(ota_frame, orient='horizontal').grid(row=8, column=0, columnspan=2, sticky='ew', pady=10)
+            ttk.Label(ota_frame, text="Propsim F64 导出").grid(row=9, column=0, columnspan=2, sticky='w')
             
-            self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 8)
-            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 9)
-            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "1000.0", None, 10)
+            self._create_entry(ota_frame, "f64_mode", "幅度模式:", "A", ["A (Ext ATT)", "B (Internal)"], 10)
+            self._create_entry(ota_frame, "f64_duration_s", "时长 (s):", "0.1", None, 11)
+            self._create_entry(ota_frame, "f64_sample_rate_hz", "采样率 (Hz):", "1000.0", None, 12)
+            self._create_entry(ota_frame, "f64_export_ul", "导出 UL 文件:", False, [True, False], 13)
             
             # Calibration Loader
             cal_frame = ttk.Frame(ota_frame)
-            cal_frame.grid(row=11, column=0, columnspan=2, sticky='ew', pady=2)
+            cal_frame.grid(row=14, column=0, columnspan=2, sticky='ew', pady=2)
             self.load_cal_button = ttk.Button(cal_frame, text="Load Cal CSV", width=12, command=self.load_calibration_file)
             self.load_cal_button.pack(side=tk.LEFT, padx=(5, 5))
             self.cal_file_label = ttk.Label(cal_frame, text="No File Selected", font=("Arial", 9, "italic"))
@@ -138,7 +196,7 @@ class ChannelModelApp(tk.Tk):
             self.current_cal_config = None 
 
             self.export_f64_button = ttk.Button(ota_frame, text="Export to F64", command=self.export_to_propsim)
-            self.export_f64_button.grid(row=12, column=0, columnspan=2, pady=5)
+            self.export_f64_button.grid(row=15, column=0, columnspan=2, pady=5)
             
         else:
             ttk.Label(ota_frame, text="MIMO OTA 库未安装").pack()
@@ -148,6 +206,7 @@ class ChannelModelApp(tk.Tk):
         
         if MIMO_OTA_AVAILABLE:
             self.update_ota_ui()
+        self.update_standard_ui()
 
     def update_ota_ui(self):
         if not MIMO_OTA_AVAILABLE: return
@@ -155,17 +214,49 @@ class ChannelModelApp(tk.Tk):
         state = tk.NORMAL if is_enabled else tk.DISABLED
         
         # OTA Gen Params
-        for key in ["ota_num_probes", "ota_radius_m", "ota_dual_pol", "ota_method", "ota_jitter"]:
+        for key in ["ota_num_probes", "ota_radius_m", "ota_dual_pol", "ota_method", "ota_jitter", "ota_ul_dl", "ota_reciprocity"]:
             self.controls[key]['label'].config(state=state)
             self.controls[key]['widget'].config(state=state)
             
         # Propsim Params
-        for key in ["f64_mode", "f64_duration_s", "f64_sample_rate_hz"]:
+        for key in ["f64_mode", "f64_duration_s", "f64_sample_rate_hz", "f64_export_ul"]:
             self.controls[key]['label'].config(state=state)
             self.controls[key]['widget'].config(state=state)
         
         self.export_f64_button.config(state=state)
         self.load_cal_button.config(state=state)
+        self.update_standard_ui()
+
+    def update_standard_ui(self):
+        standard = self.controls['standard']['var'].get()
+        is_wifi = (standard == 'WiFi')
+        ota_enabled = False
+        if "ota_enable" in self.controls:
+            ota_enabled = self.controls["ota_enable"]["var"].get()
+        wifi_keys = [
+            "wifi_model_name",
+            "wifi_bandwidth_mhz",
+            "wifi_enable_ofdm",
+            "wifi_n_fft",
+            "wifi_phase_policy",
+            "wifi_normalize_power",
+            "wifi_delay_scale",
+        ]
+        for key in wifi_keys:
+            self.controls[key]['label'].config(state=tk.NORMAL if is_wifi else tk.DISABLED)
+            self.controls[key]['widget'].config(state=tk.NORMAL if is_wifi else tk.DISABLED)
+        for key in ["scenario_name", "cluster_model_name", "los_condition", "use_median_lsps"]:
+            self.controls[key]['label'].config(state=tk.DISABLED if is_wifi else tk.NORMAL)
+            self.controls[key]['widget'].config(state=tk.DISABLED if is_wifi else tk.NORMAL)
+        if is_wifi:
+            self.controls["cluster_model_name"]["var"].set("Stochastic")
+        show_sim_time = (not is_wifi) and (not ota_enabled)
+        if show_sim_time:
+            self.controls["simulation_time_s"]["label"].grid()
+            self.controls["simulation_time_s"]["widget"].grid()
+        else:
+            self.controls["simulation_time_s"]["label"].grid_remove()
+            self.controls["simulation_time_s"]["widget"].grid_remove()
 
     def load_calibration_file(self):
         """Loads a calibration CSV file."""
@@ -354,9 +445,14 @@ class ChannelModelApp(tk.Tk):
     def run_simulation(self):
         try:
             params = {key: control['var'].get() for key, control in self.controls.items()}
+            standard = params["standard"]
+            is_wifi = (standard == 'WiFi')
             scenario_name = params["scenario_name"]
+            wifi_model_name = params["wifi_model_name"]
             cluster_model_name = params["cluster_model_name"]
             if cluster_model_name == 'Stochastic': cluster_model_name = None
+            if is_wifi:
+                cluster_model_name = None
 
             center_frequency_hz = float(params["center_frequency_ghz"]) * 1e9
             bs_pos = np.array([[float(p) for p in params["tx_position"].split(',')]])
@@ -368,6 +464,8 @@ class ChannelModelApp(tk.Tk):
             seed = int(seed_str) if seed_str else None
             los_condition_str = params["los_condition"]
             force_los_condition = None if los_condition_str == "Automatic" else los_condition_str
+            if is_wifi:
+                force_los_condition = None
             time_s = float(params["simulation_time_s"])
             use_median_lsps = params["use_median_lsps"]
 
@@ -392,7 +490,10 @@ class ChannelModelApp(tk.Tk):
 
             ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
             
-            log_msg = f"Starting simulation for Environment: {scenario_name}, Cluster Model: {cluster_model_name if cluster_model_name else 'Stochastic'}"
+            model_name = wifi_model_name if is_wifi else scenario_name
+            log_msg = f"Starting simulation for Standard: {standard}, Model: {model_name}"
+            if not is_wifi:
+                log_msg += f", Cluster Model: {cluster_model_name if cluster_model_name else 'Stochastic'}"
             if ota_enabled:
                 log_msg += f" [MIMO OTA Mode: {params['ota_method']}, Probes: {params['ota_num_probes']}]"
             self.simulation_queue.put(("log", log_msg))
@@ -400,6 +501,10 @@ class ChannelModelApp(tk.Tk):
             np.random.seed(seed)
 
             if ota_enabled:
+                if is_wifi and not WIFI_AVAILABLE:
+                    self.simulation_queue.put(("error", "WiFi 模块未安装，无法运行 WiFi OTA 仿真。"))
+                    self.simulation_queue.put(("done", None))
+                    return
                 # --- Run MIMO OTA Simulation ---
                 simulator = MIMO_OTA_Simulator() # This is the OTA simulator facade
                 
@@ -425,15 +530,37 @@ class ChannelModelApp(tk.Tk):
                     spacing_h=float(params['rx_spacing_h']), spacing_v=float(params['rx_spacing_v'])
                 )
 
+                wifi_bandwidth_hz = float(params["wifi_bandwidth_mhz"]) * 1e6 if is_wifi else 20e6
+                wifi_n_fft = None
+                if params["wifi_n_fft"]:
+                    try:
+                        wifi_n_fft = int(params["wifi_n_fft"])
+                    except ValueError:
+                        wifi_n_fft = None
+                wifi_delay_scale = None
+                if params["wifi_delay_scale"]:
+                    try:
+                        wifi_delay_scale = float(params["wifi_delay_scale"])
+                    except ValueError:
+                        wifi_delay_scale = None
                 channel_config = TargetChannelConfig(
-                    model_name=scenario_name,
+                    standard="wifi" if is_wifi else "3gpp",
+                    model_name=model_name,
                     cluster_model_name=cluster_model_name,
                     center_frequency_hz=center_frequency_hz,
+                    bandwidth_hz=wifi_bandwidth_hz,
+                    enable_ofdm=params["wifi_enable_ofdm"] if is_wifi else False,
+                    n_fft=wifi_n_fft,
+                    phase_policy=params["wifi_phase_policy"],
+                    normalize_power=params["wifi_normalize_power"],
+                    delay_scale=wifi_delay_scale,
+                    enable_ul_dl=params["ota_ul_dl"],
+                    reciprocity_transform=params["ota_reciprocity"],
                     random_seed=seed,
                     tx_antenna=tx_ant_ota,
                     rx_antenna=rx_ant_ota,
                     force_condition=force_los_condition,
-                    ue_velocity_kmh=ue_velocity_kph,
+                    ue_velocity=(ue_velocity_mps, 0, 0),
                     use_median_lsps=use_median_lsps
                 )
 
@@ -456,20 +583,111 @@ class ChannelModelApp(tk.Tk):
                     'transmit_mapping_matrix_A': ota_results['transmit_mapping_matrix_A'], # Required for F64 Export
                     'ray_components': ota_results.get('ray_components'), # Required for Doppler Export
                     'probe_phase_jitter_vector': ota_results.get('probe_phase_jitter_vector'),
-                    'channel_impulse_response': ota_results.get('channel_impulse_response') # Required for Exporter
+                    'channel_impulse_response': ota_results.get('channel_impulse_response'), # Required for Exporter
+                    'channel_impulse_response_ul': ota_results.get('channel_impulse_response_ul'),
+                    'ray_components_ul': ota_results.get('ray_components_ul'),
+                    'ul_enabled': ota_results.get('ul_enabled'),
                 }
 
             else:
                 # --- Run Standard Core Simulation ---
-                simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=use_median_lsps)
-                simulator.config.bs_positions = bs_pos
-                simulator.config.ue_positions = ue_pos
-                simulator.config.ue_velocities = ue_vel_vector
-                simulator.config.antenna_config = ant_config
-                
-                simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=use_median_lsps)
+                if is_wifi:
+                    if not WIFI_AVAILABLE:
+                        self.simulation_queue.put(("error", "WiFi 模块未安装，无法运行 WiFi 仿真。"))
+                        self.simulation_queue.put(("done", None))
+                        return
+                    wifi_bandwidth_hz = float(params["wifi_bandwidth_mhz"]) * 1e6
+                    wifi_n_fft = None
+                    if params["wifi_n_fft"]:
+                        try:
+                            wifi_n_fft = int(params["wifi_n_fft"])
+                        except ValueError:
+                            wifi_n_fft = None
+                    wifi_delay_scale = None
+                    if params["wifi_delay_scale"]:
+                        try:
+                            wifi_delay_scale = float(params["wifi_delay_scale"])
+                        except ValueError:
+                            wifi_delay_scale = None
 
-                results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
+                    wifi_config = WiFiScenarioConfig(
+                        model_name=wifi_model_name,
+                        center_frequency_hz=center_frequency_hz,
+                        bandwidth_hz=wifi_bandwidth_hz,
+                        enable_ofdm=params["wifi_enable_ofdm"],
+                        n_fft=wifi_n_fft,
+                        sample_rate_hz=None,
+                        random_seed=seed,
+                        phase_policy=params["wifi_phase_policy"],
+                        normalize_power=params["wifi_normalize_power"],
+                        delay_scale=wifi_delay_scale,
+                        bs_positions=bs_pos,
+                        ue_positions=ue_pos,
+                        ue_velocities=ue_vel_vector,
+                    )
+                    wifi_sim = WiFiChannelSimulator(wifi_config)
+                    wifi_result = wifi_sim.run()
+
+                    clusters = []
+                    impulse_response = wifi_result.impulse_response or []
+                    tap_components = wifi_result.tap_components or []
+                    wavelength = c / center_frequency_hz
+                    k_factor = 2 * np.pi / wavelength
+
+                    channel_matrix = np.zeros((rx_positions.shape[0], tx_positions.shape[0]), dtype=complex)
+                    for idx, tap in enumerate(tap_components):
+                        coeff = impulse_response[idx]["coeff"] if idx < len(impulse_response) else np.sqrt(tap.power_linear)
+                        k_hat_rx = np.array([
+                            np.cos(np.deg2rad(tap.aoa_deg)),
+                            np.sin(np.deg2rad(tap.aoa_deg)),
+                            0.0
+                        ])
+                        k_hat_tx = np.array([
+                            np.cos(np.deg2rad(tap.aod_deg)),
+                            np.sin(np.deg2rad(tap.aod_deg)),
+                            0.0
+                        ])
+                        a_rx = np.exp(1j * k_factor * (rx_positions @ k_hat_rx))
+                        a_tx = np.exp(1j * k_factor * (tx_positions @ k_hat_tx))
+                        h_tap = coeff * np.outer(a_rx, a_tx)
+                        channel_matrix += h_tap
+
+                        clusters.append(EngineCluster(
+                            delay=tap.delay_s,
+                            power=tap.power_linear,
+                            aod_phi=tap.aod_deg,
+                            aoa_phi=tap.aoa_deg,
+                            zod_theta=90.0,
+                            zoa_theta=90.0,
+                            as_aod=tap.as_tx_deg,
+                            as_aoa=tap.as_rx_deg,
+                            as_zod=0.0,
+                            as_zoa=0.0,
+                            k_n=1.0
+                        ))
+
+                    distance = np.linalg.norm(bs_pos[0] - ue_pos[0])
+                    pathloss_db = 0.0
+                    if distance > 1e-9:
+                        pathloss_db = 20 * np.log10(distance) + 20 * np.log10(center_frequency_hz) - 147.55
+
+                    results = {
+                        'channel_matrix': channel_matrix,
+                        'lsps': None,
+                        'pathloss_db': pathloss_db,
+                        'is_los': None,
+                        'clusters': clusters,
+                    }
+                else:
+                    simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=use_median_lsps)
+                    simulator.config.bs_positions = bs_pos
+                    simulator.config.ue_positions = ue_pos
+                    simulator.config.ue_velocities = ue_vel_vector
+                    simulator.config.antenna_config = ant_config
+                
+                    simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=use_median_lsps)
+
+                    results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
 
             self.simulation_queue.put(("results", results))
 
@@ -483,24 +701,37 @@ class ChannelModelApp(tk.Tk):
         try:
             while True:
                 msg_type, data = self.simulation_queue.get_nowait()
-                if msg_type == "log": self.log(data)
-                elif msg_type == "results":
-                    self.last_results = data
-                    self.log("\n--- Simulation Successful ---")
-                    self.log(f"Final Channel Condition: {'LOS' if data['is_los'] else 'NLOS'}")
-                    self.log(f"Pathloss: {data['pathloss_db']:.2f} dB")
-                    self.log(f"Channel Matrix H (shape: {data['channel_matrix'].shape}):\n{data['channel_matrix']}")
-                    self.log("\n--- Large Scale Parameters (LSPs) ---")
-                    lsp_text = json.dumps(data['lsps'].model_dump(), indent=2)
-                    self.log(lsp_text)
-                    self._update_results_display(data['clusters'])
-                    self.log("\nPlots and data tables updated.")
-                elif msg_type == "error":
-                    self.log(data)
-                    messagebox.showerror("Simulation Error", data)
-                elif msg_type == "done":
+                try:
+                    if msg_type == "log":
+                        self.log(data)
+                    elif msg_type == "results":
+                        self.last_results = data
+                        self.log("\n--- Simulation Successful ---")
+                        if data['is_los'] is None:
+                            self.log("Final Channel Condition: N/A")
+                        else:
+                            self.log(f"Final Channel Condition: {'LOS' if data['is_los'] else 'NLOS'}")
+                        self.log(f"Pathloss: {data['pathloss_db']:.2f} dB")
+                        self.log(f"Channel Matrix H (shape: {data['channel_matrix'].shape}):\n{data['channel_matrix']}")
+                        if data['lsps'] is not None:
+                            self.log("\n--- Large Scale Parameters (LSPs) ---")
+                            lsp_text = json.dumps(data['lsps'].model_dump(), indent=2)
+                            self.log(lsp_text)
+                        self._update_results_display(data['clusters'])
+                        self.log("\nPlots and data tables updated.")
+                    elif msg_type == "error":
+                        self.log(data)
+                        messagebox.showerror("Simulation Error", data)
+                    elif msg_type == "done":
+                        self.run_button.config(state=tk.NORMAL)
+                except Exception as e:
+                    self.log(f"GUI 结果处理异常: {e}")
                     self.run_button.config(state=tk.NORMAL)
         except queue.Empty:
+            self.after(100, self.process_queue)
+        except Exception as e:
+            self.log(f"队列处理异常: {e}")
+            self.run_button.config(state=tk.NORMAL)
             self.after(100, self.process_queue)
 
     def _update_results_display(self, clusters):
@@ -567,9 +798,10 @@ class ChannelModelApp(tk.Tk):
 
         try:
             # Prepare data for export
+            lsps = self.last_results.get('lsps')
             export_data = {
                 "timestamp": str(np.datetime64('now')),
-                "lsps": self.last_results['lsps'].model_dump(),
+                "lsps": lsps.model_dump() if lsps is not None else None,
                 "pathloss_db": self.last_results['pathloss_db'],
                 "is_los": self.last_results['is_los'],
                 "clusters": [
@@ -612,6 +844,9 @@ class ChannelModelApp(tk.Tk):
             self.log("Generating FPGA parameters...")
             # Re-create simulator logic (copied from run_simulation)
             params = {key: control['var'].get() for key, control in self.controls.items()}
+            if params["standard"] == "WiFi":
+                self.log("WiFi 模式不支持 FPGA SoS 参数导出。")
+                return
             scenario_name = params["scenario_name"]
             cluster_model_name = params["cluster_model_name"]
             if cluster_model_name == 'Stochastic': cluster_model_name = None
@@ -723,7 +958,14 @@ class ChannelModelApp(tk.Tk):
             # I will assume I fix run_simulation in the next step.
             # For now, I'll write the logic assuming 'transmit_mapping_matrix_A' IS there.
             
-            out_files = exporter.export(self.last_results, output_path=filepath)
+            out_files = exporter.export(self.last_results, output_path=filepath, direction="dl")
+            export_ul = params.get("f64_export_ul", False)
+            if export_ul:
+                if self.last_results.get("channel_impulse_response_ul") is None:
+                    self.log("UL 数据不存在，请启用 UL/DL 双向并重新仿真。")
+                else:
+                    ul_path = os.path.splitext(filepath)[0] + "_ul.asc"
+                    out_files += exporter.export(self.last_results, output_path=ul_path, direction="ul")
             
             # Zip the generated files
             zip_filename = os.path.splitext(filepath)[0] + ".zip"
@@ -741,30 +983,6 @@ class ChannelModelApp(tk.Tk):
             import traceback
             self.log(f"Propsim Export Failed: {e}\n{traceback.format_exc()}")
             messagebox.showerror("Export Error", f"Failed: {e}")
-
-    def process_queue(self):
-        try:
-            while True:
-                msg_type, data = self.simulation_queue.get_nowait()
-                if msg_type == "log": self.log(data)
-                elif msg_type == "results":
-                    self.last_results = data
-                    self.log("\n--- Simulation Successful ---")
-                    self.log(f"Final Channel Condition: {'LOS' if data['is_los'] else 'NLOS'}")
-                    self.log(f"Pathloss: {data['pathloss_db']:.2f} dB")
-                    self.log(f"Channel Matrix H (shape: {data['channel_matrix'].shape}):\n{data['channel_matrix']}")
-                    self.log("\n--- Large Scale Parameters (LSPs) ---")
-                    lsp_text = json.dumps(data['lsps'].model_dump(), indent=2)
-                    self.log(lsp_text)
-                    self._update_results_display(data['clusters'])
-                    self.log("\nPlots and data tables updated.")
-                elif msg_type == "error":
-                    self.log(data)
-                    messagebox.showerror("Simulation Error", data)
-                elif msg_type == "done":
-                    self.run_button.config(state=tk.NORMAL)
-        except queue.Empty:
-            self.after(100, self.process_queue)
 
 if __name__ == '__main__':
     app = ChannelModelApp()
