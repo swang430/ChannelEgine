@@ -105,32 +105,61 @@ if 'synthesis_method' not in st.session_state:
 with st.sidebar:
     st.header("控制面板")
     with st.expander("1. 场景与几何 (Scenario)", expanded=False):
-        standard = st.selectbox('标准', ('3GPP', 'WiFi'), key='standard')
-        if standard == '3GPP':
-            model_name = st.selectbox('大尺度环境', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
-            cluster_model_name = st.selectbox('小尺度簇模型', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
-        else:
-            model_name = st.selectbox('WiFi 模型', ('TGax-A', 'TGax-B', 'TGax-C', 'TGax-D', 'TGax-E', 'TGax-F'), key='wifi_model_name')
+        input_mode_label = st.radio("信道定义方式", ('标准 3GPP/WiFi 模型', '自定义 JSON (Custom Profile)'))
+        input_mode = 'standard' if input_mode_label == '标准 3GPP/WiFi 模型' else 'custom'
+        
+        custom_profile_path = None
+        if input_mode == 'custom':
+            st.info("已选择自定义信道。请上传您的自定义 JSON 配置文件：")
+            uploaded_json = st.file_uploader("上传 JSON 文件", type=['json'], key="custom_json_upload")
+            if uploaded_json is not None:
+                # 为了保持向后兼容和底层一致性，我们将上传的文件临时持久化
+                temp_path = os.path.abspath("temp_uploaded_custom_profile.json")
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_json.getbuffer())
+                custom_profile_path = temp_path
+                st.success(f"自定义配置已加载")
+                
+            standard = '3GPP'
+            model_name = 'Custom'
             cluster_model_name = None
-        center_frequency_hz = st.number_input('中心频率 (GHz)', 0.5, 100.0, 3.5, 0.1, key='freq') * 1e9
-        ue_velocity_kph = st.slider('UE 移动速度 (km/h)', 0, 120, 3, key='speed')
-        if standard == 'WiFi':
-            bandwidth_mhz = st.number_input('WiFi 带宽 (MHz)', 5.0, 320.0, 80.0, 5.0, key='wifi_bw')
-            enable_ofdm = st.checkbox('OFDM 子载波计算', value=False, key='wifi_ofdm')
-            n_fft_text = st.text_input('FFT 大小 (可选)', value="", key='wifi_nfft')
-            phase_policy_label = st.selectbox('Tap 相位', ('固定', '随机'), key='wifi_phase')
-            normalize_power = st.checkbox('Tap 功率归一', value=True, key='wifi_norm')
-            manual_delay_scale = st.checkbox('手动延迟缩放', value=False, key='wifi_delay_manual')
-            delay_scale = None
-            if manual_delay_scale:
-                delay_scale = st.number_input('延迟缩放系数', 0.01, 10.0, 1.0, 0.01, key='wifi_delay_scale')
-        else:
+            center_frequency_hz = 3.5
+            ue_velocity_kph = 0
             bandwidth_mhz = 20.0
             enable_ofdm = False
             n_fft_text = ""
             phase_policy_label = '固定'
             normalize_power = True
             delay_scale = None
+        else:
+            standard = st.selectbox('标准', ('3GPP', 'WiFi'), key='standard')
+            if standard == '3GPP':
+                model_name = st.selectbox('大尺度环境', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
+                cluster_model_name = st.selectbox('小尺度簇模型', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
+            else:
+                model_name = st.selectbox('WiFi 模型', ('TGax-A', 'TGax-B', 'TGax-C', 'TGax-D', 'TGax-E', 'TGax-F'), key='wifi_model_name')
+                cluster_model_name = None
+            center_frequency_hz = st.number_input('中心频率 (GHz)', 0.5, 100.0, 3.5, 0.1, key='freq')
+            ue_velocity_kph = st.slider('UE 移动速度 (km/h)', 0, 120, 3, key='speed')
+            if standard == 'WiFi':
+                bandwidth_mhz = st.number_input('WiFi 带宽 (MHz)', 5.0, 320.0, 80.0, 5.0, key='wifi_bw')
+                enable_ofdm = st.checkbox('OFDM 子载波计算', value=False, key='wifi_ofdm')
+                n_fft_text = st.text_input('FFT 大小 (可选)', value="", key='wifi_nfft')
+                phase_policy_label = st.selectbox('Tap 相位', ('固定', '随机'), key='wifi_phase')
+                normalize_power = st.checkbox('Tap 功率归一', value=True, key='wifi_norm')
+                manual_delay_scale = st.checkbox('手动延迟缩放', value=False, key='wifi_delay_manual')
+                delay_scale = None
+                if manual_delay_scale:
+                    delay_scale = st.number_input('延迟缩放系数', 0.01, 10.0, 1.0, 0.01, key='wifi_delay_scale')
+            else:
+                bandwidth_mhz = 20.0
+                enable_ofdm = False
+                n_fft_text = ""
+                phase_policy_label = '固定'
+                normalize_power = True
+                delay_scale = None
+                
+        center_frequency_hz *= 1e9
 
     with st.expander("2. 暗室配置 (Chamber)", expanded=False):
         num_probes = st.slider('探头数量', 1, 64, 16, 1, key="num_probes")
@@ -284,6 +313,8 @@ with st.sidebar:
         phase_policy = 'random' if phase_policy_label == '随机' else 'zero'
 
         target_config_params = {
+            "input_mode": input_mode,
+            "custom_profile_path": custom_profile_path,
             "standard": "wifi" if standard == "WiFi" else "3gpp",
             "model_name": model_name,
             "cluster_model_name": cluster_model_name if cluster_model_name and cluster_model_name != 'Stochastic' else None,

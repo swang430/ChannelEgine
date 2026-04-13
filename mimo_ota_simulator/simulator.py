@@ -2,7 +2,8 @@ import numpy as np
 from typing import Dict, Literal, List, Optional
 import warnings
 
-from .data_models import ChamberConfig, TargetChannelConfig
+from .data_models import ChamberConfig, TargetChannelConfig, UniversalChannelProfile
+from .channel_builders import create_builder
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.common.data_models import EngineCluster
 from wifi_channel_model.simulator import WiFiChannelSimulator
@@ -270,6 +271,65 @@ class MIMO_OTA_Simulator:
     def run(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
             synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
             probe_phase_jitter: bool = False) -> Dict:
+        """Legacy entry point, delegates to builder and synthesize_ota."""
+        if channel_config.standard == 'wifi':
+            # Keep wifi legacy path intact for now
+            return self._run_wifi(chamber_config, channel_config, synthesis_method, probe_phase_jitter)
+            
+        profile = create_builder(channel_config).build()
+        return self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter)
+
+    def _run_wifi(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
+            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            probe_phase_jitter: bool = False) -> Dict:
+        num_tx_antennas = channel_config.tx_antenna.num_cols * channel_config.tx_antenna.num_rows
+        num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
+        probe_tx_power_contributions = np.zeros((num_effective_probes, num_tx_antennas))
+        cluster_probe_mapping = {}
+        ray_components = None
+        jitter_vector = None
+        impulse_response = []
+        if channel_config.random_seed is not None:
+            np.random.seed(channel_config.random_seed)
+        B_matrix = self._synthesize_b_matrix(chamber_config, channel_config)
+        
+        wavelength = 3e8 / channel_config.center_frequency_hz
+        tx_positions = self._calculate_dut_antenna_positions(channel_config.tx_antenna, wavelength)
+        rx_positions = self._calculate_dut_antenna_positions(channel_config.rx_antenna, wavelength)
+        wifi_config = WiFiScenarioConfig(
+            model_name=channel_config.model_name, center_frequency_hz=channel_config.center_frequency_hz,
+            bandwidth_hz=channel_config.bandwidth_hz, enable_ofdm=channel_config.enable_ofdm, n_fft=channel_config.n_fft,
+            sample_rate_hz=None, random_seed=channel_config.random_seed, phase_policy=channel_config.phase_policy,
+            normalize_power=channel_config.normalize_power, delay_scale=channel_config.delay_scale,
+            bs_positions=np.array([channel_config.bs_position]), ue_positions=np.array([channel_config.ue_position]),
+            ue_velocities=np.array([channel_config.ue_velocity]),
+        )
+        wifi_simulator = WiFiChannelSimulator(wifi_config)
+        wifi_result = wifi_simulator.run()
+        physical_clusters, target_H_matrix = self._synthesize_wifi_clusters(
+            wifi_result.tap_components, tx_positions, rx_positions, wavelength,
+            wifi_config.phase_policy, wifi_config.random_seed,
+        )
+        lsps = None
+        pathloss_db = self._estimate_pathloss_db(channel_config.bs_position, channel_config.ue_position, channel_config.center_frequency_hz)
+        is_los = None
+        
+        profile = UniversalChannelProfile(
+            center_frequency_hz=channel_config.center_frequency_hz,
+            ue_velocity=np.array(channel_config.ue_velocity),
+            pathloss_db=pathloss_db,
+            clusters=physical_clusters,
+            lsps=lsps,
+            is_los=False
+        )
+        return self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter, B_matrix, target_H_matrix=target_H_matrix)
+
+    def synthesize_ota(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
+            channel_profile: UniversalChannelProfile,
+            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            probe_phase_jitter: bool = False,
+            B_matrix: Optional[np.ndarray] = None,
+            target_H_matrix: Optional[np.ndarray] = None) -> Dict:
         num_tx_antennas = channel_config.tx_antenna.num_cols * channel_config.tx_antenna.num_rows
         num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
         probe_tx_power_contributions = np.zeros((num_effective_probes, num_tx_antennas))
@@ -280,113 +340,35 @@ class MIMO_OTA_Simulator:
         # Wideband Impulse Response: List of taps {delay, coeff_matrix (PxT)}
         impulse_response = []
         
-        if channel_config.random_seed is not None:
-            np.random.seed(channel_config.random_seed)
+        # synthesize_ota ignores random seed setting here since generation is already done
         
-        # Quiet Zone Check
-        if chamber_config.quiet_zone_radius_m is not None:
-            speed_of_light = 299792458.0
-            wavelength = speed_of_light / channel_config.center_frequency_hz
-            dut_positions = self._calculate_dut_antenna_positions(channel_config.rx_antenna, wavelength)
-            max_dut_dimension = np.max(np.linalg.norm(dut_positions, axis=1))
-            if max_dut_dimension > chamber_config.quiet_zone_radius_m:
-                warnings.warn(f"Warning: DUT dimension ({max_dut_dimension:.2f}m) may exceed quiet zone radius ({chamber_config.quiet_zone_radius_m:.2f}m).")
+        if B_matrix is None:
+            # Synthesize the physical B-Matrix
+            B_matrix = self._synthesize_b_matrix(chamber_config, channel_config)
 
-        # Synthesize the physical B-Matrix
-        B_matrix = self._synthesize_b_matrix(chamber_config, channel_config)
-
-        simulator = None
-        scenario_params = None
-        tx_positions = None
-        rx_positions = None
-
-        if channel_config.standard == 'wifi':
-            wavelength = 3e8 / channel_config.center_frequency_hz
-            tx_positions = self._calculate_dut_antenna_positions(channel_config.tx_antenna, wavelength)
-            rx_positions = self._calculate_dut_antenna_positions(channel_config.rx_antenna, wavelength)
-
-            wifi_config = WiFiScenarioConfig(
-                model_name=channel_config.model_name,
-                center_frequency_hz=channel_config.center_frequency_hz,
-                bandwidth_hz=channel_config.bandwidth_hz,
-                enable_ofdm=channel_config.enable_ofdm,
-                n_fft=channel_config.n_fft,
-                sample_rate_hz=None,
-                random_seed=channel_config.random_seed,
-                phase_policy=channel_config.phase_policy,
-                normalize_power=channel_config.normalize_power,
-                delay_scale=channel_config.delay_scale,
-                bs_positions=np.array([channel_config.bs_position]),
-                ue_positions=np.array([channel_config.ue_position]),
-                ue_velocities=np.array([channel_config.ue_velocity]),
-            )
-            wifi_simulator = WiFiChannelSimulator(wifi_config)
-            wifi_result = wifi_simulator.run()
-
-            physical_clusters, target_H_matrix = self._synthesize_wifi_clusters(
-                wifi_result.tap_components,
-                tx_positions,
-                rx_positions,
-                wavelength,
-                wifi_config.phase_policy,
-                wifi_config.random_seed,
-            )
-            lsps = None
-            pathloss_db = self._estimate_pathloss_db(
-                channel_config.bs_position,
-                channel_config.ue_position,
-                channel_config.center_frequency_hz,
-            )
-            is_los = None
-        else:
-            # --- REFACTOR: Use ChannelSimulator Facade ---
-            simulator = ChannelSimulator(
-                scenario_name=channel_config.model_name,
-                center_frequency_hz=channel_config.center_frequency_hz,
-                cluster_model_name=channel_config.cluster_model_name,
-                use_median_lsps=channel_config.use_median_lsps
-            )
-            
-            # Configure Simulator
-            simulator.set_bs_ue_positions(
-                bs_positions=np.array([channel_config.bs_position]),
-                ue_positions=np.array([channel_config.ue_position])
-            )
-            simulator.set_velocities(np.array([channel_config.ue_velocity]))
-            
-            simulator.set_antenna_config(
-                num_tx_rows=channel_config.tx_antenna.num_rows,
-                num_tx_cols=channel_config.tx_antenna.num_cols,
-                num_rx_rows=channel_config.rx_antenna.num_rows,
-                num_rx_cols=channel_config.rx_antenna.num_cols,
-                tx_spacing_h=channel_config.tx_antenna.spacing_h,
-                tx_spacing_v=channel_config.tx_antenna.spacing_v,
-                rx_spacing_h=channel_config.rx_antenna.spacing_h,
-                rx_spacing_v=channel_config.rx_antenna.spacing_v,
-                tx_array_type=channel_config.tx_antenna.array_type,
-                rx_array_type=channel_config.rx_antenna.array_type
-            )
-            
-            # Override antenna patterns if needed (Simulator facade defaults to Isotropic if not exposed, 
-            # but ChannelSimulator.config.antenna_config is accessible)
-            # Note: Patterns are passed to generator during init in Facade, 
-            # but current AntennaArray model defaults to Isotropic anyway. 
-            # If needed, update config directly for pattern strings.
-            simulator.config.antenna_config.tx_element_pattern = channel_config.tx_antenna.element_pattern
-            simulator.config.antenna_config.rx_element_pattern = channel_config.rx_antenna.element_pattern
-
-            # Generate Channel
-            sim_result = simulator.run(force_condition=channel_config.force_condition)
-            
-            target_H_matrix = sim_result['channel_matrix']
-            physical_clusters = sim_result['clusters']
-            lsps = sim_result['lsps']
-            pathloss_db = sim_result['pathloss_db']
-            is_los = sim_result['is_los']
-            tx_positions = simulator.config.antenna_config.tx_positions
-            rx_positions = simulator.config.antenna_config.rx_positions
-            scenario_params = simulator.generator.params.get_scenario_params(simulator.config.scenario_name)
+        wavelength = 3e8 / channel_profile.center_frequency_hz
+        tx_positions = self._calculate_dut_antenna_positions(channel_config.tx_antenna, wavelength)
+        rx_positions = self._calculate_dut_antenna_positions(channel_config.rx_antenna, wavelength)
         
+        physical_clusters = channel_profile.clusters
+        lsps = channel_profile.lsps
+        pathloss_db = channel_profile.pathloss_db
+        is_los = channel_profile.is_los
+        scenario_params = None  # We assume Ray mapping offset parameters are standard or handled properly
+        
+        # If target_H_matrix is needed for pinv but missing, synthesize a dummy one
+        if synthesis_method == 'pinv' and target_H_matrix is None:
+            # Reconstruct H_matrix quickly
+            num_rx_antennas = channel_config.rx_antenna.num_rows * channel_config.rx_antenna.num_cols
+            target_H_matrix = np.zeros((num_rx_antennas, num_tx_antennas), dtype=complex)
+            k_factor = 2 * np.pi / wavelength
+            for c in physical_clusters:
+                k_hat_rx = self._unit_vector_from_angles(c.aoa_phi, c.zoa_theta)
+                k_hat_tx = self._unit_vector_from_angles(c.aod_phi, c.zod_theta)
+                a_rx = self._array_response(rx_positions, k_hat_rx, k_factor)
+                a_tx = self._array_response(tx_positions, k_hat_tx, k_factor)
+                target_H_matrix += np.sqrt(c.power) * np.outer(a_rx, a_tx)
+
         # ---------------------------------------------
 
         if synthesis_method == 'pinv':
@@ -440,7 +422,7 @@ class MIMO_OTA_Simulator:
             
             A_total = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
             c = 3e8
-            lambda_0 = c / channel_config.center_frequency_hz
+            lambda_0 = c / channel_profile.center_frequency_hz
             k_factor = 2 * np.pi / lambda_0
             
             # Store ray components for time-series generation (Doppler)
@@ -520,7 +502,7 @@ class MIMO_OTA_Simulator:
                     ])
                     
                     # UE Velocity
-                    v_vec = channel_config.ue_velocity # tuple or array
+                    v_vec = channel_profile.ue_velocity # tuple or array
                     v_dot_k = np.dot(v_vec, k_hat_rx)
                     fd = v_dot_k / lambda_0
                     
@@ -587,7 +569,7 @@ class MIMO_OTA_Simulator:
                 ray_components, channel_config.reciprocity_transform
             )
         return {
-            "center_frequency_hz": channel_config.center_frequency_hz,
+            "center_frequency_hz": channel_profile.center_frequency_hz,
             "target_H_matrix": target_H_matrix,
             "transmit_mapping_matrix_A": transmit_mapping_matrix_A,
             "effective_H_matrix": effective_H_matrix,

@@ -136,7 +136,7 @@ class ChannelModelApp(tk.Tk):
     def _create_parameter_widgets(self, general_frame, ota_frame, tx_frame, rx_frame):
         environments = ['UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF']
         cluster_models = ['Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME']
-        standards = ['3GPP', 'WiFi']
+        standards = ['3GPP', 'WiFi', 'Custom JSON']
         wifi_models = ['TGax-A', 'TGax-B', 'TGax-C', 'TGax-D', 'TGax-E', 'TGax-F']
         
         general_params = {
@@ -159,6 +159,15 @@ class ChannelModelApp(tk.Tk):
         for i, (key, (text, default, values)) in enumerate(general_params.items()):
             self._create_entry(general_frame, key, text, default, values, i)
         self.controls["standard"]["var"].trace_add('write', lambda *args: self.update_standard_ui())
+
+        custom_frame = ttk.Frame(general_frame)
+        custom_frame.grid(row=len(general_params), column=0, columnspan=2, sticky='ew', pady=2)
+        self.btn_load_custom = ttk.Button(custom_frame, text="选择 JSON", command=self._load_custom_json)
+        self.btn_load_custom.pack(side=tk.LEFT, padx=5)
+        self.lbl_custom_json = ttk.Label(custom_frame, text="无文件", font=("Arial", 9, "italic"))
+        self.lbl_custom_json.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.current_custom_json_path = None
+
 
         # OTA Parameters
         self.ota_vars = {}
@@ -227,9 +236,18 @@ class ChannelModelApp(tk.Tk):
         self.load_cal_button.config(state=state)
         self.update_standard_ui()
 
+    def _load_custom_json(self):
+        from tkinter.filedialog import askopenfilename
+        filepath = askopenfilename(filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")], title="Load Custom Channel JSON")
+        if filepath:
+            self.current_custom_json_path = filepath
+            self.lbl_custom_json.config(text=filepath.split('/')[-1])
+            self.controls["standard"]["var"].set("Custom JSON")
+
     def update_standard_ui(self):
         standard = self.controls['standard']['var'].get()
         is_wifi = (standard == 'WiFi')
+        is_custom = (standard == 'Custom JSON')
         ota_enabled = False
         if "ota_enable" in self.controls:
             ota_enabled = self.controls["ota_enable"]["var"].get()
@@ -246,8 +264,8 @@ class ChannelModelApp(tk.Tk):
             self.controls[key]['label'].config(state=tk.NORMAL if is_wifi else tk.DISABLED)
             self.controls[key]['widget'].config(state=tk.NORMAL if is_wifi else tk.DISABLED)
         for key in ["scenario_name", "cluster_model_name", "los_condition", "use_median_lsps"]:
-            self.controls[key]['label'].config(state=tk.DISABLED if is_wifi else tk.NORMAL)
-            self.controls[key]['widget'].config(state=tk.DISABLED if is_wifi else tk.NORMAL)
+            self.controls[key]['label'].config(state=tk.DISABLED if (is_wifi or is_custom) else tk.NORMAL)
+            self.controls[key]['widget'].config(state=tk.DISABLED if (is_wifi or is_custom) else tk.NORMAL)
         if is_wifi:
             self.controls["cluster_model_name"]["var"].set("Stochastic")
         show_sim_time = (not is_wifi) and (not ota_enabled)
@@ -447,6 +465,7 @@ class ChannelModelApp(tk.Tk):
             params = {key: control['var'].get() for key, control in self.controls.items()}
             standard = params["standard"]
             is_wifi = (standard == 'WiFi')
+            is_custom = (standard == 'Custom JSON')
             scenario_name = params["scenario_name"]
             wifi_model_name = params["wifi_model_name"]
             cluster_model_name = params["cluster_model_name"]
@@ -464,7 +483,7 @@ class ChannelModelApp(tk.Tk):
             seed = int(seed_str) if seed_str else None
             los_condition_str = params["los_condition"]
             force_los_condition = None if los_condition_str == "Automatic" else los_condition_str
-            if is_wifi:
+            if is_wifi or is_custom:
                 force_los_condition = None
             time_s = float(params["simulation_time_s"])
             use_median_lsps = params["use_median_lsps"]
@@ -544,8 +563,10 @@ class ChannelModelApp(tk.Tk):
                     except ValueError:
                         wifi_delay_scale = None
                 channel_config = TargetChannelConfig(
+                    input_mode="custom" if is_custom else "standard",
+                    custom_profile_path=getattr(self, "current_custom_json_path", None) if is_custom else None,
                     standard="wifi" if is_wifi else "3gpp",
-                    model_name=model_name,
+                    model_name="Custom" if is_custom else model_name,
                     cluster_model_name=cluster_model_name,
                     center_frequency_hz=center_frequency_hz,
                     bandwidth_hz=wifi_bandwidth_hz,
@@ -677,6 +698,22 @@ class ChannelModelApp(tk.Tk):
                         'pathloss_db': pathloss_db,
                         'is_los': None,
                         'clusters': clusters,
+                    }
+                elif is_custom:
+                    from mimo_ota_simulator.channel_builders import create_builder
+                    cc = TargetChannelConfig(
+                        input_mode="custom",
+                        custom_profile_path=getattr(self, "current_custom_json_path", None),
+                        standard="3gpp",
+                        model_name="Custom",
+                    )
+                    profile = create_builder(cc).build()
+                    results = {
+                        'channel_matrix': np.zeros((1, 1), dtype=complex), 
+                        'lsps': profile.lsps,
+                        'pathloss_db': profile.pathloss_db,
+                        'is_los': profile.is_los,
+                        'clusters': profile.clusters,
                     }
                 else:
                     simulator = ChannelSimulator(scenario_name, center_frequency_hz, cluster_model_name, use_median_lsps=use_median_lsps)

@@ -1,0 +1,38 @@
+{
+    "global_params": {
+        "center_frequency_hz": 2600000000.0,
+        "pathloss_db": 85.0,
+        "ue_velocity_kph": [
+            15.0,
+            0,
+            0
+        ]
+    },
+    "clusters": [
+        {
+            "delay_s": 0.0,
+            "power_relative_linear": 0.7,
+            "aoa_deg": 10,
+            "aod_deg": -15,
+            "as_aoa_deg": 5.0,
+            "as_aod_deg": 2.0
+        },
+        {
+            "delay_s": 2e-07,
+            "power_relative_linear": 0.2,
+            "aoa_deg": -45,
+            "aod_deg": 30,
+            "as_aoa_deg": 10.0,
+            "as_aod_deg": 5.0
+        },
+        {
+            "delay_s": 5e-07,
+            "power_relative_linear": 0.1,
+            "aoa_deg": 120,
+            "aod_deg": -80,
+            "as_aoa_deg": 15.0,
+            "as_aod_deg": 10.0
+        }
+    ],
+    "is_los": true
+}

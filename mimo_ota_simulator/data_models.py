@@ -1,6 +1,7 @@
 import numpy as np
-from typing import Literal, List, Optional, Tuple
+from typing import Literal, List, Optional, Tuple, Any
 from pydantic import BaseModel, Field, ConfigDict
+from channel_model_38901.common.data_models import EngineCluster, LargeScaleParameters
 
 # --- V2.0 Data Models ---
 
@@ -18,6 +19,8 @@ class TargetChannelConfig(BaseModel):
     Comprehensive configuration for the target wireless channel to be emulated.
     """
     # Scenario & Geometry
+    input_mode: Literal['standard', 'custom'] = Field('standard', description="Input mode: standard 3GPP or custom json profile")
+    custom_profile_path: Optional[str] = Field(None, description="Path to custom JSON if input_mode is custom")
     standard: Literal['3gpp', 'wifi'] = Field('3gpp', description="Channel standard: 3gpp or wifi")
     model_name: str = Field('UMa', description="Name of the standard channel model (scenario or TGax model)")
     cluster_model_name: Optional[str] = Field('Stochastic', description="Name of the small-scale cluster model")
@@ -121,17 +124,14 @@ class ChamberConfig(BaseModel):
     quiet_zone_radius_m: Optional[float] = Field(None, description="Radius of the chamber's quiet zone in meters for validation.")
     calibration_vector: Optional[np.ndarray] = Field(None, description="Complex vector for amplitude and phase calibration.")
 
-class Cluster(BaseModel):
-    """
-    Represents a single cluster in a channel model (simplified for OTA sim use).
-    """
-    aod_deg: float = Field(..., description="Azimuth of Departure in degrees.")
-    aoa_deg: float = Field(..., description="Azimuth of Arrival in degrees.")
-    power_dB: float = Field(..., description="Average power of the cluster in dB.")
-    delay_s: float = Field(..., description="Delay of the cluster in seconds.")
-
-class ChannelProfile(BaseModel):
+class UniversalChannelProfile(BaseModel):
     """
     A model-agnostic representation of the channel's multipath structure.
     """
-    clusters: List[Cluster] = Field(..., description="List of multipath clusters.")
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    center_frequency_hz: float = Field(..., description="Center frequency in Hz")
+    ue_velocity: Any = Field(..., description="UE velocity vector (numpy array)")
+    pathloss_db: float = Field(..., description="Total calculated pathloss in dB")
+    clusters: List[EngineCluster] = Field(..., description="List of fully defined physical clusters")
+    lsps: Optional[LargeScaleParameters] = Field(None, description="LSPs for informational/logging purposes")
+    is_los: bool = Field(False, description="Whether the channel is LOS")
