@@ -96,41 +96,86 @@ class PropsimASCIIExporter:
                 
         return generated_files
 
+    def _generate_asc_content(self, data: np.ndarray, delays: np.ndarray, carrier_frequency_hz: float) -> str:
+        """Generates the content of a standard .ASC file as a string."""
+        num_samples, num_taps = data.shape
+        out = io.StringIO()
+        
+        # --- Standard Header ---
+        out.write("***** Header *****\n")
+        out.write(f"{num_samples} CIRs\n")
+        out.write(f"{num_taps} Taps/CIR\n")
+        out.write(f"{self.config.sample_rate_hz:.1f} CIR_Update_Rate\n")
+        out.write(f"{carrier_frequency_hz:.1f} Carrier_Frequency\n")
+        out.write("***** Tap data *****\n")
+        
+        delay_strs = [f"{d:.9e}" for d in delays]
+        
+        for t in range(num_samples):
+            row = []
+            for k in range(num_taps):
+                val = data[t, k]
+                row.append(delay_strs[k])
+                row.append(f"{val.real:.6e}")
+                row.append(f"{val.imag:.6e}")
+            out.write("\t".join(row) + "\n")
+            
+        return out.getvalue()
+
     def _write_single_asc_file(self, fpath: str, data: np.ndarray, delays: np.ndarray, carrier_frequency_hz: float):
         """
-        Writes a single standard .ASC file.
-        data: (Samples, Taps) complex
-        delays: (Taps) float seconds
+        Writes a single standard .ASC file to disk.
         """
-        num_samples, num_taps = data.shape
-        
+        content = self._generate_asc_content(data, delays, carrier_frequency_hz)
         with open(fpath, 'w', newline='') as f:
-            # --- Standard Header ---
-            f.write("***** Header *****\n")
-            f.write(f"{num_samples} CIRs\n")
-            f.write(f"{num_taps} Taps/CIR\n")
-            f.write(f"{self.config.sample_rate_hz:.1f} CIR_Update_Rate\n")
-            f.write(f"{carrier_frequency_hz:.1f} Carrier_Frequency\n")
-            f.write("***** Tap data *****\n")
-            # Note: No column header line in standard ASC data block
+            f.write(content)
+
+    def export_to_zip_memory(self, sim_result: Dict, base_name: str = "propsim_export", direction: str = "dl") -> str:
+        """
+        Exports the generated .asc files directly into an in-memory ZIP archive
+        and returns it as a Base64 encoded string. This purely relies on memory buffers
+        and completely avoids local disk IO. Extremely useful for Microservices.
+        """
+        import base64
+        
+        if direction not in ("dl", "ul"):
+            raise ValueError(f"Unknown export direction: {direction}")
+
+        if direction == "ul":
+            ray_components = sim_result.get('ray_components_ul')
+            impulse_response = sim_result.get('channel_impulse_response_ul')
+        else:
+            ray_components = sim_result.get('ray_components')
+            impulse_response = sim_result.get('channel_impulse_response')
             
-            # --- Data Body ---
-            # Format: Delay Re Im Delay Re Im ...
-            # Optimization: Pre-format delays since they are constant
-            delay_strs = [f"{d:.9e}" for d in delays]
+        if impulse_response is None:
+            raise ValueError(f"Missing impulse response for direction '{direction}'.")
             
-            for t in range(num_samples):
-                row = []
-                for k in range(num_taps):
-                    val = data[t, k]
-                    # Delay
-                    row.append(delay_strs[k])
-                    # Re
-                    row.append(f"{val.real:.6e}")
-                    # Im
-                    row.append(f"{val.imag:.6e}")
-                
-                f.write("\t".join(row) + "\n")
+        apply_calibration = direction != "ul"
+        if ray_components:
+            print("[Propsim Exporter] Generating Dynamic data to Memory ZIP...")
+            data_tensor, delays = self._compute_dynamic_tensor(
+                sim_result, impulse_response, ray_components, apply_calibration=apply_calibration
+            )
+        else:
+            print("[Propsim Exporter] Generating Static data to Memory ZIP...")
+            data_tensor, delays = self._compute_static_tensor(
+                sim_result, impulse_response, apply_calibration=apply_calibration
+            )
+            
+        carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
+        num_samples, num_effective_probes, num_tx, num_taps = data_tensor.shape
+        
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+            for tx in range(num_tx):
+                for p in range(num_effective_probes):
+                    fname = f"{base_name}_In{tx+1}_Out{p+1}.asc"
+                    link_data = data_tensor[:, p, tx, :] # Complex
+                    content = self._generate_asc_content(link_data, delays, carrier_frequency_hz)
+                    zip_file.writestr(fname, content)
+                    
+        return base64.b64encode(zip_buffer.getvalue()).decode('utf-8')
 
     def _compute_static_tensor(self, sim_result: Dict, impulse_response: List[Dict], apply_calibration: bool = True):
         """
@@ -267,3 +312,83 @@ class PropsimASCIIExporter:
             for p in range(num_probes):
                 cal[p, 0] = self.calibration.get_correction_factor(p + 1)
         return cal
+
+class MFSWRawExporter(PropsimASCIIExporter):
+    """
+    MIMO-First Standard Waveform (MFSW) Exporter.
+    Outputs purely 'dry' baseband I/Q data and delays, completely decoupled
+    from any vendor-specific headers (like Keysight's ***** Header *****).
+    
+    Format:
+    Generates a Tab-Separated string without any header rows. 
+    Each row is a CIR snapshot. Columns are triples: [Delay (ns)] [Real] [Imag].
+    This raw format is then zipped and sent to the Orchestrator's format adapters.
+    """
+    
+    def _generate_asc_content(self, data: np.ndarray, delays: np.ndarray, carrier_frequency_hz: float) -> str:
+        """
+        Overrides the PropsimASCIIExporter generator.
+        Removes all Keysight F64 proprietary string properties.
+        """
+        num_samples, num_taps = data.shape
+        out = io.StringIO()
+        
+        delay_strs = [f"{d:.9e}" for d in delays]
+        
+        for t in range(num_samples):
+            row = []
+            for k in range(num_taps):
+                val = data[t, k]
+                row.append(delay_strs[k])
+                row.append(f"{val.real:.6e}")
+                row.append(f"{val.imag:.6e}")
+            out.write("\t".join(row) + "\n")
+            
+        return out.getvalue()
+        
+    def export_to_zip_memory(self, sim_result: Dict, base_name: str = "mfsw_export", direction: str = "dl") -> str:
+        """
+        Overrides the zip memory method to use the .mfsw extension instead of .asc.
+        """
+        import base64
+        
+        if direction not in ("dl", "ul"):
+            raise ValueError(f"Unknown export direction: {direction}")
+
+        if direction == "ul":
+            ray_components = sim_result.get('ray_components_ul')
+            impulse_response = sim_result.get('channel_impulse_response_ul')
+        else:
+            ray_components = sim_result.get('ray_components')
+            impulse_response = sim_result.get('channel_impulse_response')
+            
+        if impulse_response is None:
+            raise ValueError(f"Missing impulse response for direction '{direction}'.")
+            
+        apply_calibration = direction != "ul"
+        if ray_components:
+            data_tensor, delays = self._compute_dynamic_tensor(
+                sim_result, impulse_response, ray_components, apply_calibration=apply_calibration
+            )
+        else:
+            data_tensor, delays = self._compute_static_tensor(
+                sim_result, impulse_response, apply_calibration=apply_calibration
+            )
+            
+        carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
+        num_samples, num_effective_probes, num_tx, num_taps = data_tensor.shape
+        
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+            # Inject metadata to root to help Orchestrator Formatters
+            metadata = f"Samples: {num_samples}\nTaps: {num_taps}\nCarrier_Hz: {carrier_frequency_hz}\nSampleRate_Hz: {self.config.sample_rate_hz}\n"
+            zip_file.writestr("mfsw_metadata.txt", metadata)
+            
+            for tx in range(num_tx):
+                for p in range(num_effective_probes):
+                    fname = f"{base_name}_In{tx+1}_Out{p+1}.mfsw"
+                    link_data = data_tensor[:, p, tx, :]
+                    content = self._generate_asc_content(link_data, delays, carrier_frequency_hz)
+                    zip_file.writestr(fname, content)
+                    
+        return base64.b64encode(zip_buffer.getvalue()).decode('utf-8')
