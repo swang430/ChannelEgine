@@ -112,5 +112,117 @@ class TestBMatrixDualPol(unittest.TestCase):
         self.assertIn("'V'", msg)
 
 
+class TestPolarizationMatrixHelper(unittest.TestCase):
+    """T6.3: _build_pol_matrix(cluster) and _pol_vec(label) helpers.
+
+    The 2×2 polarization matrix (TR 38.901 §7.3.2) is:
+        [[exp(jΦ_θθ),             sqrt(1/κ)·exp(jΦ_θφ)],
+         [sqrt(1/κ)·exp(jΦ_φθ),   exp(jΦ_φφ)         ]]
+    """
+
+    def _sim(self):
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+        return MIMO_OTA_Simulator()
+
+    def _cluster(self, xpr_linear=None, initial_phases=None):
+        from channel_model_38901.common.data_models import EngineCluster
+        import numpy as np
+        kwargs = dict(delay=0.0, power=1.0)
+        if xpr_linear is not None:
+            kwargs['xpr_linear'] = xpr_linear
+        if initial_phases is not None:
+            kwargs['initial_phases'] = np.asarray(initial_phases, dtype=float)
+        return EngineCluster(**kwargs)
+
+    def test_diagonal_with_zero_phases(self):
+        """xpr=7 dB, phases=[0,0,0,0]: diagonal entries are 1+0j, off-diag are sqrt(1/κ)."""
+        import numpy as np
+        m = self._sim()._build_pol_matrix(self._cluster(xpr_linear=10**0.7, initial_phases=[0,0,0,0]))
+        self.assertEqual(m.shape, (2, 2))
+        self.assertAlmostEqual(m[0, 0], 1.0 + 0j, places=10)
+        self.assertAlmostEqual(m[1, 1], 1.0 + 0j, places=10)
+        expected_off = 1.0 / np.sqrt(10**0.7)
+        self.assertAlmostEqual(m[0, 1], expected_off + 0j, places=10)
+        self.assertAlmostEqual(m[1, 0], expected_off + 0j, places=10)
+
+    def test_phase_terms_correct(self):
+        """Explicit Φ values appear in matrix entries as exp(jΦ)."""
+        import numpy as np
+        phi = [0.1, 0.2, 0.3, 0.4]
+        m = self._sim()._build_pol_matrix(
+            self._cluster(xpr_linear=4.0, initial_phases=phi)
+        )
+        # diag: exp(j Φ_θθ) and exp(j Φ_φφ)
+        self.assertAlmostEqual(m[0, 0], np.exp(1j * phi[0]), places=10)
+        self.assertAlmostEqual(m[1, 1], np.exp(1j * phi[3]), places=10)
+        # off-diag: sqrt(1/κ) * exp(j Φ_*) with κ=4 → sqrt(1/4)=0.5
+        self.assertAlmostEqual(m[0, 1], 0.5 * np.exp(1j * phi[1]), places=10)
+        self.assertAlmostEqual(m[1, 0], 0.5 * np.exp(1j * phi[2]), places=10)
+
+    def test_high_xpr_suppresses_cross_pol(self):
+        """κ→∞ means off-diagonal sqrt(1/κ)→0 (no cross-pol leakage)."""
+        import numpy as np
+        m = self._sim()._build_pol_matrix(
+            self._cluster(xpr_linear=1e10, initial_phases=[0,0,0,0])
+        )
+        self.assertAlmostEqual(np.abs(m[0, 0]), 1.0, places=10)
+        self.assertAlmostEqual(np.abs(m[1, 1]), 1.0, places=10)
+        # κ=1e10 → sqrt(1/κ)=1e-5, well below 1e-4 threshold
+        self.assertLess(np.abs(m[0, 1]), 1e-4)
+        self.assertLess(np.abs(m[1, 0]), 1e-4)
+
+    def test_unity_xpr_equal_diag_offdiag(self):
+        """κ=1 (0 dB): all four entries have unit magnitude."""
+        import numpy as np
+        m = self._sim()._build_pol_matrix(
+            self._cluster(xpr_linear=1.0, initial_phases=[0,0,0,0])
+        )
+        for entry in m.flatten():
+            self.assertAlmostEqual(np.abs(entry), 1.0, places=10)
+
+    def test_default_xpr_with_warning(self):
+        """Missing xpr_linear → DEFAULT_XPR_DB (7 dB) + warning per OQ2."""
+        import numpy as np
+        import warnings as _warnings
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter('always')
+            m = self._sim()._build_pol_matrix(
+                self._cluster(xpr_linear=None, initial_phases=[0,0,0,0])
+            )
+            xpr_warns = [x for x in w if 'xpr_linear' in str(x.message)]
+            self.assertEqual(len(xpr_warns), 1)
+        # Off-diag should match default 7 dB
+        expected_off = 1.0 / np.sqrt(10 ** 0.7)
+        self.assertAlmostEqual(np.abs(m[0, 1]), expected_off, places=10)
+
+    def test_negative_xpr_raises(self):
+        with self.assertRaises(ValueError):
+            self._sim()._build_pol_matrix(self._cluster(xpr_linear=-1.0))
+
+    def test_default_phases_when_missing(self):
+        """Missing initial_phases → zero phases (no warning)."""
+        import numpy as np
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            _warnings.simplefilter('ignore')
+            m = self._sim()._build_pol_matrix(
+                self._cluster(xpr_linear=1.0, initial_phases=None)
+            )
+        # All entries should be real positive (phases=0)
+        for entry in m.flatten():
+            self.assertAlmostEqual(entry.imag, 0.0, places=10)
+            self.assertGreater(entry.real, 0.0)
+
+    def test_pol_vec_v_and_h(self):
+        import numpy as np
+        sim = self._sim()
+        np.testing.assert_array_equal(sim._pol_vec('V'), [1.0, 0.0])
+        np.testing.assert_array_equal(sim._pol_vec('H'), [0.0, 1.0])
+
+    def test_pol_vec_invalid_raises(self):
+        with self.assertRaises(ValueError):
+            self._sim()._pol_vec('+45')
+
+
 if __name__ == '__main__':
     unittest.main()
