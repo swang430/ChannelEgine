@@ -1,8 +1,8 @@
 # MIMO-First ↔ Channel Engine 集成契约 (v2.0)
 
-**Status**: ACTIVE (生效 2026-05-18)
+**Status**: ACTIVE (生效 2026-05-18, 更新 Phase 6 完成后)
 **Supersedes**: v1.0 (2026-04, 见 §6 历史)
-**Library version**: Phase 5 (post-PR #4 of strict-pfs-rollout)
+**Library version**: Phase 6 (post-Phase-6 of strict-pfs-rollout, dual-pol synthesizer active)
 
 ---
 
@@ -112,11 +112,28 @@ PropsimASCIIExporter(cfg).export(result, direction='dl')
 | `zoa_deg` | float (default 90) | ❌ | Consumed |
 | `zod_deg` | float (default 90) | ❌ | Consumed |
 | `as_aoa_deg`/`as_aod_deg`/`as_zoa_deg`/`as_zod_deg` | float (≥0, default 0) | ❌ | Consumed |
-| `xpr_db` | Optional[float] | ❌ | **Phase 5 PLUMB ONLY**（存 EngineCluster.xpr_linear，synthesizer 不读）；Phase 6 dual-pol synthesizer 真用 |
-| `initial_phases_rad` | Optional[List[float, len=4]] | ❌ | **Phase 5: 索引 0 (Θθθ) 作 per-cluster base phase 用到 strict_pfs/ray synthesizer**；索引 1-3 (cross-pol) 仅 plumb，Phase 6 真用 |
-| `num_rays` | int (>0, default 20) | ❌ | 当前 strict_pfs/ray 实现忽略此字段固定 20；Phase 6+ 可配 |
+| `xpr_db` | Optional[float] | ❌ | **Phase 6: 真用** —— 进 dual-pol pol_matrix off-diag sqrt(1/κ) (TR 38.901 §7.3.2). 仅 chamber.dual_polarized=True 时生效；single-pol 路径忽略此字段。Caller 没设值时默认 7 dB + warning |
+| `initial_phases_rad` | Optional[List[float, len=4]] | ❌ | **Phase 6: 全 4 个都真用**: 索引 0 (Θθθ) per-cluster base phase 进 strict_pfs，索引 1-3 (Θθφ, Θφθ, Θφφ) 进 dual-pol pol_matrix |
+| `num_rays` | int (>0, default 20) | ❌ | 当前 strict_pfs/ray 实现忽略此字段固定 20；Phase 7+ 可配 |
 
 `extra='forbid'`: 多余字段（拼错的、v1.0 残留字段）会被 Pydantic ValidationError 拒绝。常见坑：`pwr_linear` (typo)、`global_params` (v1.0 嵌套)、`ray_tracing_channel` (v1.0 嵌套)。
+
+---
+
+## 3.1 Dual-Polarization 支持 (Phase 6+)
+
+Phase 6 实现了 dual-polarization synthesizer，consume XPR + cross-pol initial phases。
+
+**关键 schema 改动**:
+- `AntennaArrayConfig.polarization: Literal['V', 'H'] = 'V'` 新增字段。默认 'V' 保 backward compat。
+- Slant ±45° / 任意角 polarization 是 Phase 7 (deferred)，Phase 6 拒绝这些值。
+
+**MIMO-First micro-service caller 适配建议**:
+- 单极化 DUT (绝大多数 LTE/5G FR1)：caller 不动，schema 默认即可
+- 双极化 DUT：caller 设 `chamber.dual_polarized=True` + 每 cluster 提供 `xpr_db` + `initial_phases_rad[4]`
+- DUT 是 H-pol：caller 设 `rx_antenna.polarization='H'`（同时必须 `chamber.dual_polarized=True`）
+
+**详细 behavior matrix**: 见 `docs/api/mimo_ota_simulator.md` §8。
 
 ---
 
