@@ -242,5 +242,43 @@ class TestStrictPfsSmoke(unittest.TestCase):
         self.assertGreater(diff, 1e-6, msg="strict_pfs should produce different A than ray")
 
 
+class TestRayRegression(unittest.TestCase):
+    """T2.4: ray-mode bit-identical regression against golden baseline.
+
+    The existing `mimo_ota_simulator/tests/test_mimo_ota_simulator.py::test_regression_against_golden_file`
+    pins cluster mode (deprecated). This adds the equivalent pin for the non-deprecated 'ray'
+    method — protects Phase 1 ray/strict_pfs branch merge against silent regression.
+    """
+
+    def test_ray_regression_against_golden(self):
+        golden_path = os.path.join(os.path.dirname(__file__), 'golden_mimo_ota_ray_results.npz')
+        self.assertTrue(os.path.exists(golden_path), f"Golden file missing: {golden_path}")
+        golden_A = np.load(golden_path)['golden_A']
+
+        chamber = ChamberConfig(
+            num_probes=8, dual_polarized=False, distribution='ring', radius_m=1.0,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMi-StreetCanyon', cluster_model_name='CDL-A',
+            center_frequency_hz=3.5e9,
+            tx_antenna=AntennaArrayConfig(num_cols=4, array_type='ULA'),
+            rx_antenna=AntennaArrayConfig(num_cols=2, array_type='ULA'),
+            random_seed=42,
+        )
+        # Explicit global seed: the 3GPP path does NOT propagate channel_config.random_seed
+        # to the OTA synthesis stage (only WiFi _run_wifi() does). ray mode draws
+        # np.random.uniform per ray, so without this seed the run isn't reproducible.
+        # Golden file was generated with the same seed (see create_golden_file.py).
+        np.random.seed(42)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            result = MIMO_OTA_Simulator().run(chamber, channel, synthesis_method='ray')
+        np.testing.assert_allclose(
+            result['transmit_mapping_matrix_A'], golden_A, rtol=1e-6, atol=1e-6,
+            err_msg="ray mode regression: A matrix diverged from golden baseline",
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -32,11 +32,30 @@ class Standard3GPPBuilder(ChannelProfileBuilder):
             ue_positions=np.array([self.config.ue_position])
         )
         simulator.set_velocities(np.array([self.config.ue_velocity]))
-        
-        # We don't bother setting the detailed antenna configs on the 3GPP simulator
-        # because the MIMO OTA Simulator will handle its own probe/antenna synthesis.
-        # We only want the abstract spatial clusters and pathloss from this generator!
-        
+
+        # Antenna config must flow through to the 3GPP generator so cluster.h_matrix
+        # carries the correct (num_rx, num_tx) shape with per-antenna phase variation.
+        # Historical bug: this section was originally skipped on the assumption that
+        # MIMO_OTA_Simulator computes its own probe/antenna synthesis. That holds for
+        # 'ray'/'strict_pfs'/'pinv' which derive Tx steering locally, but breaks the
+        # 'cluster' method which reads g_tx = cluster.h_matrix[0:1, :]. Without this
+        # call the default (1, 1) antenna config produced a rank-1 h_matrix and the
+        # cluster mode emitted A with all Tx columns identical.
+        tx = self.config.tx_antenna
+        rx = self.config.rx_antenna
+        simulator.set_antenna_config(
+            num_tx_rows=tx.num_rows,
+            num_tx_cols=tx.num_cols,
+            num_rx_rows=rx.num_rows,
+            num_rx_cols=rx.num_cols,
+            tx_spacing_h=tx.spacing_h,
+            tx_spacing_v=tx.spacing_v,
+            rx_spacing_h=rx.spacing_h,
+            rx_spacing_v=rx.spacing_v,
+            tx_array_type=tx.array_type,
+            rx_array_type=rx.array_type,
+        )
+
         # Generate the channel realization
         results = simulator.run(
             force_condition=self.config.force_condition,
