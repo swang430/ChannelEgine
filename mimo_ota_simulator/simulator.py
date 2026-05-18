@@ -421,9 +421,18 @@ class MIMO_OTA_Simulator:
             transmit_mapping_matrix_A = A_total
             probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
             
-        elif synthesis_method == 'ray':
+        elif synthesis_method in ('ray', 'strict_pfs'):
             # Ray-Level Synthesis (Geometric GSCM)
             # This reconstructs rays from cluster parameters, bypassing the 'Rank-1' issue of simplified models.
+            #
+            # Two modes share this branch (per design §2 / §3):
+            #   - 'ray':        phi_rnd is a SCALAR per ray, shared across probes.
+            #                   Cross-probe coherence is geometry-driven; strict PFS only
+            #                   holds in the ensemble-average limit and benefits from jitter.
+            #   - 'strict_pfs': phi_rnd is a (N_probes,) VECTOR with iid U[-pi, pi] entries.
+            #                   E[A_i * conj(A_j)] = 0 for i != j per-realization (true strict PFS).
+            #                   Use case: avoid output phase calibration in hardware loop.
+            use_strict_pfs = (synthesis_method == 'strict_pfs')
             
             # 1. Get Ray Offsets
             default_ray_offsets = np.array([
@@ -485,17 +494,27 @@ class MIMO_OTA_Simulator:
                     
                     # 4. Synthesize Contribution
                     # Random phase for this ray (Decorrelation source!)
-                    phi_rnd = np.random.uniform(-np.pi, np.pi)
-                    
+                    # ray mode: scalar (broadcasts to all probes — geometry-coupled).
+                    # strict_pfs mode: (N_probes,) iid vector — per-probe independent fading.
+                    if use_strict_pfs:
+                        phi_rnd = np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
+                    else:
+                        phi_rnd = np.random.uniform(-np.pi, np.pi)
+
                     # Power per ray
                     p_ray = cluster.power / 20.0
-                    
+
                     # Base Weight (without random phase, for later reconstruction)
                     # W_base = sqrt(P) * w * g_tx
                     W_base = np.sqrt(p_ray) * (w_map_ray @ g_tx_ray)
-                    
-                    # Apply random phase for current snapshot
-                    A_ray = W_base * np.exp(1j * phi_rnd)
+
+                    # Apply random phase for current snapshot.
+                    # ray:        W_base (P, Tx) * scalar      -> (P, Tx)
+                    # strict_pfs: W_base (P, Tx) * (P, 1)       -> (P, Tx) per-probe independent
+                    if use_strict_pfs:
+                        A_ray = W_base * np.exp(1j * phi_rnd)[:, None]
+                    else:
+                        A_ray = W_base * np.exp(1j * phi_rnd)
                     
                     A_total += A_ray
                     cluster_A_accum += A_ray # Accumulate for tap
@@ -541,17 +560,6 @@ class MIMO_OTA_Simulator:
             transmit_mapping_matrix_A = A_total
             probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
             
-        elif synthesis_method == 'strict_pfs':
-            # Strict PFS: per-(probe, cluster) independent fading.
-            # Implementation in T1.3 (see docs/plans/strict-pfs-design.md §2).
-            # T1.1 (this commit) only adds the routing slot; calling this method
-            # currently raises so the public API is reserved without misleading users.
-            raise NotImplementedError(
-                "synthesis_method='strict_pfs' is reserved but not yet implemented. "
-                "Tracking: docs/plans/strict-pfs-design.md §9 T1.3. "
-                "Use 'ray' as the closest currently-available substitute."
-            )
-
         else:
             raise ValueError(f"Unknown synthesis method: {synthesis_method}")
 

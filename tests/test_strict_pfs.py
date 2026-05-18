@@ -132,5 +132,65 @@ class TestPhiInitDataContract(unittest.TestCase):
         self.assertGreater(nfiles, 0)
 
 
+class TestStrictPfsSmoke(unittest.TestCase):
+    """End-to-end smoke tests for synthesis_method='strict_pfs' (T1.3)."""
+
+    def setUp(self):
+        self.chamber = ChamberConfig(
+            num_probes=8, distribution='ring', radius_m=1.5, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        self.channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=42,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            force_condition='NLOS',
+            ue_velocity=(3.0, 0.0, 0.0),
+        )
+
+    def test_strict_pfs_runs_without_error(self):
+        """strict_pfs path returns dict with expected keys, no NaN/Inf."""
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            result = sim.run(self.chamber, self.channel, synthesis_method='strict_pfs')
+        self.assertIn('transmit_mapping_matrix_A', result)
+        self.assertIn('effective_H_matrix', result)
+        self.assertIn('ray_components', result)
+        A = result['transmit_mapping_matrix_A']
+        self.assertFalse(np.any(np.isnan(A)))
+        self.assertFalse(np.any(np.isinf(A)))
+
+    def test_strict_pfs_produces_vector_phi_init(self):
+        """strict_pfs output ray_components must carry (N_probes,) vector phi_init."""
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            result = sim.run(self.chamber, self.channel, synthesis_method='strict_pfs')
+        num_probes = self.chamber.num_probes
+        for rc in result['ray_components']:
+            phi = rc['phi_init']
+            self.assertEqual(np.ndim(phi), 1)
+            self.assertEqual(phi.shape, (num_probes,))
+
+    def test_strict_pfs_differs_from_ray(self):
+        """Sanity: strict_pfs and ray with same seed produce DIFFERENT A.
+
+        The random draws differ in shape (scalar vs vector per ray), so the
+        sequence of np.random.uniform calls consumes different RNG state, and
+        the resulting A matrices must not match.
+        """
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            r_ray = sim.run(self.chamber, self.channel, synthesis_method='ray')
+            r_strict = sim.run(self.chamber, self.channel, synthesis_method='strict_pfs')
+        diff = np.abs(
+            r_ray['transmit_mapping_matrix_A'] - r_strict['transmit_mapping_matrix_A']
+        ).mean()
+        self.assertGreater(diff, 1e-6, msg="strict_pfs should produce different A than ray")
+
+
 if __name__ == '__main__':
     unittest.main()
