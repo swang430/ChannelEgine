@@ -181,18 +181,39 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 
 ---
 
-### Phase 6 —— XPR / Dual-Polarization Synthesizer（Phase 5 之后）
+### Phase 6 —— XPR / Dual-Polarization Synthesizer（Phase 5 之后, scope = B）
 
 **Goal**: synthesizer 真正应用 XPR 字段 (Phase 5 plumb)，实现 dual-polarization OTA 数学模型。
 
-**估时**: 5-8 工作日 (跟 Phase 1 总量相当 —— 是数学契约级别重构)
+**Scope decision (2026-05-18)**: 选 **option B** —— probe H/V 真实响应 + DUT pure V/H per antenna。
+- Option A (full slant pol) → 推到 Phase 7 (见下)
+- Option C (channel-only mixing) → 拒绝（不算真 dual-pol OTA）
 
-**Sub-tasks** (草拟，Phase 5 完成后细化)：
-- 真 H/V probe response in `_synthesize_b_matrix` (替换现有 stub)
-- g_tx 扩展为 (2, N_tx) H/V Tx ports
-- Per-cluster 2×2 极化耦合矩阵 with XPR
-- strict_pfs synthesis 适配 dual-pol
-- Dual-pol regression tests
+详见 [dual-pol-synthesizer-design.md](./dual-pol-synthesizer-design.md)。
+
+**8 sub-tasks** (T6.1-T6.8)：见 design doc §7。
+**估时**: 3-4 工作日
+
+---
+
+### Phase 7 —— Full Slant Polarization Model（DEFERRED, roadmap only）
+
+**Status**: ⏸️ NOT SCHEDULED. 等真 slant ±45° DUT 需求才启动。
+
+**Scope** (原 Phase 6 option A):
+- `AntennaArrayConfig.polarization` 扩 Literal 到 `'+45' / '-45' / 'slant'` + `slant_angle_deg`
+- `ProbeAntennaConfig.polarization` 加 polarization 字段
+- B-matrix 真实计算任意 pol DUT 极化耦合
+- Polarization pattern 非 isotropic (TR 38.901 element pattern with pol effects)
+
+**估时**: 5-8 工作日
+
+**触发条件 (任一)**:
+- MIMO-First 测 slant ±45° DUT (5G NR sub-6 commonly slant cross-pol)
+- AAU / massive MIMO array per-element pol 需求
+- CTIA / 3GPP 实测对比需要
+
+Memory: `~/.claude/projects/-Users-Simon-Tools-ChannelEgine/memory/project_phase7_slant_pol_roadmap.md`
 
 ---
 
