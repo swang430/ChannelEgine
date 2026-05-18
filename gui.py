@@ -180,8 +180,10 @@ class ChannelModelApp(tk.Tk):
             self._create_entry(ota_frame, "ota_num_probes", "探头数量:", "16", None, 1)
             self._create_entry(ota_frame, "ota_radius_m", "探头半径 (m):", "1.5", None, 2)
             self._create_entry(ota_frame, "ota_dual_pol", "双极化探头:", True, [True, False], 3)
-            # Default to 'ray' for high fidelity dynamic simulation
-            self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "cluster", "pinv"], 4)
+            # Default to 'ray' for high fidelity dynamic simulation;
+            # 'strict_pfs' is the new recommended method (per-probe independent fading,
+            # avoids output phase calibration). Kept opt-in until production-validated.
+            self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "strict_pfs", "cluster", "pinv"], 4)
             self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 5)
             self._create_entry(ota_frame, "ota_ul_dl", "UL/DL 双向(互易镜像):", False, [True, False], 6)
             self._create_entry(ota_frame, "ota_reciprocity", "互易变换(镜像):", "conjugate_transpose", ["conjugate_transpose", "transpose"], 7)

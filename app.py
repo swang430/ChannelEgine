@@ -187,21 +187,38 @@ with st.sidebar:
         rx_antenna_config = antenna_panel("Rx")
 
     with st.expander("5. 运行控制 (Run Control)", expanded=False):
-        st.selectbox('合成方法 (Synthesis Method)', ('pinv', 'cluster', 'ray'), index=2, key='synthesis_method', help="Ray: 射线级(推荐); Cluster: 簇级; Pinv: 伪逆")
+        st.selectbox(
+            '合成方法 (Synthesis Method)',
+            ('pinv', 'cluster', 'ray', 'strict_pfs'),
+            index=2,
+            key='synthesis_method',
+            help=(
+                "**strict_pfs**: per-probe 独立 fading，per-realization 即 strict PFS，"
+                "**推荐用于规避输出端相位校准**；"
+                "ray: 射线级 GSCM (默认/传统/平均场景)；"
+                "cluster: 簇级 (deprecated)；"
+                "pinv: 伪逆 (deprecated, F64 export broken)。"
+            )
+        )
         
         run_mode = st.radio("运行模式", ('单次快照 (Single Snapshot)', '统计验证 (Statistical Validation)'))
         
         force_condition = st.selectbox('LOS/NLOS 条件', ('默认 (Default)', '强制 LOS', '强制 NLOS'), key='los')
         use_median_lsps = st.checkbox('使用 LSP 中值', value=False, help="跳过随机采样，使用大尺度参数的中位值。")
+        _jitter_disabled = (st.session_state.synthesis_method == 'strict_pfs')
         probe_phase_jitter = st.checkbox(
             '模拟探头相位抖动',
             value=False,
+            disabled=_jitter_disabled,
             help=(
                 "为每个探头添加 ±180度（完全随机相位）的相位噪声。"
                 "用途：打破 Cluster/Ray 模型的人工相干性，**仅在大规模平均（多 drop 统计验证）场景下统计意义有效**；"
                 "单次 realization 不能视为 strict PFS。**与上传的相位校准互斥**：jitter 会覆盖 calibration_vector 提供的 per-probe 静态相位补偿。"
+                "**strict_pfs 模式下自动禁用**：strict_pfs 已数学保证 per-probe 独立 fading，jitter 多余且会污染。"
             )
         )
+        if _jitter_disabled:
+            st.info("ℹ️ strict_pfs 已内建 per-probe 独立 fading，无需 jitter（已自动禁用）。")
         if cal_file is not None and probe_phase_jitter:
             st.warning(
                 "⚠️ 已同时启用 probe_phase_jitter 和 calibration_vector："

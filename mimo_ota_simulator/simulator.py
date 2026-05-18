@@ -565,6 +565,14 @@ class MIMO_OTA_Simulator:
 
         # Apply Probe Phase Jitter (Simulating hardware inconsistency)
         if probe_phase_jitter:
+            if synthesis_method == 'strict_pfs':
+                warnings.warn(
+                    "probe_phase_jitter=True with synthesis_method='strict_pfs': "
+                    "strict_pfs already produces per-(probe, cluster) independent fading "
+                    "(per-realization strict PFS); adding jitter is redundant and pollutes the "
+                    "intentional phase structure. Set probe_phase_jitter=False with strict_pfs.",
+                    stacklevel=2,
+                )
             if chamber_config.calibration_vector is not None:
                 warnings.warn(
                     "probe_phase_jitter=True with calibration_vector present: "
