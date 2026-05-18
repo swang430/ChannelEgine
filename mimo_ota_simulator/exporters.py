@@ -251,20 +251,32 @@ class PropsimASCIIExporter:
                 W = r['W_base']
                 # phi_init may be:
                 #  - scalar (ray mode): broadcasts naturally
-                #  - (N_probes,) vector (strict_pfs):
-                #      DL: W shape (P, Tx) -> broadcast on rows -> [:, None]
-                #      UL: W shape (Tx, P) after transpose -> broadcast on cols -> [None, :]
+                #  - (N_probes,) vector (strict_pfs): axis-specific broadcast
+                # For the vector case we use the EXPLICIT 'phi_axis' tag set by
+                # the synthesizer / reciprocity builder. Inferring axis from shape
+                # (W.shape[0] == phi.shape[0] vs W.shape[1] == phi.shape[0]) is
+                # ambiguous when W is square (num_tx == num_probes) and silently
+                # picked the wrong axis on UL — see PR #1 review comment.
                 if np.ndim(phi) == 0:
                     phi_factor = np.exp(1j * phi)
-                elif phi.shape[0] == W.shape[0]:
-                    phi_factor = np.exp(1j * phi)[:, None]
-                elif phi.shape[0] == W.shape[1]:
-                    phi_factor = np.exp(1j * phi)[None, :]
                 else:
-                    raise ValueError(
-                        f"phi_init shape {phi.shape} cannot broadcast against "
-                        f"W_base shape {W.shape}"
-                    )
+                    axis = r.get('phi_axis', 'row')
+                    if axis == 'row':
+                        if phi.shape[0] != W.shape[0]:
+                            raise ValueError(
+                                f"phi_axis='row' but phi.shape[0]={phi.shape[0]} != "
+                                f"W.shape[0]={W.shape[0]}"
+                            )
+                        phi_factor = np.exp(1j * phi)[:, None]
+                    elif axis == 'col':
+                        if phi.shape[0] != W.shape[1]:
+                            raise ValueError(
+                                f"phi_axis='col' but phi.shape[0]={phi.shape[0]} != "
+                                f"W.shape[1]={W.shape[1]}"
+                            )
+                        phi_factor = np.exp(1j * phi)[None, :]
+                    else:
+                        raise ValueError(f"unknown phi_axis={axis!r}; expected 'row' or 'col'")
                 w = W * phi_factor * scaling_factor * cal_vector
                 eff_list.append({'W': w, 'w_doppler': 2*np.pi*r['doppler_hz']})
             

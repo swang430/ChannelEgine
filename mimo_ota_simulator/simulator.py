@@ -155,6 +155,14 @@ class MIMO_OTA_Simulator:
     def _build_ul_ray_components(self, ray_components: Optional[List[Dict]], mode: str) -> Optional[List[Dict]]:
         if not ray_components:
             return None
+        # UL mirror via reciprocity: W_base is transposed (P, Tx) -> (Tx, P), so
+        # the probe-indexed phi_init vector now aligns with COLUMNS, not rows.
+        # We flip phi_axis here so downstream code (e.g. exporter broadcast) is
+        # explicit and doesn't infer axis from shape — that inference is wrong
+        # when num_tx == num_probes (square W_base).
+        dl_axis = ray_components[0].get('phi_axis', 'row')
+        ul_axis_map = {'row': 'col', 'col': 'row'}
+        ul_axis = ul_axis_map.get(dl_axis, 'col')
         ul_components = []
         for rc in ray_components:
             w_base = rc["W_base"]
@@ -175,6 +183,7 @@ class MIMO_OTA_Simulator:
                 "phi_init": phi_ul,
                 "doppler_hz": doppler_ul,
                 "cluster_index": rc.get("cluster_index", 0),
+                "phi_axis": ul_axis,
             })
         return ul_components
 
@@ -545,7 +554,14 @@ class MIMO_OTA_Simulator:
                         'W_base': W_base, # Complex (N_probes, N_tx)
                         'phi_init': phi_rnd,
                         'doppler_hz': fd,
-                        'cluster_index': i # Link to parent cluster/tap
+                        'cluster_index': i, # Link to parent cluster/tap
+                        # phi_axis tells downstream consumers (e.g. exporter) which
+                        # axis of W_base the per-probe phi vector indexes. For DL,
+                        # W_base is (N_probes, N_tx) so phi (when vector) aligns
+                        # with rows. The UL mirror in _build_ul_ray_components
+                        # transposes W and flips this to 'col'. Scalar phi (ray
+                        # mode) ignores this field.
+                        'phi_axis': 'row',
                     })
 
                 cluster_probe_mapping[i] = cluster_power_accum
