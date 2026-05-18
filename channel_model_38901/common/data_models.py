@@ -61,6 +61,11 @@ class EngineCluster(BaseModel):
     k_n: Optional[float] = 1.0
     initial_phases: Optional[np.ndarray] = None
     h_matrix: Optional[np.ndarray] = None
+    # Phase 5 plumb-only field (see docs/plans/external-cdl-input-design.md §4).
+    # Stored when CustomCDLProfile.clusters[i].xpr_db is provided; converted to linear.
+    # Synthesizer does NOT consume this field in Phase 5; semantic application
+    # (dual-pol synthesizer) lands in Phase 6.
+    xpr_linear: Optional[float] = None
 
     class Config:
         arbitrary_types_allowed = True
