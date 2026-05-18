@@ -269,7 +269,7 @@ class MIMO_OTA_Simulator:
         return h_matrix[0:1, :]
 
     def run(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
-            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
             probe_phase_jitter: bool = False) -> Dict:
         """Legacy entry point, delegates to builder and synthesize_ota."""
         if channel_config.standard == 'wifi':
@@ -280,7 +280,7 @@ class MIMO_OTA_Simulator:
         return self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter)
 
     def _run_wifi(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
-            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
             probe_phase_jitter: bool = False) -> Dict:
         num_tx_antennas = channel_config.tx_antenna.num_cols * channel_config.tx_antenna.num_rows
         num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
@@ -326,7 +326,7 @@ class MIMO_OTA_Simulator:
 
     def synthesize_ota(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
             channel_profile: UniversalChannelProfile,
-            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
             probe_phase_jitter: bool = False,
             B_matrix: Optional[np.ndarray] = None,
             target_H_matrix: Optional[np.ndarray] = None) -> Dict:
@@ -541,6 +541,17 @@ class MIMO_OTA_Simulator:
             transmit_mapping_matrix_A = A_total
             probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
             
+        elif synthesis_method == 'strict_pfs':
+            # Strict PFS: per-(probe, cluster) independent fading.
+            # Implementation in T1.3 (see docs/plans/strict-pfs-design.md §2).
+            # T1.1 (this commit) only adds the routing slot; calling this method
+            # currently raises so the public API is reserved without misleading users.
+            raise NotImplementedError(
+                "synthesis_method='strict_pfs' is reserved but not yet implemented. "
+                "Tracking: docs/plans/strict-pfs-design.md §9 T1.3. "
+                "Use 'ray' as the closest currently-available substitute."
+            )
+
         else:
             raise ValueError(f"Unknown synthesis method: {synthesis_method}")
 
