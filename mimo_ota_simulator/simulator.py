@@ -44,7 +44,32 @@ class MIMO_OTA_Simulator:
         required when ``input_mode='custom'`` because ``CustomCDLProfile``
         is the source of truth for frequency, and ``TargetChannelConfig.
         center_frequency_hz`` may still be at its 2.4 GHz default.
+
+        Phase 6 dual-pol behavior (chamber.dual_polarized=True):
+          - Each physical probe has 2 ports: V (index 2p, θ-polarized) and
+            H (index 2p+1, φ-polarized).
+          - DUT antenna polarization (target_config.rx_antenna.polarization)
+            picks which probe port couples; the orthogonal port gets 0.
+          - rx_antenna.polarization='V' → V ports nonzero, H ports zero
+          - rx_antenna.polarization='H' → H ports nonzero, V ports zero
+          - (slant pol / per-antenna pol are Phase 7, deferred)
+
+        Single-pol mode (chamber.dual_polarized=False) keeps prior behavior
+        and implicitly assumes probe/DUT polarization match. Explicit
+        rx_antenna.polarization='H' under single-pol mode raises ValueError
+        (per OQ4: 'H' single-pol is meaningless config; force caller to
+        set dual_polarized=True or polarization='V').
         """
+        rx_pol = target_config.rx_antenna.polarization
+        if not chamber_config.dual_polarized and rx_pol != 'V':
+            raise ValueError(
+                f"chamber.dual_polarized=False but rx_antenna.polarization="
+                f"{rx_pol!r}. Single-pol mode implicitly assumes matched "
+                f"polarization (V); explicit 'H' requires "
+                f"chamber.dual_polarized=True. Either set dual_polarized=True "
+                f"or polarization='V'."
+            )
+
         num_rx_antennas = target_config.rx_antenna.num_rows * target_config.rx_antenna.num_cols
         num_effective_probes = chamber_config.num_probes * (2 if chamber_config.dual_polarized else 1)
         center_freq_hz = (
@@ -56,16 +81,21 @@ class MIMO_OTA_Simulator:
         wavelength = speed_of_light / center_freq_hz
 
         b_matrix = np.zeros((num_rx_antennas, num_effective_probes), dtype=complex)
-        
+
         probe_positions = self._calculate_probe_positions(chamber_config)
         dut_antenna_positions = self._calculate_dut_antenna_positions(target_config.rx_antenna, wavelength)
+
+        # Pre-compute which probe port couples to the DUT for dual-pol mode.
+        # Convention: 2p = V port (θ), 2p+1 = H port (φ).
+        couples_v = (rx_pol == 'V')   # DUT V-pol → V probe port couples
+        couples_h = (rx_pol == 'H')   # DUT H-pol → H probe port couples
 
         for p_idx in range(chamber_config.num_probes):
             probe_pos = probe_positions[p_idx]
             for r_idx in range(num_rx_antennas):
                 rx_ant_pos = dut_antenna_positions[r_idx]
                 distance_vec = probe_pos - rx_ant_pos
-                
+
                 path_loss_db, phase_factor = self._calculate_physical_channel_properties(
                     distance_vec, center_freq_hz
                 )
@@ -82,8 +112,10 @@ class MIMO_OTA_Simulator:
                 if not chamber_config.dual_polarized:
                     b_matrix[r_idx, p_idx] = channel_response
                 else:
-                    b_matrix[r_idx, 2*p_idx] = channel_response
-                    b_matrix[r_idx, 2*p_idx + 1] = channel_response
+                    # Dual-pol: probe V port (2p) couples to V-pol DUT,
+                    # probe H port (2p+1) couples to H-pol DUT.
+                    b_matrix[r_idx, 2*p_idx]     = channel_response if couples_v else 0.0
+                    b_matrix[r_idx, 2*p_idx + 1] = channel_response if couples_h else 0.0
 
         # Apply calibration vector if provided
         if chamber_config.calibration_vector is not None:
