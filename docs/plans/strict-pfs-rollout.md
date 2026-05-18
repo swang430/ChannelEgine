@@ -144,12 +144,46 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 
 ---
 
-### Phase 4 —— 文档 + Cross-repo 同步（0.5 工作日）
+### Phase 4 —— 文档 + Cross-repo 同步 ⏸️ **DEFERRED 到 Phase 5 完成之后**
 
-- [ ] **T4.1** 更新本 repo `CLAUDE.md` §"Cross-project context"：strict_pfs 已实现，更新事实表
-- [ ] **T4.2** 更新 memory `project_mimo_first_pfs_investigation.md`：roadmap P2-6 状态从 planned → done
-- [ ] **T4.3** 在 MIMO-First 那边开 issue 通知 strict_pfs 可用，请求 `pfs-phase-immunity.md` 加 reference link
+理由：Phase 5 (External CDL Input API) 会重写 SPEC v2.0 + 改动 CLAUDE.md cross-project section 内容，Phase 4 的 T4.1/T4.2 会被 Phase 5 收尾时一并 cover。先做 Phase 5 避免 doc 写两遍。
+
+- [ ] **T4.1** 更新本 repo `CLAUDE.md` §"Cross-project context"：strict_pfs 已实现 + Phase 5 schema 落地，更新事实表
+- [ ] **T4.2** 更新 memory `project_mimo_first_pfs_investigation.md`
+- [ ] **T4.3** 在 MIMO-First 那边开 issue 通知 strict_pfs + Phase 5 schema 可用
 - [ ] **T4.4** README 或 GUI tooltip 加"何时用哪个 method"决策树
+
+---
+
+### Phase 5 —— External CDL Input API（替代 Phase 4 优先）
+
+**Goal**: 让 MIMO-First (或任何 external caller) 能传完整 CDL 参数 (含 XPR / K-factor / per-ray init phases) 进来产 OTA + ASC。
+
+详见 [external-cdl-input-design.md](./external-cdl-input-design.md)。
+
+**Scope (per 2026-05-18 user decision)**:
+- Q1.A: 本 repo 实现 in-process API；MIMO-First 自己写微服务 (D11)
+- Q2: schema 字段 "全部真用" (XPR plumb Phase 5 + 真用 Phase 6, K-factor + per-ray init phases 真用)
+- Q3: SPEC v1.0 废弃重写 v2.0
+- Q4: Phase 5 命名
+
+**10 sub-tasks** (T5.1-T5.10): see design doc §8。
+**估时**: 3-4 工作日 (选项 B: Phase 5 plumb XPR; 真用 dual-pol 留 Phase 6)
+
+---
+
+### Phase 6 —— XPR / Dual-Polarization Synthesizer（Phase 5 之后）
+
+**Goal**: synthesizer 真正应用 XPR 字段 (Phase 5 plumb)，实现 dual-polarization OTA 数学模型。
+
+**估时**: 5-8 工作日 (跟 Phase 1 总量相当 —— 是数学契约级别重构)
+
+**Sub-tasks** (草拟，Phase 5 完成后细化)：
+- 真 H/V probe response in `_synthesize_b_matrix` (替换现有 stub)
+- g_tx 扩展为 (2, N_tx) H/V Tx ports
+- Per-cluster 2×2 极化耦合矩阵 with XPR
+- strict_pfs synthesis 适配 dual-pol
+- Dual-pol regression tests
 
 ---
 
