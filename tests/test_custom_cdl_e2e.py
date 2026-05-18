@@ -188,5 +188,126 @@ class TestExternalCDLToASCEndToEnd(unittest.TestCase):
         self.assertGreater(len(files), 0)
 
 
+class TestBMatrixFrequencySource(unittest.TestCase):
+    """PR #5 Codex P2 regression: B-matrix must use profile.center_frequency_hz
+    when input_mode='custom', regardless of channel_config.center_frequency_hz.
+
+    Bug story: TargetChannelConfig.center_frequency_hz defaults to 2.4e9. If the
+    caller sets profile.center_frequency_hz=2.6e9 (typical for custom CDL) but
+    forgets to also set channel_config.center_frequency_hz, the legacy
+    _synthesize_b_matrix would silently use the 2.4 GHz default, producing
+    a B-matrix at a different wavelength than the ray synthesis (2.6 GHz).
+    This produced silent ~8% probe-geometry phase errors in dual-frequency configs.
+    """
+
+    def setUp(self):
+        self.chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.5,
+            dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        self.profile_26 = CustomCDLProfile.from_dict({
+            'center_frequency_hz': 2.6e9, 'pathloss_db': 85.0,
+            'ue_velocity_mps': [0.0, 0.0, 0.0], 'is_los': False,
+            'clusters': [{'delay_s': 0, 'power_linear': 1.0,
+                          'aoa_deg': 0, 'aod_deg': 0,
+                          'as_aoa_deg': 5, 'as_aod_deg': 2}],
+        })
+
+    def _run(self, config_freq_hz=None):
+        kwargs = dict(
+            input_mode='custom', custom_profile=self.profile_26,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+        )
+        if config_freq_hz is not None:
+            kwargs['center_frequency_hz'] = config_freq_hz
+        config = TargetChannelConfig(**kwargs)
+        np.random.seed(42)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            return MIMO_OTA_Simulator().run(self.chamber, config, synthesis_method='strict_pfs')
+
+    def test_b_matrix_uses_profile_freq_when_config_default(self):
+        """B-matrix at 2.6 GHz (profile) regardless of 2.4 GHz config default."""
+        r_default = self._run(config_freq_hz=None)         # config_freq = 2.4 GHz default
+        r_aligned = self._run(config_freq_hz=2.6e9)        # config_freq = profile_freq
+        # Both should produce IDENTICAL B-matrix because profile freq wins in both cases.
+        np.testing.assert_allclose(
+            r_default['B_matrix'], r_aligned['B_matrix'],
+            rtol=1e-12, atol=1e-12,
+            err_msg=("B_matrix differs between config_freq=default(2.4) and "
+                     "config_freq=2.6; profile freq is not driving B-matrix."),
+        )
+
+    def test_b_matrix_differs_from_2_4_ghz_baseline(self):
+        """Sanity: a hypothetical 2.4 GHz B-matrix would differ from the profile-driven one.
+
+        This proves the test above isn't trivially passing (both runs accidentally
+        producing whatever B-matrix). We construct a config + profile both at
+        2.4 GHz to get the 2.4 baseline, then show it differs from profile=2.6.
+        """
+        profile_24 = CustomCDLProfile.from_dict({
+            **{k: v for k, v in self.profile_26.model_dump().items()
+               if k not in ('center_frequency_hz',)},
+            'center_frequency_hz': 2.4e9,
+        })
+        config_24 = TargetChannelConfig(
+            input_mode='custom', custom_profile=profile_24,
+            center_frequency_hz=2.4e9,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+        )
+        np.random.seed(42)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            r_24 = MIMO_OTA_Simulator().run(self.chamber, config_24, synthesis_method='strict_pfs')
+        r_26 = self._run(config_freq_hz=None)  # profile 2.6
+        # B-matrix should differ because wavelength differs
+        diff = np.abs(r_24['B_matrix'] - r_26['B_matrix']).max()
+        self.assertGreater(
+            diff, 1e-6,
+            msg=f"B_matrix unchanged between 2.4 and 2.6 GHz — frequency override not effective"
+        )
+
+    def test_warning_fires_on_freq_mismatch_custom_mode(self):
+        """input_mode='custom' + config.freq != profile.freq → UserWarning."""
+        config = TargetChannelConfig(
+            input_mode='custom', custom_profile=self.profile_26,
+            center_frequency_hz=2.4e9,  # explicit mismatch
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+        )
+        np.random.seed(42)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            MIMO_OTA_Simulator().run(self.chamber, config, synthesis_method='strict_pfs')
+        freq_warnings = [
+            str(wi.message) for wi in w
+            if 'center_frequency_hz' in str(wi.message) and 'profile wins' in str(wi.message)
+        ]
+        self.assertGreater(len(freq_warnings), 0,
+            msg="No freq-mismatch warning emitted when config and profile freqs differ")
+
+    def test_no_warning_for_matching_freqs(self):
+        """Custom mode with config.freq == profile.freq → no freq warning."""
+        config = TargetChannelConfig(
+            input_mode='custom', custom_profile=self.profile_26,
+            center_frequency_hz=2.6e9,  # matches profile
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+        )
+        np.random.seed(42)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            MIMO_OTA_Simulator().run(self.chamber, config, synthesis_method='strict_pfs')
+        freq_warnings = [
+            str(wi.message) for wi in w
+            if 'center_frequency_hz' in str(wi.message) and 'profile wins' in str(wi.message)
+        ]
+        self.assertEqual(len(freq_warnings), 0,
+            msg=f"Spurious freq warning when freqs match: {freq_warnings}")
+
+
 if __name__ == '__main__':
     unittest.main()
