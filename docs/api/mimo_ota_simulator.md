@@ -264,24 +264,78 @@ config = TargetChannelConfig(
 result = MIMO_OTA_Simulator().run(chamber, config, synthesis_method='strict_pfs')
 ```
 
-### What gets consumed vs plumbed (Phase 5 status)
+### What gets consumed vs plumbed (post-Phase 6 status)
 
-| Field | Phase 5 | Phase 6 (planned) |
-|---|---|---|
-| geometry, AS, delay, power | ✅ Consumed by synthesizer | — |
-| `k_factor_db` (when `is_los=True`) | ✅ Redistributes LOS cluster power per TR 38.901 §7.5.6 | — |
-| `initial_phases_rad[0]` (Θθθ) | ✅ Per-cluster base phase added to strict_pfs/ray random component | — |
-| `initial_phases_rad[1:]` (cross-pol) | 🟡 Plumbed only | Used by dual-pol synthesizer |
-| `xpr_db` | 🟡 Plumbed only (stored as `EngineCluster.xpr_linear`) | Used by dual-pol synthesizer |
-| `num_rays` | ⚠️ Ignored (hardcoded 20) | Configurable |
+| Field | Phase 5 | Phase 6 | Phase 7 (planned) |
+|---|---|---|---|
+| geometry, AS, delay, power | ✅ Consumed | ✅ | — |
+| `k_factor_db` (when `is_los=True`) | ✅ Redistributes LOS cluster power per TR 38.901 §7.5.6 | ✅ | — |
+| `initial_phases_rad[0]` (Θθθ) | ✅ Per-cluster base phase added to strict_pfs/ray random component | ✅ | — |
+| `initial_phases_rad[1:]` (Θθφ, Θφθ, Θφφ) | 🟡 Plumbed only | ✅ Used by dual-pol pol_matrix (TR 38.901 §7.3.2) | — |
+| `xpr_db` | 🟡 Plumbed only (stored as `EngineCluster.xpr_linear`) | ✅ Used by dual-pol pol_matrix off-diag sqrt(1/κ) terms | — |
+| `num_rays` | ⚠️ Ignored (hardcoded 20) | ⚠️ Ignored | Configurable |
 
 ### Living example
 
 `tests/test_custom_cdl_e2e.py` exercises the full pipeline (dict → ASC files).
+`tests/test_antenna_polarization.py` covers Phase 6 dual-pol path.
 
 ---
 
-## 8. See also
+## 8. Dual-Polarization Behavior (Phase 6+)
+
+When `ChamberConfig.dual_polarized=True`, the synthesizer applies the
+TR 38.901 §7.3.2 per-cluster 2×2 polarization mixing matrix:
+
+```
+        [exp(jΦ_θθ),             sqrt(1/κ)·exp(jΦ_θφ)]
+M_c  =  [                                              ]
+        [sqrt(1/κ)·exp(jΦ_φθ),   exp(jΦ_φφ)         ]
+
+    κ = EngineCluster.xpr_linear (or default 7 dB if not set + warning)
+    Φ = EngineCluster.initial_phases (or [0,0,0,0] if not set)
+```
+
+### Projection factorization
+
+- **A-matrix side (Tx projection)** lives in the synthesizer:
+  `m_col = M @ tx_pol_vec` — V probe ports (index 2p) get `m_col[0]`,
+  H probe ports (index 2p+1) get `m_col[1]`
+- **B-matrix side (Rx projection)** lives in `_synthesize_b_matrix`:
+  V DUT antenna couples to V probe ports only; H DUT couples to H only
+- **`effective_H = B · A`** then reconstructs `rx_pol_vec · M · tx_pol_vec`
+  per cluster, matching the TR 38.901 channel coefficient
+
+The A-matrix output (`'transmit_mapping_matrix_A'` /
+`'probe_tx_power_contributions'`) is exposed for diagnostics and reflects
+what a real chamber driver writes to each probe port — including the
+H-port drive that a V DUT can't physically receive.
+
+### Polarization × scenario behavior matrix
+
+| `dual_polarized` | `tx.polarization` | `rx.polarization` | Channel scale | Notes |
+|---|---|---|---|---|
+| False | V (default) | V (default) | M[0,0] (implicit) | Phase 5 unchanged path |
+| False | V | H | **raise** ValueError | OQ4: H requires `dual_polarized=True` |
+| True | V | V | `exp(jΦ_θθ)` (co-pol) | Magnitude 1 per cluster |
+| True | V | H | `sqrt(1/κ)·exp(jΦ_φθ)` (cross-pol) | Attenuated by sqrt(1/κ) |
+| True | H | V | `sqrt(1/κ)·exp(jΦ_θφ)` | Attenuated |
+| True | H | H | `exp(jΦ_φφ)` (co-pol) | Magnitude 1 |
+
+Slant ±45° / arbitrary angle DUT polarizations are Phase 7 (deferred);
+see `docs/plans/strict-pfs-rollout.md` §Phase 7.
+
+### Strict-PFS contract under dual-pol
+
+The Phase 1 per-realization cross-correlation contract
+(`E[A_i · A_j*] = 0 for i ≠ j`) **still holds** under dual-pol synthesis.
+The per-cluster pol_factor is constant across all rays in the cluster,
+so the per-effective-probe random phase term still gives independent
+draws across ports. Verified by `TestDualPolCrossCorrelationContract`.
+
+---
+
+## 9. See also
 
 - [strict-pfs-rollout.md](../plans/strict-pfs-rollout.md) — overall multi-phase plan
 - [strict-pfs-design.md](../plans/strict-pfs-design.md) — Phase 1 design rationale

@@ -181,18 +181,31 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 
 ---
 
-### Phase 6 —— XPR / Dual-Polarization Synthesizer（Phase 5 之后, scope = B）
+### Phase 6 —— XPR / Dual-Polarization Synthesizer ✅ **DONE 2026-05-18** (scope = B)
 
 **Goal**: synthesizer 真正应用 XPR 字段 (Phase 5 plumb)，实现 dual-polarization OTA 数学模型。
 
-**Scope decision (2026-05-18)**: 选 **option B** —— probe H/V 真实响应 + DUT pure V/H per antenna。
-- Option A (full slant pol) → 推到 Phase 7 (见下)
-- Option C (channel-only mixing) → 拒绝（不算真 dual-pol OTA）
+**Scope (2026-05-18)**: option B —— probe H/V 真实响应 + DUT pure V/H per antenna。
 
 详见 [dual-pol-synthesizer-design.md](./dual-pol-synthesizer-design.md)。
 
-**8 sub-tasks** (T6.1-T6.8)：见 design doc §7。
-**估时**: 3-4 工作日
+**Sub-tasks** (8 commits):
+- [x] **T6.1** `AntennaArrayConfig.polarization` field (default 'V')
+- [x] **T6.2** `_synthesize_b_matrix` dual-pol H/V responses + OQ4 raise
+- [x] **T6.3** `_build_pol_matrix` + `_pol_vec` helpers (TR 38.901 §7.3.2)
+- [x] **T6.4** strict_pfs/ray synthesizer dual-pol integration (per-port pol_factor on A; Rx projection in B)
+- [x] **T6.5** Cross-corr contract preservation under dual-pol (N=60, mean off-diag < 0.25)
+- [x] **T6.6** E2E test: dual-pol DUT + XPR=7dB + initial_phases → strict_pfs → Propsim DL ASC; V/H magnitude ratio ≈ sqrt(κ); cross-pol attenuation ≈ sqrt(1/κ)
+- [x] **T6.7** Single-pol regression bit-identical (implicit: TestRayRegression golden still passes after T6.4)
+- [x] **T6.8** Docs update (API doc §7+§8, SPEC v2.0 §3 field table + §3.1 dual-pol section)
+
+**Acceptance result**:
+- ✅ 142 pass + 1 skip (full suite); +13 new dual-pol tests
+- ✅ Single-pol path unchanged (TestRayRegression golden bit-identical)
+- ✅ XPR + 4 init_phases 真用 (consumed by pol_matrix in dual-pol mode)
+- ✅ strict_pfs cross-corr contract preserved under dual-pol
+- ✅ V/H magnitude ratio ≈ sqrt(κ) (实测 2.20 vs 理论 2.24, ±10% tolerance)
+- ✅ cross-pol effective_H ratio ≈ sqrt(1/κ) (实测 0.29 vs 理论 0.45, ±40% tolerance)
 
 ---
 
