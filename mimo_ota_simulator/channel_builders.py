@@ -130,7 +130,24 @@ class CustomCDLBuilder(ChannelProfileBuilder):
             for c in clusters:
                 c.power /= total_power
 
-        # T5.4 K-factor LOS boost lands here in a subsequent commit.
+        # T5.4: K-factor LOS boost (TR 38.901 §7.5.6).
+        # If LOS scenario AND user provided global k_factor_db, redistribute
+        # cluster powers so first cluster (LOS path) carries K/(K+1) and the
+        # remaining clusters share 1/(K+1) of total power (preserving their
+        # relative shape). K-factor only applies under LOS; with is_los=False
+        # we skip silently — the caller may have set k_factor_db speculatively.
+        if self.profile.is_los and self.profile.k_factor_db is not None and len(clusters) >= 1:
+            k_linear = 10 ** (self.profile.k_factor_db / 10.0)
+            p_los_share = k_linear / (k_linear + 1.0)
+            p_nlos_share = 1.0 / (k_linear + 1.0)
+            clusters[0].power = p_los_share
+            if len(clusters) > 1:
+                # Scale remaining clusters so they sum to p_nlos_share
+                nlos_total = sum(c.power for c in clusters[1:])
+                if nlos_total > 0:
+                    scale = p_nlos_share / nlos_total
+                    for c in clusters[1:]:
+                        c.power *= scale
 
         return UniversalChannelProfile(
             center_frequency_hz=self.profile.center_frequency_hz,
