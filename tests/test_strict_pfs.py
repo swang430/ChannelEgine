@@ -242,6 +242,93 @@ class TestStrictPfsSmoke(unittest.TestCase):
         self.assertGreater(diff, 1e-6, msg="strict_pfs should produce different A than ray")
 
 
+class TestStrictPfsCalSuperposition(unittest.TestCase):
+    """T2.3 (Phase 2): strict_pfs + calibration_vector 叠加正确性 (Plan D8).
+
+    Contract: 与 jitter+cal **互斥**（jitter 会 swamp cal phase）不同，
+    strict_pfs + cal 必须**叠加**：cal 进 B 矩阵 (L77-79 simulator.py)，
+    strict_pfs 进 A 矩阵，二者正交，effective_H = B·A 包含两者效应。
+
+    具体子契约：
+    (a) 同 seed strict_pfs，A 矩阵在 cal-on / cal-off 两次运行间 bit-identical
+        → 证 strict_pfs 不读 cal (synthesis 干净)
+    (b) B 矩阵 with-cal / without-cal 应严格等于 cal_vector
+        → 证 cal 准确地以 element-wise 方式注入 B
+    (c) effective_H = B·A 在 cal-on vs cal-off 之间**有**差异
+        → 证 cal 信息保留到 final output (不被任何 stage swamp)
+    """
+
+    def setUp(self):
+        self.num_probes = 8
+        self.chamber_no_cal = ChamberConfig(
+            num_probes=self.num_probes, distribution='ring', radius_m=1.5,
+            dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        # Cal vector: per-probe complex with non-trivial phase variation
+        cal_phases = np.linspace(0, 2*np.pi, self.num_probes, endpoint=False)
+        self.cal_vector = np.exp(1j * cal_phases)  # shape (P,), |·|=1 (pure phase shift)
+        self.chamber_with_cal = ChamberConfig(
+            num_probes=self.num_probes, distribution='ring', radius_m=1.5,
+            dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+            calibration_vector=self.cal_vector,
+        )
+        self.channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=42,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+            force_condition='NLOS',
+            ue_velocity=(3.0, 0.0, 0.0),
+        )
+
+    def _run(self, chamber):
+        np.random.seed(42)  # control OTA-stage RNG (see TestRayRegression note)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            return MIMO_OTA_Simulator().run(
+                chamber, self.channel, synthesis_method='strict_pfs',
+            )
+
+    def test_a_strict_pfs_A_matrix_independent_of_cal(self):
+        """(a) Same seed: A matrix bit-identical between cal-off and cal-on runs."""
+        r_off = self._run(self.chamber_no_cal)
+        r_on  = self._run(self.chamber_with_cal)
+        np.testing.assert_allclose(
+            r_on['transmit_mapping_matrix_A'],
+            r_off['transmit_mapping_matrix_A'],
+            rtol=1e-12, atol=1e-12,
+            err_msg="strict_pfs A matrix changed under calibration_vector — synthesis is polluted",
+        )
+
+    def test_b_cal_injects_exactly_into_B_matrix(self):
+        """(b) B_with_cal / B_no_cal == cal_vector element-wise per probe column."""
+        r_off = self._run(self.chamber_no_cal)
+        r_on  = self._run(self.chamber_with_cal)
+        B_off = r_off['B_matrix']  # (N_rx, N_probes)
+        B_on  = r_on['B_matrix']
+        # b_matrix *= calibration_vector at L77-79 broadcasts column-wise (each probe column scaled)
+        # So B_on[r, p] == B_off[r, p] * cal_vector[p]
+        for p in range(self.num_probes):
+            ratio = B_on[:, p] / B_off[:, p]
+            np.testing.assert_allclose(
+                ratio, self.cal_vector[p],
+                rtol=1e-10, atol=1e-10,
+                err_msg=f"B[:, {p}] cal ratio != cal_vector[{p}]",
+            )
+
+    def test_c_effective_H_differs_with_cal(self):
+        """(c) effective_H = B·A differs between cal-on and cal-off (cal info survives to output)."""
+        r_off = self._run(self.chamber_no_cal)
+        r_on  = self._run(self.chamber_with_cal)
+        H_off = r_off['effective_H_matrix']
+        H_on  = r_on['effective_H_matrix']
+        diff = np.abs(H_on - H_off).max()
+        self.assertGreater(diff, 1e-6,
+            msg="effective_H identical with vs without cal — cal was silently dropped")
+
+
 class TestRayRegression(unittest.TestCase):
     """T2.4: ray-mode bit-identical regression against golden baseline.
 
