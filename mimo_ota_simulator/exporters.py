@@ -247,7 +247,11 @@ class PropsimASCIIExporter:
             
             eff_list = []
             for r in rays:
-                w = r['W_base'] * np.exp(1j * r['phi_init']) * scaling_factor * cal_vector
+                phi = r['phi_init']
+                # phi_init may be scalar (ray mode) or (N_probes,) vector (strict_pfs).
+                # Vector form needs reshape to (P, 1) to broadcast against W_base (P, Tx).
+                phi_factor = np.exp(1j * phi) if np.ndim(phi) == 0 else np.exp(1j * phi)[:, None]
+                w = r['W_base'] * phi_factor * scaling_factor * cal_vector
                 eff_list.append({'W': w, 'w_doppler': 2*np.pi*r['doppler_hz']})
             
             if eff_list:
