@@ -16,6 +16,7 @@ from channel_model_38901.common.geometry import get_antenna_positions
 try:
     from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
     from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, PropsimExportConfig, CalibrationConfig, CalibrationEntry
+    from mimo_ota_simulator.cdl_schema import CustomCDLProfile
     from mimo_ota_simulator.exporters import PropsimASCIIExporter
     MIMO_OTA_AVAILABLE = True
 except ImportError:
@@ -180,11 +181,16 @@ class ChannelModelApp(tk.Tk):
             self._create_entry(ota_frame, "ota_num_probes", "探头数量:", "16", None, 1)
             self._create_entry(ota_frame, "ota_radius_m", "探头半径 (m):", "1.5", None, 2)
             self._create_entry(ota_frame, "ota_dual_pol", "双极化探头:", True, [True, False], 3)
-            # Default to 'ray' for high fidelity dynamic simulation;
-            # 'strict_pfs' is the new recommended method (per-probe independent fading,
-            # avoids output phase calibration). Kept opt-in until production-validated.
-            self._create_entry(ota_frame, "ota_method", "合成方法:", "ray", ["ray", "strict_pfs", "cluster", "pinv"], 4)
-            self._create_entry(ota_frame, "ota_jitter", "相位抖动 (Jitter):", False, [True, False], 5)
+            # Default 'ray' (PR #7). 'strict_pfs' = Phase 1 recommended (avoids output
+            # phase calibration). cluster/pinv are deprecated (Phase 3). Phase 6 dual-pol
+            # synthesis is active when ota_dual_pol=True.
+            self._create_entry(ota_frame, "ota_method", "合成方法 (cluster/pinv deprecated):",
+                               "ray", ["ray", "strict_pfs", "cluster", "pinv"], 4)
+            # Phase 0 jitter UI: ±180° random phase per probe. Only meaningful for
+            # multi-drop ensemble averaging; strict_pfs makes it redundant + cal makes
+            # it mutually exclusive (validated in start_simulation_thread).
+            self._create_entry(ota_frame, "ota_jitter", "相位抖动 ±180° (仅多平均):",
+                               False, [True, False], 5)
             self._create_entry(ota_frame, "ota_ul_dl", "UL/DL 双向(互易镜像):", False, [True, False], 6)
             self._create_entry(ota_frame, "ota_reciprocity", "互易变换(镜像):", "conjugate_transpose", ["conjugate_transpose", "transpose"], 7)
             
@@ -335,8 +341,11 @@ class ChannelModelApp(tk.Tk):
         self._create_entry(parent_frame, f'{prefix}_spacing_h', "Spacing H (lambda):", "0.5", None, 4)
         self._create_entry(parent_frame, f'{prefix}_spacing_v', "Spacing V (lambda):", "0.5", None, 5)
         self._create_entry(parent_frame, f'{prefix}_element_pattern', "Element Pattern:", 'Isotropic', ['Isotropic', 'TR38.901'], 6)
+        # Phase 6 T6.1: polarization V/H. Default 'V' = backward compat.
+        # Only matters when chamber.dual_polarized=True. Slant ±45° = Phase 7 (deferred).
+        self._create_entry(parent_frame, f'{prefix}_polarization', "Polarization (V/H):", 'V', ['V', 'H'], 7)
         if prefix == 'rx':
-            self._create_entry(parent_frame, 'ue_velocity_kph', "UE Velocity (km/h):", "3", None, 7)
+            self._create_entry(parent_frame, 'ue_velocity_kph', "UE Velocity (km/h):", "3", None, 8)
 
     def _create_entry(self, parent, key, text, default, values, row):
         label = ttk.Label(parent, text=text)
@@ -455,6 +464,39 @@ class ChannelModelApp(tk.Tk):
         self.log_text.config(state=tk.DISABLED)
 
     def start_simulation_thread(self):
+        # Phase 0+1 P0: pre-run validation for jitter conflicts.
+        # Surface the same mutex semantics that simulator.py enforces at runtime,
+        # via dialog box (TKinter has no native tooltip/inline-warning UX like
+        # Streamlit). Block run if config is internally inconsistent.
+        try:
+            ota_enabled = bool(self.controls.get('ota_enable', {}).get('var',
+                               tk.BooleanVar(value=False)).get())
+        except Exception:
+            ota_enabled = False
+        if ota_enabled:
+            method = self.controls.get('ota_method', {}).get('var', tk.StringVar()).get()
+            jitter = bool(self.controls.get('ota_jitter', {}).get('var',
+                          tk.BooleanVar(value=False)).get())
+            cal_loaded = getattr(self, 'current_cal_config', None) is not None
+            if method == 'strict_pfs' and jitter:
+                messagebox.showwarning(
+                    "Conflict: strict_pfs + jitter",
+                    "synthesis_method='strict_pfs' already provides per-(probe, cluster) "
+                    "independent fading; adding probe phase jitter is redundant and "
+                    "pollutes the intentional phase structure.\n\n"
+                    "Fix: uncheck '相位抖动 ±180°' OR switch '合成方法' to 'ray'."
+                )
+                return
+            if jitter and cal_loaded:
+                messagebox.showwarning(
+                    "Conflict: jitter + calibration",
+                    "Probe phase jitter (±180° random) will swamp the per-probe phase "
+                    "compensation provided by the loaded calibration CSV; calibration "
+                    "data would be silently dropped.\n\n"
+                    "Fix: uncheck '相位抖动 ±180°' OR remove the calibration file."
+                )
+                return
+
         self.run_button.config(state=tk.DISABLED)
         self.log_text.config(state=tk.NORMAL); self.log_text.delete(1.0, tk.END); self.log_text.config(state=tk.DISABLED)
         self.clear_results()
@@ -543,12 +585,13 @@ class ChannelModelApp(tk.Tk):
                 
                 tx_ant_ota = AntennaArrayConfig(
                     num_rows=int(params['tx_num_rows']), num_cols=int(params['tx_num_cols']),
-                    spacing_h=float(params['tx_spacing_h']), spacing_v=float(params['tx_spacing_v'])
-                    # pattern handled internally or default
+                    spacing_h=float(params['tx_spacing_h']), spacing_v=float(params['tx_spacing_v']),
+                    polarization=params.get('tx_polarization', 'V'),  # Phase 6 T6.1
                 )
                 rx_ant_ota = AntennaArrayConfig(
                     num_rows=int(params['rx_num_rows']), num_cols=int(params['rx_num_cols']),
-                    spacing_h=float(params['rx_spacing_h']), spacing_v=float(params['rx_spacing_v'])
+                    spacing_h=float(params['rx_spacing_h']), spacing_v=float(params['rx_spacing_v']),
+                    polarization=params.get('rx_polarization', 'V'),  # Phase 6 T6.1
                 )
 
                 wifi_bandwidth_hz = float(params["wifi_bandwidth_mhz"]) * 1e6 if is_wifi else 20e6
@@ -564,9 +607,28 @@ class ChannelModelApp(tk.Tk):
                         wifi_delay_scale = float(params["wifi_delay_scale"])
                     except ValueError:
                         wifi_delay_scale = None
+                # Phase 5 P3: try v2.0 Pydantic CustomCDLProfile first; fall back to
+                # v1.0 legacy file path (CustomJSONBuilder shim, emits DeprecationWarning).
+                custom_profile_obj = None
+                custom_profile_path = None
+                if is_custom:
+                    path = getattr(self, "current_custom_json_path", None)
+                    if path:
+                        try:
+                            custom_profile_obj = CustomCDLProfile.from_file(path)
+                        except Exception as e:
+                            # Fall back to legacy file-path path
+                            custom_profile_path = path
+                            self.log(
+                                f"[Warning] Custom JSON v2.0 Pydantic 校验失败 "
+                                f"({type(e).__name__}); 使用 v1.0 legacy 路径 + "
+                                f"DeprecationWarning. 建议升级 schema."
+                            )
+
                 channel_config = TargetChannelConfig(
                     input_mode="custom" if is_custom else "standard",
-                    custom_profile_path=getattr(self, "current_custom_json_path", None) if is_custom else None,
+                    custom_profile=custom_profile_obj,
+                    custom_profile_path=custom_profile_path,
                     standard="wifi" if is_wifi else "3gpp",
                     model_name="Custom" if is_custom else model_name,
                     cluster_model_name=cluster_model_name,
