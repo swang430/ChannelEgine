@@ -372,11 +372,27 @@ class MIMO_OTA_Simulator:
         # ---------------------------------------------
 
         if synthesis_method == 'pinv':
+            warnings.warn(
+                "synthesis_method='pinv' is deprecated and will be removed in a future release. "
+                "It produces no wideband impulse response (narrowband-only) and is broken for "
+                "Propsim F64 export. Use 'ray' for current production or wait for 'strict_pfs' "
+                "(Phase 1 of strict-pfs-rollout) for the recommended replacement.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             B_pinv = np.linalg.pinv(B_matrix)
             transmit_mapping_matrix_A = B_pinv @ target_H_matrix
             probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
 
         elif synthesis_method == 'cluster':
+            warnings.warn(
+                "synthesis_method='cluster' is deprecated and will be removed in a future release. "
+                "The rank-1 outer-product structure cannot represent strict PFS. "
+                "Use 'ray' for current production or wait for 'strict_pfs' "
+                "(Phase 1 of strict-pfs-rollout) for the recommended replacement.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             if not physical_clusters or physical_clusters[0].h_matrix is None:
                 raise ValueError("Cluster synthesis requires h_matrix in clusters. Engine not updated?")
             
