@@ -569,7 +569,29 @@ class MIMO_OTA_Simulator:
             #                   E[A_i * conj(A_j)] = 0 for i != j per-realization (true strict PFS).
             #                   Use case: avoid output phase calibration in hardware loop.
             use_strict_pfs = (synthesis_method == 'strict_pfs')
-            
+
+            # Phase 6 T6.4: dual-pol synthesis gating.
+            # When chamber.dual_polarized=True, each cluster gets a 2×2 polarization
+            # mixing matrix M = _build_pol_matrix(cluster). We project ONLY on the
+            # Tx side here (m_col = M @ tx_pol_vec), producing two complex factors:
+            #   m_col[0] for V probe ports (drives the θ-component of the channel)
+            #   m_col[1] for H probe ports (drives the φ-component)
+            # Rx-side projection lives in _synthesize_b_matrix (T6.2): the B-matrix
+            # zeros out the H ports for V-pol DUT and vice versa. Composing
+            # effective_H = B · A then reconstructs the full
+            #   rx_pol_vec · M · tx_pol_vec
+            # scalar per cluster as required by TR 38.901 §7.3.2.
+            #
+            # Why split this way: the A-matrix output ('transmit_mapping_matrix_A'
+            # and the derived 'probe_tx_power_contributions') is exposed to users
+            # for diagnostics. It should reflect what a real chamber driver would
+            # write to each probe port — including the H drive that a V DUT can't
+            # receive — so probe-power monitoring stays physically meaningful.
+            # Single-pol mode keeps pol_scalar = 1 (legacy bit-identical).
+            use_dual_pol = bool(chamber_config.dual_polarized)
+            if use_dual_pol:
+                tx_pol_vec = self._pol_vec(channel_config.tx_antenna.polarization)
+
             # 1. Get Ray Offsets
             default_ray_offsets = np.array([
                 0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715,
@@ -593,7 +615,24 @@ class MIMO_OTA_Simulator:
                 # We will map each ray to probes independently
                 cluster_power_accum = np.zeros(num_effective_probes)
                 cluster_A_accum = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
-                
+
+                # Phase 6 T6.4: per-cluster Tx-side polarization projection.
+                # Build the 2×2 polarization matrix once per cluster (invariant
+                # across sub-rays) then project onto the Tx pol basis. Result is
+                # a (2,) complex vector: m_col[0] for V probe ports, m_col[1] for
+                # H probe ports. Single-pol mode uses a uniform 1.0 factor.
+                if use_dual_pol:
+                    pol_matrix = self._build_pol_matrix(cluster)  # (2, 2)
+                    m_col = pol_matrix @ tx_pol_vec  # (2,) complex
+                    # Expand to (num_effective_probes, 1) for broadcast against W_base.
+                    # Even indices (2p) = V port → m_col[0]; odd (2p+1) = H port → m_col[1].
+                    pol_factor_per_port = np.empty(num_effective_probes, dtype=complex)
+                    pol_factor_per_port[0::2] = m_col[0]
+                    pol_factor_per_port[1::2] = m_col[1]
+                    pol_factor_col = pol_factor_per_port[:, None]   # (P_eff, 1)
+                else:
+                    pol_factor_col = 1.0 + 0j  # broadcasts as scalar in W_base mul
+
                 for m in range(20):
                     alpha = ray_offsets[m]
                     c_scale = 1.0 # Scaling factor
@@ -654,9 +693,11 @@ class MIMO_OTA_Simulator:
                     # Power per ray
                     p_ray = cluster.power / 20.0
 
-                    # Base Weight (without random phase, for later reconstruction)
-                    # W_base = sqrt(P) * w * g_tx
-                    W_base = np.sqrt(p_ray) * (w_map_ray @ g_tx_ray)
+                    # Base Weight (without random phase, for later reconstruction).
+                    # W_base[p_eff, t] = pol_factor[p_eff] * sqrt(P) * w_map[p_eff] * g_tx[t]
+                    # In dual-pol: V probe ports (even) get pol_factor=m_col[0],
+                    # H probe ports (odd) get m_col[1]. Single-pol: pol_factor=1.
+                    W_base = pol_factor_col * np.sqrt(p_ray) * (w_map_ray @ g_tx_ray)
 
                     # Apply random phase for current snapshot.
                     # ray:        W_base (P, Tx) * scalar      -> (P, Tx)
