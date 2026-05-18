@@ -9,7 +9,10 @@ import io
 
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
 from mimo_ota_simulator.data_models import ChamberConfig, TargetChannelConfig, AntennaArrayConfig, ProbeAntennaConfig, PropsimExportConfig, CalibrationConfig, CalibrationEntry
+from mimo_ota_simulator.cdl_schema import CustomCDLProfile
 from mimo_ota_simulator.exporters import PropsimASCIIExporter
+import json
+from pydantic import ValidationError
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -78,20 +81,31 @@ def antenna_panel(antenna_type: str):
     key_prefix = f"{antenna_type.lower()}"
     label_map = {'Tx': '发射端 (Tx)', 'Rx': '接收端 (Rx)'}
     st.write(f"**{label_map.get(antenna_type, antenna_type)} 天线配置**")
-    
+
     array_type = st.selectbox('阵列类型', ('ULA', 'URA'), key=f'{key_prefix}_type')
     element_pattern = st.selectbox('单元方向图', ('Isotropic', 'TR38.901'), key=f'{key_prefix}_pattern')
-    
+    # Phase 6 T6.1: polarization V/H per antenna array. Default 'V' preserves
+    # single-pol callers; matters only when chamber.dual_polarized=True.
+    polarization = st.selectbox(
+        '极化 (Polarization)', ('V', 'H'),
+        key=f'{key_prefix}_pol',
+        help=(
+            "V (vertical, θ-pol) 或 H (horizontal, φ-pol). 默认 V. "
+            "仅当 chamber.dual_polarized=True 时影响 OTA 合成数学; "
+            "slant ±45° / 任意角是 Phase 7 (deferred)."
+        ),
+    )
+
     if array_type == 'ULA':
         num_cols = st.number_input('单元数量 (Elements)', 1, 16, 2, key=f'{key_prefix}_ula_cols')
         spacing_h = st.number_input('单元间距 (λ)', 0.1, 4.0, 0.5, 0.1, key=f'{key_prefix}_ula_spacing')
-        return AntennaArrayConfig(array_type='ULA', element_pattern=element_pattern, num_rows=1, num_cols=num_cols, spacing_h=spacing_h)
+        return AntennaArrayConfig(array_type='ULA', element_pattern=element_pattern, num_rows=1, num_cols=num_cols, spacing_h=spacing_h, polarization=polarization)
     else: # URA
         num_rows = st.number_input('行数 (Rows)', 1, 8, 2, key=f'{key_prefix}_ura_rows')
         num_cols = st.number_input('列数 (Columns)', 1, 8, 2, key=f'{key_prefix}_ura_cols')
         spacing_h = st.number_input('水平间距 (λ)', 0.1, 4.0, 0.5, 0.1, key=f'{key_prefix}_ura_spacing_h')
         spacing_v = st.number_input('垂直间距 (λ)', 0.1, 4.0, 0.5, 0.1, key=f'{key_prefix}_ura_spacing_v')
-        return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v)
+        return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v, polarization=polarization)
 
 # --- UI Layout ---
 st.title("MIMO OTA 仿真器 V4.4")
@@ -109,16 +123,29 @@ with st.sidebar:
         input_mode = 'standard' if input_mode_label == '标准 3GPP/WiFi 模型' else 'custom'
         
         custom_profile_path = None
+        custom_profile_obj = None
         if input_mode == 'custom':
             st.info("已选择自定义信道。请上传您的自定义 JSON 配置文件：")
             uploaded_json = st.file_uploader("上传 JSON 文件", type=['json'], key="custom_json_upload")
             if uploaded_json is not None:
-                # 为了保持向后兼容和底层一致性，我们将上传的文件临时持久化
-                temp_path = os.path.abspath("temp_uploaded_custom_profile.json")
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_json.getbuffer())
-                custom_profile_path = temp_path
-                st.success(f"自定义配置已加载")
+                # Phase 5 P3: try v2.0 Pydantic schema first; fall back to legacy
+                # v1.0 file-path route (CustomJSONBuilder shim, emits DeprecationWarning).
+                raw_bytes = uploaded_json.getbuffer()
+                try:
+                    cdl_dict = json.loads(bytes(raw_bytes).decode('utf-8'))
+                    custom_profile_obj = CustomCDLProfile.from_dict(cdl_dict)
+                    st.success("自定义配置 (v2.0 Pydantic) 已加载")
+                except (ValidationError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                    # Fallback: persist to temp file so legacy CustomJSONBuilder can read it.
+                    temp_path = os.path.abspath("temp_uploaded_custom_profile.json")
+                    with open(temp_path, "wb") as f:
+                        f.write(raw_bytes)
+                    custom_profile_path = temp_path
+                    st.warning(
+                        f"v2.0 Pydantic 校验失败 ({type(e).__name__})，使用 v1.0 legacy 路径"
+                        f"（DeprecationWarning）。建议升级到 v2.0 schema：见 "
+                        f"doc/MIMO_First_Integration_Spec.md §3"
+                    )
                 
             standard = '3GPP'
             model_name = 'Custom'
@@ -346,6 +373,7 @@ with st.sidebar:
         target_config_params = {
             "input_mode": input_mode,
             "custom_profile_path": custom_profile_path,
+            "custom_profile": custom_profile_obj,  # Phase 5 Pydantic-validated object (preferred)
             "standard": "wifi" if standard == "WiFi" else "3gpp",
             "model_name": model_name,
             "cluster_model_name": cluster_model_name if cluster_model_name and cluster_model_name != 'Stochastic' else None,
