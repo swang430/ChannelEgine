@@ -232,7 +232,7 @@ if mode == "conjugate_transpose":
 
 ## 12. Open Questions（设计阶段）
 
-- [ ] OQ1: T1.5 UL/DL 选 A/B/C 哪个？需要 spec 引用（TR 37.977 是否要求 strict PFS 互易性？）
+- [x] OQ1: ✅ **Option A locked**（T1.5 实现）。UL phi = -DL phi 由 `_build_ul_ray_components` 现成 negation 提供；exporter 加 axis-aware broadcast (DL `[:, None]` / UL `[None, :]`) 处理 W_base 转置后的 col 维度。
 - [ ] OQ2: `np.isscalar` vs `np.ndim == 0` vs 显式 `pfs_mode` flag —— 哪个最 robust？
 - [ ] OQ3: F64 exporter 修改是 ship 进 strict_pfs PR，还是单独一个 fix commit？
   - 倾向：一起 PR，因为修改是为 strict_pfs 服务的

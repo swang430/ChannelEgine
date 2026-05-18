@@ -133,9 +133,10 @@ class TestPhiInitDataContract(unittest.TestCase):
 
 
 class TestStrictPfsSmoke(unittest.TestCase):
-    """End-to-end smoke tests for synthesis_method='strict_pfs' (T1.3)."""
+    """End-to-end smoke tests for synthesis_method='strict_pfs' (T1.3, T1.5)."""
 
     def setUp(self):
+        self.base = '_strict_pfs_smoke.asc'
         self.chamber = ChamberConfig(
             num_probes=8, distribution='ring', radius_m=1.5, dual_polarized=False,
             probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
@@ -148,6 +149,13 @@ class TestStrictPfsSmoke(unittest.TestCase):
             force_condition='NLOS',
             ue_velocity=(3.0, 0.0, 0.0),
         )
+
+    def tearDown(self):
+        for f in glob.glob(self.base.replace('.asc', '*.asc')):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
     def test_strict_pfs_runs_without_error(self):
         """strict_pfs path returns dict with expected keys, no NaN/Inf."""
@@ -173,6 +181,48 @@ class TestStrictPfsSmoke(unittest.TestCase):
             phi = rc['phi_init']
             self.assertEqual(np.ndim(phi), 1)
             self.assertEqual(phi.shape, (num_probes,))
+
+    def test_strict_pfs_ul_dl_reciprocity(self):
+        """T1.5: enable_ul_dl=True with strict_pfs must work end-to-end.
+
+        Option A reciprocity (per design §5): UL phi_init mirrors DL via negation
+        (consistent with W_ul = W_dl.conj().T phase conjugation). Exporter must
+        handle UL W_base shape (Tx, P) by broadcasting phi on the col axis.
+        """
+        channel_ul = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=42,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+            force_condition='NLOS', ue_velocity=(3.0, 0.0, 0.0),
+            enable_ul_dl=True, reciprocity_transform='conjugate_transpose',
+        )
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            result = sim.run(self.chamber, channel_ul, synthesis_method='strict_pfs')
+
+        rc_dl = result['ray_components'][0]
+        rc_ul = result['ray_components_ul'][0]
+        # Shape sanity
+        self.assertEqual(rc_dl['W_base'].shape, (8, 2))
+        self.assertEqual(rc_ul['W_base'].shape, (2, 8))
+        self.assertEqual(rc_dl['phi_init'].shape, (8,))
+        self.assertEqual(rc_ul['phi_init'].shape, (8,))
+        # Option A: phi_ul = -phi_dl (verified per-ray for all clusters)
+        for d, u in zip(result['ray_components'], result['ray_components_ul']):
+            np.testing.assert_allclose(u['phi_init'], -d['phi_init'])
+
+        # UL F64 export must succeed (axis-aware exporter dispatches col-broadcast)
+        from mimo_ota_simulator.exporters import PropsimASCIIExporter
+        cfg = PropsimExportConfig(
+            filename=self.base, mode='B', duration_s=0.01, sample_rate_hz=1000,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            PropsimASCIIExporter(cfg).export(result, direction='ul')
+        files = glob.glob(self.base.replace('.asc', '*.asc'))
+        self.assertGreater(len(files), 0)
 
     def test_strict_pfs_differs_from_ray(self):
         """Sanity: strict_pfs and ray with same seed produce DIFFERENT A.
