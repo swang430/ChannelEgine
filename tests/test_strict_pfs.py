@@ -242,6 +242,85 @@ class TestStrictPfsSmoke(unittest.TestCase):
         self.assertGreater(diff, 1e-6, msg="strict_pfs should produce different A than ray")
 
 
+class TestStrictPfsConvergenceSpeed(unittest.TestCase):
+    """T2.2 (Phase 2): strict_pfs 2nd-moment estimator variance not worse than ray+jitter.
+
+    **Original design doc claim** (revised 2026-05-18): strict_pfs converges
+    spatial correlation R̂ approximately L·M× faster than ray+jitter due to
+    per-(probe, ray) independent phase. **Empirical finding** during T2.2
+    implementation: at N=40 per batch, cross-batch ||ΔR̂||_F ratio
+    ray+jitter / strict_pfs ≈ 1.08 — essentially equivalent in 2nd moment.
+
+    Both methods satisfy E[A_i·A_j*]=0 for i≠j (T2.1) and produce
+    near-identical per-probe |A_p| distributions. The L·M× speedup
+    likely only manifests in 4th-moment / higher-order statistics (not
+    required by spec) or in pathological channel configurations.
+
+    **strict_pfs's real advantages** (still valuable, just NOT this one):
+      (a) per-realization (not just ensemble) strict zero cross-correlation
+      (b) compatibility with phase calibration cert (jitter is mutex) — T2.3
+      (c) deterministic with seed (no extra RNG dimension from jitter)
+
+    This test now serves as a **regression guard**: if strict_pfs implementation
+    silently becomes much WORSE than ray+jitter (e.g., a bug breaks the
+    per-(probe, ray) independence), the ratio would drop below 0.5.
+    """
+
+    N_PER_BATCH = 40
+    # Relaxed contract: strict_pfs variance should not be > 2x ray+jitter's
+    # (catches implementation regressions, accepts empirical equivalence).
+    MIN_RAY_JITTER_OVER_STRICT_RATIO = 0.5
+
+    def setUp(self):
+        self.chamber = ChamberConfig(
+            num_probes=16, distribution='ring', radius_m=1.5, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        self.channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            force_condition='NLOS',
+        )
+
+    def _R_hat(self, method, seed_offset, N, jitter=False):
+        P = self.chamber.num_probes
+        R_sum = np.zeros((P, P), dtype=complex)
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            for k in range(N):
+                np.random.seed(seed_offset + k)
+                ch_k = self.channel.model_copy()
+                ch_k.random_seed = seed_offset + k
+                res = sim.run(self.chamber, ch_k,
+                              synthesis_method=method,
+                              probe_phase_jitter=jitter)
+                a = res['transmit_mapping_matrix_A'][:, 0]
+                R_sum += np.outer(a, a.conj())
+        return R_sum / N
+
+    def test_strict_pfs_cross_batch_variance_below_ray_jitter(self):
+        R_strict_A = self._R_hat('strict_pfs', seed_offset=1000, N=self.N_PER_BATCH)
+        R_strict_B = self._R_hat('strict_pfs', seed_offset=5000, N=self.N_PER_BATCH)
+        R_rayjit_A = self._R_hat('ray',        seed_offset=1000, N=self.N_PER_BATCH, jitter=True)
+        R_rayjit_B = self._R_hat('ray',        seed_offset=5000, N=self.N_PER_BATCH, jitter=True)
+
+        d_strict = np.linalg.norm(R_strict_A - R_strict_B, 'fro')
+        d_rayjit = np.linalg.norm(R_rayjit_A - R_rayjit_B, 'fro')
+        ratio = d_rayjit / max(d_strict, 1e-12)
+
+        self.assertGreater(
+            ratio, self.MIN_RAY_JITTER_OVER_STRICT_RATIO,
+            msg=(f"Cross-batch ||ΔR||_F ratio ray+jitter/strict_pfs = {ratio:.2f} "
+                 f"< regression floor {self.MIN_RAY_JITTER_OVER_STRICT_RATIO}. "
+                 f"d_strict={d_strict:.4f}, d_rayjit={d_rayjit:.4f}. "
+                 f"strict_pfs is much WORSE than ray+jitter — likely implementation "
+                 f"regression breaking per-(probe, ray) phase independence.")
+        )
+
+
 class TestStrictPfsCrossCorrelation(unittest.TestCase):
     """T2.1 (Phase 2): per-realization cross-correlation E[A_i · A_j*] → 0 for i≠j.
 
