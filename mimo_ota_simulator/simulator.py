@@ -530,10 +530,19 @@ class MIMO_OTA_Simulator:
 
         # Apply Probe Phase Jitter (Simulating hardware inconsistency)
         if probe_phase_jitter:
+            if chamber_config.calibration_vector is not None:
+                warnings.warn(
+                    "probe_phase_jitter=True with calibration_vector present: "
+                    "jitter applies uniform [-pi, pi] random phase per probe, which will "
+                    "swamp the per-probe static phase correction provided by calibration_vector. "
+                    "These two mechanisms are effectively mutually exclusive; the calibration "
+                    "phase information is silently lost. Disable one of them.",
+                    stacklevel=2,
+                )
             # Jitter range: Full random phase [-pi, pi]
             # This simulates uncalibrated phase or large cable length variations,
             # which helps break the strong coherence of the simplified Cluster model.
-            jitter_rad = np.pi 
+            jitter_rad = np.pi
             phase_noise = np.random.uniform(-jitter_rad, jitter_rad, size=(num_effective_probes, 1))
             transmit_mapping_matrix_A *= np.exp(1j * phase_noise)
             # Note: Jitter is applied to the TOTAL snapshot. 

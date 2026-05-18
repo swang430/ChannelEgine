@@ -193,7 +193,21 @@ with st.sidebar:
         
         force_condition = st.selectbox('LOS/NLOS 条件', ('默认 (Default)', '强制 LOS', '强制 NLOS'), key='los')
         use_median_lsps = st.checkbox('使用 LSP 中值', value=False, help="跳过随机采样，使用大尺度参数的中位值。")
-        probe_phase_jitter = st.checkbox('模拟探头相位抖动', value=False, help="为探头添加随机相位噪声 (+/- 10度) 以模拟硬件误差。")
+        probe_phase_jitter = st.checkbox(
+            '模拟探头相位抖动',
+            value=False,
+            help=(
+                "为每个探头添加 ±180度（完全随机相位）的相位噪声。"
+                "用途：打破 Cluster/Ray 模型的人工相干性，**仅在大规模平均（多 drop 统计验证）场景下统计意义有效**；"
+                "单次 realization 不能视为 strict PFS。**与上传的相位校准互斥**：jitter 会覆盖 calibration_vector 提供的 per-probe 静态相位补偿。"
+            )
+        )
+        if cal_file is not None and probe_phase_jitter:
+            st.warning(
+                "⚠️ 已同时启用 probe_phase_jitter 和 calibration_vector："
+                "jitter 注入 ±180° 随机相位会**完全覆盖**校准文件提供的 per-probe 相位补偿信息，"
+                "导致 cal 数据被静默丢弃。请二选一：要校准就取消 jitter；要 jitter 就移除 cal 文件。"
+            )
         enable_ul_dl = st.checkbox('UL/DL 双向生成', value=False, help="生成 UL/DL 两套结果（互易镜像，不包含独立 UL 信道建模）。")
         reciprocity_transform_label = st.selectbox('互易变换', ('共轭转置', '转置'), key='reciprocity', help="仅互易镜像：对 DL 结果做转置/共轭转置得到 UL。")
         
