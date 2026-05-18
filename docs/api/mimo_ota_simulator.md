@@ -194,9 +194,98 @@ via axis-aware broadcasting (DL `[:, None]`, UL `[None, :]`).
 
 ---
 
-## 7. See also
+## 7. External CDL Input via CustomCDLProfile (Phase 5+)
+
+For callers that produce their own CDL parameters (e.g. ray-tracing pipelines,
+MIMO-First micro-service), bypass the built-in 3GPP scenario generator by
+passing a `CustomCDLProfile` Pydantic object.
+
+### Schema (`mimo_ota_simulator.cdl_schema`)
+
+```python
+class CustomCDLProfile(BaseModel):
+    center_frequency_hz: float
+    pathloss_db: float
+    ue_velocity_mps: Tuple[float, float, float]   # m/s, 3-vector
+    is_los: bool
+    k_factor_db: Optional[float] = None            # TR 38.901 §7.5.6 LOS boost
+    clusters: List[CDLClusterSpec]                  # min_length=1
+
+class CDLClusterSpec(BaseModel):
+    delay_s: float                                  # ≥0
+    power_linear: float                             # >0; builder normalizes sum→1
+    aoa_deg: float
+    aod_deg: float
+    zoa_deg: float = 90.0
+    zod_deg: float = 90.0
+    as_aoa_deg: float = 0.0
+    as_aod_deg: float = 0.0
+    as_zoa_deg: float = 0.0
+    as_zod_deg: float = 0.0
+    xpr_db: Optional[float] = None                  # Phase 5 plumb-only; Phase 6 dual-pol
+    initial_phases_rad: Optional[List[float]] = None # [Θθθ, Θθφ, Θφθ, Θφφ], len=4
+    num_rays: int = 20
+```
+
+`extra='forbid'`: typo'd / legacy v1.0 field names raise `ValidationError`.
+
+### Two entry points
+
+```python
+# A. From a Python dict (HTTP service caller path)
+profile = CustomCDLProfile.from_dict({
+    'center_frequency_hz': 2.6e9, 'pathloss_db': 88.5,
+    'ue_velocity_mps': [4.17, 0.0, 0.0], 'is_los': True,
+    'k_factor_db': 10.0,
+    'clusters': [
+        {'delay_s': 0.0, 'power_linear': 1.0,
+         'aoa_deg': 0.0, 'aod_deg': 0.0,
+         'as_aoa_deg': 1.0, 'as_aod_deg': 0.5,
+         'xpr_db': 12.0,
+         'initial_phases_rad': [0.785, 0.0, 0.0, 0.0]},
+        # ... more clusters
+    ],
+})
+
+# B. From a JSON file on disk
+profile = CustomCDLProfile.from_file('/path/to/cdl.json')
+```
+
+### Pass through `TargetChannelConfig.custom_profile`
+
+```python
+config = TargetChannelConfig(
+    input_mode='custom',
+    custom_profile=profile,        # preferred: Pydantic object
+    # custom_profile_path: str     # legacy file-path path (deprecated)
+    tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+    rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+)
+result = MIMO_OTA_Simulator().run(chamber, config, synthesis_method='strict_pfs')
+```
+
+### What gets consumed vs plumbed (Phase 5 status)
+
+| Field | Phase 5 | Phase 6 (planned) |
+|---|---|---|
+| geometry, AS, delay, power | ✅ Consumed by synthesizer | — |
+| `k_factor_db` (when `is_los=True`) | ✅ Redistributes LOS cluster power per TR 38.901 §7.5.6 | — |
+| `initial_phases_rad[0]` (Θθθ) | ✅ Per-cluster base phase added to strict_pfs/ray random component | — |
+| `initial_phases_rad[1:]` (cross-pol) | 🟡 Plumbed only | Used by dual-pol synthesizer |
+| `xpr_db` | 🟡 Plumbed only (stored as `EngineCluster.xpr_linear`) | Used by dual-pol synthesizer |
+| `num_rays` | ⚠️ Ignored (hardcoded 20) | Configurable |
+
+### Living example
+
+`tests/test_custom_cdl_e2e.py` exercises the full pipeline (dict → ASC files).
+
+---
+
+## 8. See also
 
 - [strict-pfs-rollout.md](../plans/strict-pfs-rollout.md) — overall multi-phase plan
 - [strict-pfs-design.md](../plans/strict-pfs-design.md) — Phase 1 design rationale
+- [external-cdl-input-design.md](../plans/external-cdl-input-design.md) — Phase 5 design
+- `../../doc/MIMO_First_Integration_Spec.md` — cross-repo contract v2.0
 - `simulator.py` source for current implementation
-- `tests/test_strict_pfs.py` for behavior contracts in test form
+- `tests/test_strict_pfs.py` + `tests/test_cdl_schema.py` + `tests/test_custom_cdl_e2e.py` for behavior contracts in test form
