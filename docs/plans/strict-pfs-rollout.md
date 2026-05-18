@@ -144,14 +144,18 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 
 ---
 
-### Phase 4 —— 文档 + Cross-repo 同步 ⏸️ **DEFERRED 到 Phase 5 完成之后**
+### Phase 4 —— 文档 + Cross-repo 同步 ✅ **DONE 2026-05-18** (post-Phase-6)
 
-理由：Phase 5 (External CDL Input API) 会重写 SPEC v2.0 + 改动 CLAUDE.md cross-project section 内容，Phase 4 的 T4.1/T4.2 会被 Phase 5 收尾时一并 cover。先做 Phase 5 避免 doc 写两遍。
+- [x] **T4.1** `CLAUDE.md` §"Cross-project context" 完全重写: 4 个 2026-05-17 outdated facts 替换为 post-Phase-6 状态表 + MIMO-First 集成推荐写法 + Phase 7 roadmap 入口
+- [x] **T4.2** Memory `project_mimo_first_pfs_investigation.md` rewrite: 标记原 4 finding 每个的解决状态，MEMORY.md index 同步
+- [x] **T4.3** Meta-3D 开 issue #55 通知 strict_pfs + CustomCDLProfile + dual-pol 可用 + 给 MIMO-First service-side adapter 重写模板
+- [x] **T4.4** `README.md` 加 "MIMO OTA Synthesis — Method Selection" 决策树 + 4 method 状态表 + External CDL Input + Dual-Polarization 示例
 
-- [ ] **T4.1** 更新本 repo `CLAUDE.md` §"Cross-project context"：strict_pfs 已实现 + Phase 5 schema 落地，更新事实表
-- [ ] **T4.2** 更新 memory `project_mimo_first_pfs_investigation.md`
-- [ ] **T4.3** 在 MIMO-First 那边开 issue 通知 strict_pfs + Phase 5 schema 可用
-- [ ] **T4.4** README 或 GUI tooltip 加"何时用哪个 method"决策树
+**Acceptance result**:
+- ✅ CLAUDE.md 顶部 cross-project context 跟主 plan 同步 (post-Phase-6 状态)
+- ✅ Meta-3D issue #55: https://github.com/swang430/Meta-3D/issues/55 (adapter rewrite + spec link)
+- ✅ README 决策树让新 caller 5 秒内挑对 method
+- ✅ Phase 7 slant pol roadmap 入口在 CLAUDE.md + memory 都标注
 
 ---
 
