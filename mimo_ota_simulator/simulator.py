@@ -35,11 +35,23 @@ class MIMO_OTA_Simulator:
         phase_factor = np.exp(-1j * 2 * np.pi * distance / wavelength)
         return path_loss_db, phase_factor
 
-    def _synthesize_b_matrix(self, chamber_config: ChamberConfig, target_config: TargetChannelConfig) -> np.ndarray:
-        """Synthesizes the B-matrix based on physical properties."""
+    def _synthesize_b_matrix(self, chamber_config: ChamberConfig, target_config: TargetChannelConfig,
+                              frequency_hz_override: Optional[float] = None) -> np.ndarray:
+        """Synthesizes the B-matrix based on physical properties.
+
+        ``frequency_hz_override`` lets the caller force the working frequency
+        (probe geometry phase computation + free-space path loss). This is
+        required when ``input_mode='custom'`` because ``CustomCDLProfile``
+        is the source of truth for frequency, and ``TargetChannelConfig.
+        center_frequency_hz`` may still be at its 2.4 GHz default.
+        """
         num_rx_antennas = target_config.rx_antenna.num_rows * target_config.rx_antenna.num_cols
         num_effective_probes = chamber_config.num_probes * (2 if chamber_config.dual_polarized else 1)
-        center_freq_hz = target_config.center_frequency_hz
+        center_freq_hz = (
+            frequency_hz_override
+            if frequency_hz_override is not None
+            else target_config.center_frequency_hz
+        )
         speed_of_light = 299792458.0
         wavelength = speed_of_light / center_freq_hz
 
@@ -350,10 +362,31 @@ class MIMO_OTA_Simulator:
         impulse_response = []
         
         # synthesize_ota ignores random seed setting here since generation is already done
-        
+
+        # Detect frequency mismatch (Codex P2 on PR #5): when input_mode='custom'
+        # caller sets profile.center_frequency_hz as the source of truth, but
+        # channel_config.center_frequency_hz may still hold its 2.4 GHz default.
+        # The profile wins (it's the actual channel description), but warn the
+        # caller in case they intended to set both consistently.
+        if (channel_config.input_mode == 'custom'
+                and channel_config.center_frequency_hz != channel_profile.center_frequency_hz):
+            warnings.warn(
+                f"channel_config.center_frequency_hz "
+                f"({channel_config.center_frequency_hz:.3e}) differs from "
+                f"channel_profile.center_frequency_hz "
+                f"({channel_profile.center_frequency_hz:.3e}); profile wins "
+                f"(used for both B-matrix and synthesis). When input_mode='custom', "
+                f"prefer setting frequency on the CustomCDLProfile only.",
+                stacklevel=2,
+            )
+
         if B_matrix is None:
-            # Synthesize the physical B-Matrix
-            B_matrix = self._synthesize_b_matrix(chamber_config, channel_config)
+            # Synthesize the physical B-Matrix using the profile's frequency
+            # (the authoritative source post-build). See warning above.
+            B_matrix = self._synthesize_b_matrix(
+                chamber_config, channel_config,
+                frequency_hz_override=channel_profile.center_frequency_hz,
+            )
 
         wavelength = 3e8 / channel_profile.center_frequency_hz
         tx_positions = self._calculate_dut_antenna_positions(channel_config.tx_antenna, wavelength)
