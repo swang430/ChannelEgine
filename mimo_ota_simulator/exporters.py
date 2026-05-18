@@ -252,16 +252,43 @@ class PropsimASCIIExporter:
                 # phi_init may be:
                 #  - scalar (ray mode): broadcasts naturally
                 #  - (N_probes,) vector (strict_pfs): axis-specific broadcast
-                # For the vector case we use the EXPLICIT 'phi_axis' tag set by
-                # the synthesizer / reciprocity builder. Inferring axis from shape
-                # (W.shape[0] == phi.shape[0] vs W.shape[1] == phi.shape[0]) is
-                # ambiguous when W is square (num_tx == num_probes) and silently
-                # picked the wrong axis on UL — see PR #1 review comment.
+                #
+                # Dispatch precedence:
+                #  1. Scalar phi: broadcast natively, axis irrelevant
+                #  2. Vector phi WITH 'phi_axis' tag (internal synthesizer +
+                #     reciprocity builder always set this): trust the tag,
+                #     validate shape, apply.
+                #  3. Vector phi WITHOUT 'phi_axis' tag (external callers /
+                #     older saved results following the documented schema):
+                #     fall back to shape inference — works for non-square
+                #     W_base where phi.shape[0] matches exactly one axis.
+                #     Only fail when shape is genuinely ambiguous (square W
+                #     and phi matches both axes).
                 if np.ndim(phi) == 0:
                     phi_factor = np.exp(1j * phi)
                 else:
-                    axis = r.get('phi_axis', 'row')
-                    if axis == 'row':
+                    axis = r.get('phi_axis')
+                    if axis is None:
+                        # Untagged: infer from shape if unambiguous
+                        match_row = (phi.shape[0] == W.shape[0])
+                        match_col = (phi.shape[0] == W.shape[1])
+                        if match_row and match_col:
+                            raise ValueError(
+                                f"Ambiguous phi_init axis: W_base is square "
+                                f"{W.shape} and phi.shape[0]={phi.shape[0]} matches "
+                                f"both axes. Tag the ray_component with "
+                                f"phi_axis='row' (DL) or 'col' (UL) to disambiguate."
+                            )
+                        if match_row:
+                            phi_factor = np.exp(1j * phi)[:, None]
+                        elif match_col:
+                            phi_factor = np.exp(1j * phi)[None, :]
+                        else:
+                            raise ValueError(
+                                f"phi_init shape {phi.shape} cannot broadcast against "
+                                f"W_base shape {W.shape} on either axis."
+                            )
+                    elif axis == 'row':
                         if phi.shape[0] != W.shape[0]:
                             raise ValueError(
                                 f"phi_axis='row' but phi.shape[0]={phi.shape[0]} != "

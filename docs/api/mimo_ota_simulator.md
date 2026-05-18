@@ -99,7 +99,8 @@ result = sim.run(chamber, channel, synthesis_method='strict_pfs')
     'ray_components':             List[{'W_base':       ndarray (P, Tx),
                                         'phi_init':     float | ndarray (P,),
                                         'doppler_hz':   float,
-                                        'cluster_index': int}] | None,
+                                        'cluster_index': int,
+                                        'phi_axis':     'row' | 'col' (optional)}] | None,
     'probe_phase_jitter_vector':  ndarray (P,) | None,
     'probe_tx_power_contributions': ndarray,
     'cluster_probe_mapping':      Dict[int, ndarray],
@@ -124,6 +125,22 @@ result = sim.run(chamber, channel, synthesis_method='strict_pfs')
 
 UL 镜像下 `ray_components_ul[i]['phi_init'] = -ray_components[i]['phi_init']`
 （element-wise negation，works for both scalar and vector）。
+
+### `phi_axis` 字段（optional, vector phi_init only）
+
+当 `phi_init` 是向量时（strict_pfs），exporter 需要知道它应该 broadcast 到
+W_base 的哪个轴。约定：
+
+- `'row'` — phi 对齐 `W_base` 第 0 维 (DL: probe axis)
+- `'col'` — phi 对齐 `W_base` 第 1 维 (UL after transpose: probe axis)
+
+**内部 simulator + reciprocity builder 总会设置此 tag**。
+
+**外部 caller / 老存档 ray_components** 不带此 tag 也可以：exporter 会从
+shape 推断 axis（仅在 W_base 是 square 即 `num_tx == num_probes` 时才无法
+推断并抛 `ValueError` 提示需手动加 tag）。
+
+scalar `phi_init`（ray/cluster/pinv）不需要也忽略此字段。
 
 ---
 

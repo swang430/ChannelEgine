@@ -300,6 +300,131 @@ class TestStrictPfsSmoke(unittest.TestCase):
         self.assertGreater(len(files), 0)
 
 
+class TestExporterPhiAxisFallback(unittest.TestCase):
+    """PR #3 Codex P2 follow-up: exporter shape-inference fallback for untagged phi_init.
+
+    Background: PR #3 (commit 7ca06ae) introduced 'phi_axis' tag and removed
+    shape inference entirely, defaulting to 'row'. Codex (P2 on PR #3) pointed
+    out this breaks external callers / older saved results that follow the
+    documented ray_components schema (which doesn't list phi_axis) and pass
+    UL ray_components — the default 'row' is wrong for transposed UL W_base
+    even when shape inference would unambiguously pick 'col'.
+
+    Revised dispatch precedence (this fix):
+      1. Scalar phi: native broadcast (unchanged)
+      2. Vector phi WITH phi_axis tag: trust tag, validate shape
+      3. Vector phi WITHOUT phi_axis tag: infer from shape; raise only when
+         W is square (genuinely ambiguous)
+    """
+
+    def setUp(self):
+        self.base = '_axis_fallback_test.asc'
+        # Reuse a strict_pfs result as scaffolding to mutate ray_components
+        self.chamber = ChamberConfig(
+            num_probes=8, distribution='ring', radius_m=1.5, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=42,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            force_condition='NLOS', ue_velocity=(3.0, 0.0, 0.0),
+            enable_ul_dl=True, reciprocity_transform='conjugate_transpose',
+        )
+        np.random.seed(42)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            self.result = MIMO_OTA_Simulator().run(
+                self.chamber, channel, synthesis_method='strict_pfs',
+            )
+
+    def tearDown(self):
+        for f in glob.glob(self.base.replace('.asc', '*.asc')):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+    def _strip_axis(self, ray_components):
+        """Return a deep copy with 'phi_axis' tag removed — simulates external
+        caller / older saved result that doesn't know about the tag."""
+        stripped = []
+        for rc in ray_components:
+            new_rc = {k: v for k, v in rc.items() if k != 'phi_axis'}
+            stripped.append(new_rc)
+        return stripped
+
+    def _export(self, ray_components, direction='dl'):
+        result = dict(self.result)
+        key = 'ray_components' if direction == 'dl' else 'ray_components_ul'
+        result[key] = ray_components
+        cfg = PropsimExportConfig(
+            filename=self.base, mode='B', duration_s=0.01, sample_rate_hz=1000,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            PropsimASCIIExporter(cfg).export(result, direction=direction)
+        return glob.glob(self.base.replace('.asc', '*.asc'))
+
+    def test_untagged_dl_vector_phi_infers_row(self):
+        """Untagged DL ray_components (W shape (P, Tx)=(8, 2)) → infer 'row'."""
+        stripped = self._strip_axis(self.result['ray_components'])
+        # Sanity: no tag, W non-square (P != Tx)
+        self.assertNotIn('phi_axis', stripped[0])
+        self.assertEqual(stripped[0]['W_base'].shape, (8, 2))
+        # Should infer 'row' and export OK
+        files = self._export(stripped, direction='dl')
+        self.assertGreater(len(files), 0)
+
+    def test_untagged_ul_vector_phi_infers_col(self):
+        """Untagged UL ray_components (W shape (Tx, P)=(2, 8)) → infer 'col'.
+
+        This is the case Codex flagged: pre-PR-#3 behavior worked here via
+        shape inference. PR #3 made default 'row' which broke it. This test
+        pins the restored inference path.
+        """
+        stripped = self._strip_axis(self.result['ray_components_ul'])
+        self.assertNotIn('phi_axis', stripped[0])
+        self.assertEqual(stripped[0]['W_base'].shape, (2, 8))  # UL transposed
+        files = self._export(stripped, direction='ul')
+        self.assertGreater(len(files), 0)
+
+    def test_untagged_square_W_raises_ambiguous(self):
+        """Untagged + W square (Tx == P): inference cannot pick → raise clearly.
+
+        This is the ONLY case where the user must provide a tag. Error message
+        must tell them how to fix it.
+        """
+        # Construct a square scenario: 4 probes × 4 Tx
+        chamber_sq = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.5, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel_sq = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=42,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=4, spacing_h=0.5),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=2, spacing_h=0.5),
+            force_condition='NLOS', ue_velocity=(3.0, 0.0, 0.0),
+            enable_ul_dl=True, reciprocity_transform='conjugate_transpose',
+        )
+        np.random.seed(42)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            r_sq = MIMO_OTA_Simulator().run(chamber_sq, channel_sq, synthesis_method='strict_pfs')
+        stripped = self._strip_axis(r_sq['ray_components_ul'])
+        # W is square (4, 4); phi is (4,) → matches both axes
+        self.assertEqual(stripped[0]['W_base'].shape, (4, 4))
+        self.assertEqual(stripped[0]['phi_init'].shape, (4,))
+
+        with self.assertRaises(ValueError) as ctx:
+            self._export(stripped, direction='ul')
+        msg = str(ctx.exception)
+        self.assertIn('Ambiguous', msg)
+        self.assertIn('phi_axis', msg)  # error tells user how to fix
+
+
 class TestStrictPfsConvergenceSpeed(unittest.TestCase):
     """T2.2 (Phase 2): strict_pfs 2nd-moment estimator variance not worse than ray+jitter.
 
