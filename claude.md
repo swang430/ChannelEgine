@@ -1,70 +1,95 @@
 # ChannelEngine - 3GPP TR 38.901 信道模型与MIMO OTA仿真器
 
-## ⭐ Cross-project context (last updated 2026-05-17)
+## ⭐ Cross-project context (last updated 2026-05-18, post-Phase-6)
 
 > 本节是 cross-repo coordination notes，**任何 AI session 或新加入的开发者进入本 repo 时应先读完这里**。
-> 详细数学推导 + spec 引用见姊妹 repo [`MIMO-First`](https://github.com/swang430/Meta-3D) 下的
-> [`docs/features/calibration/pfs-phase-immunity.md`](../MIMO-First/docs/features/calibration/pfs-phase-immunity.md)
-> （路径相对 `~/Tools/`；如本地无该 repo, 见 PR #52 / commit `35bb1b8`）。
+> 详细 strict-PFS rollout 完整 plan 见 [`docs/plans/strict-pfs-rollout.md`](docs/plans/strict-pfs-rollout.md)。
+> 历史背景 + spec 引用见姊妹 repo [`MIMO-First`](https://github.com/swang430/Meta-3D) 下的
+> [`docs/features/calibration/pfs-phase-immunity.md`](../MIMO-First/docs/features/calibration/pfs-phase-immunity.md)。
 
-### 关键架构事实（2026-05-17 调研定下来的）
+### 当前状态（2026-05-18, Phase 0-6 全部 merged）
 
-1. **`mimo_ota_simulator/simulator.py` 三种 synthesis method 都不是 strict PFS**
-   - `synthesis_method='pinv'` (line 374-377)：纯 deterministic 伪逆映射，无 fading 随机性 → 本质 PWS
-   - `synthesis_method='cluster'` (line 380-406)：每 cluster 单一 `phase_init` 标量 (line 213) × `np.outer(a_rx, a_tx)`，所有 probe 共享同一 g_tx 投影；`_calculate_weights_for_cluster` 返回实数 Gaussian 权重 → Architecture B
-   - `synthesis_method='ray'` (line 408-526)：每 cluster 拆 20 sub-ray，每 ray 抽一个 `phi_rnd` (line 472) 标量乘到 `(w_map_ray @ g_tx_ray)` → 同 ray 跨 probe 共享 phi_rnd，probe 间差别只来自 real Gaussian 角度权重 + 几何 Tx steering
-   - **strict PFS 应满足 `E[x_i(t) · x_j*(t)] = 0` for i ≠ j，三种方法均不满足**
+Strict-PFS rollout (PR #1, #2, #3, #4, #5, #6) 完整落地。下面是关键事实表（替换 2026-05-17 outdated 版本）：
 
-2. **`probe_phase_jitter` (line 532-545) 是 partial 缓解，不是 strict PFS**
-   - 注入 uniform `[-π, π]` 随机 per-probe 相位，集合期望意义上 cross-probe 二阶相关归零
-   - 但 per-realization 残留 coherence 不变；自由度 ~$L·M$ 倍少于 strict PFS（典型 3GPP 模型差 100-500×）
-   - **跟 phase calibration cert 互斥**：jitter 会完全覆盖 cal 提供的 per-probe 静态补偿信息
-   - 默认 OFF（line 273/284/330：`probe_phase_jitter: bool = False`）
+| 维度 | 状态 | 详情 |
+|---|---|---|
+| **`synthesis_method='strict_pfs'`** | ✅ 生产可用 (Phase 1) | per-(probe, cluster) 独立 fading；per-realization `E[A_i·A_j*]=0`；推荐用于规避输出端相位校准 |
+| `synthesis_method='ray'` | ✅ 默认 (D9 保守 opt-in 策略) | 大平均统计场景；strict_pfs 经 1-2 release 验证后可切默认 |
+| `synthesis_method='cluster'` | ⚠️ DEPRECATED (Phase 3) | rank-1 outer product，结构性不能 strict PFS；DeprecationWarning |
+| `synthesis_method='pinv'` | ⚠️ DEPRECATED + F64 broken | 不产 wideband impulse response |
+| **`probe_phase_jitter` ±180°** | ✅ Phase 0 UI 修正 | 跟 phase cal 互斥时 runtime warning + UI st.warning；strict_pfs 下 UI 自动 disable |
+| **External CDL 输入** (Phase 5) | ✅ `CustomCDLProfile` Pydantic schema | `from_file` / `from_dict` 双入口；含 XPR / K-factor / per-ray init phases 字段；SPEC v2.0 [`doc/MIMO_First_Integration_Spec.md`](doc/MIMO_First_Integration_Spec.md) |
+| **Dual-Polarization synthesizer** (Phase 6) | ✅ XPR + cross-pol init phases 真用 | `AntennaArrayConfig.polarization: Literal['V', 'H']`；TR 38.901 §7.3.2 per-cluster 2×2 pol matrix；Tx 投影在 A 矩阵，Rx 投影在 B 矩阵 |
 
-3. **`probe_phase_jitter` UI vs 代码不一致** ⚠️
-   - [`app.py:196`](app.py) Streamlit checkbox 描述 jitter 为 "+/- 10度"
-   - [`simulator.py:536`](mimo_ota_simulator/simulator.py) 实际代码 `jitter_rad = np.pi`（即 ±180°）
-   - **18× 量级差异**，两种意图操作意义完全不同（±10° 对 ensemble PFS 等价性不够；±180° 才够）
-   - **需要原作者确认 intent 后修一致** —— 在本 repo 内修
+### MIMO-First 集成路径（推荐写法 post-Phase-6）
 
-4. **跟 MIMO-First 的集成 gap** ⚠️
-   - MIMO-First 的 `channel-engine-service/app/api/endpoints/hardware_pipeline.py:224` 调 `sim.run_with_external_clusters(...)`
-   - 本 repo 中 `OTASimulator` **没有** `run_with_external_clusters` 方法（grep 全 repo 无定义）
-   - MIMO-First 微服务 real-mode 调用路径实际跑会 AttributeError；生产 ASC 生成估计直接走 `app.py` Streamlit / `gui.py` Tkinter 绕开微服务
-   - **修在 MIMO-First 那侧（适配 `sim.run()` 的实际签名）**，不在本 repo
+```python
+from mimo_ota_simulator.cdl_schema import CustomCDLProfile
+from mimo_ota_simulator.data_models import (
+    AntennaArrayConfig, ChamberConfig, TargetChannelConfig, PropsimExportConfig,
+)
+from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+from mimo_ota_simulator.exporters import PropsimASCIIExporter
 
-### 已规划的强化工作（MIMO-First roadmap P2-6）
+# MIMO-First 的 Ray-Tracing 输出 → CustomCDLProfile dict
+profile = CustomCDLProfile.from_dict({
+    'center_frequency_hz': 2.6e9, 'pathloss_db': 88.5,
+    'ue_velocity_mps': [4.17, 0.0, 0.0],   # m/s, 3-vector (NOT kph)
+    'is_los': True,
+    'k_factor_db': 10.0,                    # LOS boost per TR 38.901 §7.5.6
+    'clusters': [{
+        'delay_s': 0.0, 'power_linear': 1.0,
+        'aoa_deg': 0.0, 'aod_deg': 0.0,
+        'as_aoa_deg': 1.0, 'as_aod_deg': 0.5,
+        'xpr_db': 7.0,                       # Phase 6 dual-pol 真用
+        'initial_phases_rad': [0, 0.785, 1.57, 3.14],  # Phase 6 4 个都用
+    }],
+})
 
-**目标**：在本 repo 实现 strict PFS（per-(probe, cluster) 独立 fading），跟当前 method 共存（不破坏既有 ASC 生产）。
+# Library-level call (本 repo public API, 详见 docs/api/mimo_ota_simulator.md)
+config = TargetChannelConfig(
+    input_mode='custom', custom_profile=profile,
+    tx_antenna=AntennaArrayConfig(num_cols=2, polarization='V'),
+    rx_antenna=AntennaArrayConfig(num_cols=2, polarization='H'),  # H DUT
+)
+chamber = ChamberConfig(
+    num_probes=16, distribution='ring', radius_m=1.5,
+    dual_polarized=True,  # 必须 True 才能用 H/V/XPR
+    probe_antenna={'gain_dBi': 8.5, 'pattern': 'Isotropic'},
+)
+result = MIMO_OTA_Simulator().run(chamber, config, synthesis_method='strict_pfs')
 
-**为什么要做**：
-- Strict PFS 是 3GPP TR 37.977 默认 MPAC 方法的数学正解；当前实现是 "ray-based GSCM + optional jitter" 的近似
-- Strict PFS 跟 phase cal cert 兼容（叠加效应），jitter 跟 cal 互斥
-- 单次 realization 精度高 → 适合 first-call 单点、beam pattern 验证、低 Doppler 场景
-- 是将来 PWS 模式扩展的基础
+# F64 ASC export
+PropsimASCIIExporter(PropsimExportConfig(
+    filename='out.asc', mode='B', duration_s=0.1, sample_rate_hz=1000,
+)).export(result, direction='dl')
+```
 
-**实施草案**（4 days minimum / 6-10 days 完整）：
-- 新增 `synthesis_method` 值 `'cluster_strict'` / `'ray_strict'`
-- `cluster_strict`：每 cluster 抽 N_probes 个独立 `phase_init`；重新设计 cluster.h_matrix 维度（rank-1 outer product 结构需要重新考虑，可能要 fall back 到 ray-level 表示）
-- `ray_strict`：每 ray 的 `phi_rnd` 从标量改成 (N_probes,) 向量
-- 既有 `'cluster'` / `'ray'` 保留为 `'cluster_legacy'` / `'ray_legacy'`，向后兼容所有现有 ASC consumer
-- 新建 spatial correlation validation test：跑 N realizations 平均 achieved $\hat{R}_{m,n}$ 对照 target $R_{m,n}$，confirm strict 模式收敛 ~$L·M$ × 快
-- 验证 strict + phase cal cert **叠加正确**（区别于 jitter 互斥）
+### 已知 MIMO-First 侧 gap（**不在本 repo 范围**，需要 MIMO-First 那边修）
 
-**风险**：
-- Cluster mode 的 rank-1 issue —— strict 化要破坏 `np.outer(a_rx, a_tx) * exp(j·phase_init)` 结构，需要重新想 antenna-domain h_matrix 怎么定义，可能要回到 ray-level 才能保持 spatial correlation 数学正确
-- `.asc` 输出格式兼容 —— strict 模式 per-probe 序列长度 / 抽样率 / 文件命名规则必须跟 legacy 一致，否则 F64 / CE 播放不了
-- 需要 GCM Studio 输出作为 cross-validation 金标准（F64 + 现场，卡 CAICT trip）
+MIMO-First `channel-engine-service/app/api/endpoints/hardware_pipeline.py` 的接口跟本 repo 三层全错（Phase 3 调研 + Phase 5 §2 SPEC v2.0 详述）：
+1. 类名错：`OTASimulator` (本 repo 实际叫 `MIMO_OTA_Simulator`) → ImportError
+2. 构造签名错：本 repo `MIMO_OTA_Simulator()` 是空构造 → TypeError
+3. 方法名错：本 repo 没有 `run_with_external_clusters` (D11 决定不实现) → AttributeError
+
+实际行为：fallback 到 mock 模式 → MIMO-First 用户得到**假 .asc**。**修法**：MIMO-First 侧按上面"推荐写法"重写微服务 adapter。本 repo 决定 (D11) 不实现 `run_with_external_clusters` 等别名 —— `MIMO_OTA_Simulator.run()` 是 stable public API，service 侧适配责任在 MIMO-First。
+
+### 未来 roadmap
+
+| Phase | 状态 | 内容 |
+|---|---|---|
+| 0 / 1 / 2 / 3 / 5 / 6 | ✅ DONE | 见 `docs/plans/strict-pfs-rollout.md` |
+| 4 | ✅ DONE (本文档) | Cross-repo sync |
+| 7 | ⏸️ DEFERRED | Slant ±45° / 任意角 DUT polarization (memory: `project_phase7_slant_pol_roadmap.md`) |
 
 ### Cross-project memory (machine-local)
 
-本机 Claude session 在本 repo 工作时会自动加载下列 MIMO-First 项目记忆（路径 `~/.claude/projects/-Users-Simon-Tools-MIMO-First/memory/`）的等价副本（如已 sync）：
-- `project_pfs_phase_cal_decision.md` — 保留 phase cal 基建是为将来 PWS
-- `project_asc_synthesis_not_strict_pfs.md` — 本节 §1-4 来源
-- `project_jitter_phasecal_mutex.md` — jitter ↔ cal 互斥
-- 详细 spec 引用：TR 37.977 V14.3.0 / V18.0.0 / V19.0.0 Annex F.2 + B.1；CTIA 01.40 V6.0.1 §2.2.2.3 / §4.2.5
+本机 Claude session 在本 repo 工作时自动加载 [`~/.claude/projects/-Users-Simon-Tools-ChannelEgine/memory/MEMORY.md`](~/.claude/projects/-Users-Simon-Tools-ChannelEgine/memory/MEMORY.md)。关键 memory:
+- `project_mimo_first_pfs_investigation.md` — 历史 PFS 调研 + 当前状态指针
+- `project_strict_pfs_plan_locked.md` — 跟 swang430 对齐后锁定的 rollout 决策
+- `project_phase7_slant_pol_roadmap.md` — Phase 7 slant pol deferred 触发条件
 
-如果本机 Claude session 提示找不到 `~/.claude/projects/-Users-Simon-Tools-ChannelEgine/memory/MEMORY.md`, 那是因为本 repo 的 project-scoped memory 还没建立 —— 此时应优先以本节 cross-project context + MIMO-First 的 doc 为权威。
+详细 spec 引用：TR 38.901 V19.0.0 §7.3.2 / §7.5.6 / §7.7-2；TR 37.977 V14.3.0 / V18.0.0 / V19.0.0 Annex F.2 + B.1；CTIA 01.40 V6.0.1 §2.2.2.3 / §4.2.5。
 
 ---
 
