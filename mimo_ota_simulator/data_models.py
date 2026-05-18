@@ -14,6 +14,16 @@ class AntennaArrayConfig(BaseModel):
     num_cols: int = Field(1, gt=0, description="Number of columns in the antenna array")
     spacing_h: float = Field(0.5, description="Horizontal spacing in multiples of wavelength")
     spacing_v: float = Field(0.5, description="Vertical spacing in multiples of wavelength (for URA)")
+    polarization: Literal['V', 'H'] = Field(
+        'V',
+        description=(
+            "Antenna polarization, applied uniformly to every element of this array. "
+            "'V' = vertical (θ-polarized), 'H' = horizontal (φ-polarized). "
+            "Used by Phase 6 dual-polarization synthesizer when "
+            "ChamberConfig.dual_polarized=True. Slant / arbitrary angles are "
+            "Phase 7 (deferred); default 'V' preserves single-pol behavior."
+        ),
+    )
 
 class TargetChannelConfig(BaseModel):
     """
