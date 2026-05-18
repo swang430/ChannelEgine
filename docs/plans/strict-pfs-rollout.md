@@ -155,20 +155,29 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 
 ---
 
-### Phase 5 —— External CDL Input API（替代 Phase 4 优先）
+### Phase 5 —— External CDL Input API ✅ **DONE 2026-05-18**
 
 **Goal**: 让 MIMO-First (或任何 external caller) 能传完整 CDL 参数 (含 XPR / K-factor / per-ray init phases) 进来产 OTA + ASC。
 
 详见 [external-cdl-input-design.md](./external-cdl-input-design.md)。
 
-**Scope (per 2026-05-18 user decision)**:
-- Q1.A: 本 repo 实现 in-process API；MIMO-First 自己写微服务 (D11)
-- Q2: schema 字段 "全部真用" (XPR plumb Phase 5 + 真用 Phase 6, K-factor + per-ray init phases 真用)
-- Q3: SPEC v1.0 废弃重写 v2.0
-- Q4: Phase 5 命名
+**Sub-tasks (8 commits)**:
+- [x] **T5.1+T5.2** `CustomCDLProfile` + `CDLClusterSpec` Pydantic schema + `from_dict`/`from_file` factories (commit `66a40ed`)
+- [x] **T5.6** `EngineCluster.xpr_linear` field (Phase 5 plumb-only) (commit `5e9b6ed`)
+- [x] **T5.3** `CustomCDLBuilder` + `CustomJSONBuilder` deprecation shim (commit `0bd4e0f`)
+- [x] **T5.7** `TargetChannelConfig.custom_profile` field + create_builder routing (commit `3db235d`)
+- [x] **T5.4+T5.5** K-factor LOS boost (TR 38.901 §7.5.6) + per-ray initial phases integration (commit `8fdfda0`)
+- [x] **T5.8** E2E test: dict → strict_pfs → Propsim DL ASC (commit `46755a6`)
+- [x] **T5.9+T5.10** SPEC v2.0 rewrite + API doc CustomCDLProfile section (commit `08740bb`)
 
-**10 sub-tasks** (T5.1-T5.10): see design doc §8。
-**估时**: 3-4 工作日 (选项 B: Phase 5 plumb XPR; 真用 dual-pol 留 Phase 6)
+**Acceptance result**:
+- ✅ 115 pass + 1 skip (full suite, no regression)
+- ✅ XPR plumbed to `EngineCluster.xpr_linear` (Phase 5 status; Phase 6 真用)
+- ✅ K-factor 10 dB → first cluster 10/11, rest 1/11 (TR 38.901 §7.5.6 verified)
+- ✅ per-ray `initial_phases_rad[0]` (Θθθ) integrated into strict_pfs base phase, cross-corr contract preserved (T2.1 contract held with N=60 + π/4 base)
+- ✅ `CustomCDLProfile.from_dict` end-to-end → 16 ASC files generated
+- ✅ Legacy `CustomJSONBuilder(filepath)` still works with `DeprecationWarning`
+- ✅ SPEC v2.0 published; v1.0 deprecated with migration table
 
 ---
 
