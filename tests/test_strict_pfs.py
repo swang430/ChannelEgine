@@ -683,6 +683,47 @@ class TestStrictPfsCalSuperposition(unittest.TestCase):
             msg="effective_H identical with vs without cal — cal was silently dropped")
 
 
+class TestRunDefaultMethod(unittest.TestCase):
+    """PR #7 Codex P2 regression: MIMO_OTA_Simulator.run() default must be 'ray'.
+
+    Background: D9 (保守 opt-in 策略) explicitly says default stays 'ray', not
+    strict_pfs (let it bake before promoting). The UI defaults to 'ray' (app.py
+    selectbox index=2, gui.py combobox default). Until PR #7 Codex review, the
+    Python function signature still defaulted to 'pinv' — which is deprecated
+    AND broken for F64 export. A caller omitting synthesis_method would get
+    silently-wrong / non-exportable output despite docs/README saying ray default.
+    """
+
+    def test_default_is_ray(self):
+        """sim.run(chamber, channel) (no synthesis_method) → result equivalent to 'ray'."""
+        import warnings as _w
+        import numpy as np
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.0, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=42,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+            force_condition='NLOS',
+        )
+        sim = MIMO_OTA_Simulator()
+        with _w.catch_warnings():
+            _w.simplefilter('ignore')
+            np.random.seed(42)
+            r_default = sim.run(chamber, channel)
+            np.random.seed(42)
+            r_ray = sim.run(chamber, channel, synthesis_method='ray')
+        np.testing.assert_allclose(
+            r_default['transmit_mapping_matrix_A'],
+            r_ray['transmit_mapping_matrix_A'],
+            rtol=1e-12, atol=1e-12,
+            err_msg="MIMO_OTA_Simulator.run() default differs from explicit 'ray'",
+        )
+
+
 class TestRayRegression(unittest.TestCase):
     """T2.4: ray-mode bit-identical regression against golden baseline.
 
