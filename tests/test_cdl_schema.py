@@ -166,5 +166,94 @@ class TestFromFile(unittest.TestCase):
             os.remove(path)
 
 
+class TestCustomCDLBuilder(unittest.TestCase):
+    """T5.3: CustomCDLBuilder + CustomJSONBuilder deprecation shim smoke tests."""
+
+    def setUp(self):
+        from mimo_ota_simulator.channel_builders import CustomCDLBuilder
+        self.CustomCDLBuilder = CustomCDLBuilder
+
+    def test_new_builder_basic(self):
+        """CustomCDLBuilder takes a CustomCDLProfile and produces UniversalChannelProfile."""
+        profile = CustomCDLProfile.from_dict(VALID_PROFILE)
+        result = self.CustomCDLBuilder(profile).build()
+        self.assertEqual(result.center_frequency_hz, 2.6e9)
+        self.assertEqual(len(result.clusters), 2)
+        # Power normalized to sum 1.0
+        total = sum(c.power for c in result.clusters)
+        self.assertAlmostEqual(total, 1.0, places=10)
+        # Geometric fields plumbed
+        self.assertEqual(result.clusters[0].aoa_phi, 10.0)
+        self.assertEqual(result.clusters[0].aod_phi, -15.0)
+
+    def test_new_builder_plumbs_xpr(self):
+        """xpr_db → EngineCluster.xpr_linear (dB → linear conversion)."""
+        d = {**VALID_PROFILE}
+        d['clusters'] = [{**VALID_CLUSTER, 'xpr_db': 7.0}]
+        profile = CustomCDLProfile.from_dict(d)
+        result = self.CustomCDLBuilder(profile).build()
+        # 7 dB = 10^(7/10) ≈ 5.012
+        self.assertAlmostEqual(result.clusters[0].xpr_linear, 10 ** 0.7, places=6)
+
+    def test_new_builder_plumbs_initial_phases(self):
+        """initial_phases_rad list → np.ndarray on EngineCluster."""
+        import numpy as np
+        d = {**VALID_PROFILE}
+        d['clusters'] = [{**VALID_CLUSTER, 'initial_phases_rad': [0.1, 0.2, 0.3, 0.4]}]
+        profile = CustomCDLProfile.from_dict(d)
+        result = self.CustomCDLBuilder(profile).build()
+        self.assertIsInstance(result.clusters[0].initial_phases, np.ndarray)
+        self.assertEqual(result.clusters[0].initial_phases.shape, (4,))
+        np.testing.assert_allclose(
+            result.clusters[0].initial_phases, [0.1, 0.2, 0.3, 0.4]
+        )
+
+    def test_new_builder_rejects_non_profile(self):
+        """Caller must pass a CustomCDLProfile, not a dict directly."""
+        with self.assertRaises(TypeError):
+            self.CustomCDLBuilder(VALID_PROFILE)  # raw dict, should error
+
+    def test_legacy_json_builder_still_works_with_warning(self):
+        """CustomJSONBuilder (v1.0 file path) still works + emits DeprecationWarning."""
+        import warnings as _warnings
+        from mimo_ota_simulator.channel_builders import CustomJSONBuilder
+        # Legacy v1.0 format
+        legacy_data = {
+            'global_params': {
+                'center_frequency_hz': 2.6e9,
+                'pathloss_db': 85.0,
+                'ue_velocity_kph': [15.0, 0.0, 0.0],
+            },
+            'clusters': [
+                {'delay_s': 0.0, 'power_relative_linear': 0.7, 'aoa_deg': 10, 'aod_deg': -15,
+                 'as_aoa_deg': 5.0, 'as_aod_deg': 2.0},
+            ],
+            'is_los': True,
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(legacy_data, f)
+            path = f.name
+        try:
+            with _warnings.catch_warnings(record=True) as w:
+                _warnings.simplefilter('always')
+                builder = CustomJSONBuilder(path)
+                result = builder.build()
+            # Did the deprecation warning fire?
+            deprecation_msgs = [
+                str(wi.message) for wi in w
+                if issubclass(wi.category, DeprecationWarning)
+                and 'CustomJSONBuilder' in str(wi.message)
+            ]
+            self.assertGreater(len(deprecation_msgs), 0)
+            # And output is sane
+            self.assertEqual(result.center_frequency_hz, 2.6e9)
+            self.assertEqual(len(result.clusters), 1)
+            # ue_velocity converted kph→mps via legacy shim
+            import numpy as np
+            np.testing.assert_allclose(result.ue_velocity, [15 * 1000 / 3600, 0.0, 0.0])
+        finally:
+            os.remove(path)
+
+
 if __name__ == '__main__':
     unittest.main()

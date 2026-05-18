@@ -1,8 +1,10 @@
 import json
+import warnings
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List
 from mimo_ota_simulator.data_models import TargetChannelConfig, UniversalChannelProfile
+from mimo_ota_simulator.cdl_schema import CustomCDLProfile
 from channel_model_38901.common.data_models import EngineCluster
 from channel_model_38901.simulator import ChannelSimulator
 
@@ -72,9 +74,91 @@ class Standard3GPPBuilder(ChannelProfileBuilder):
             is_los=results['is_los']
         )
 
+class CustomCDLBuilder(ChannelProfileBuilder):
+    """Builds a UniversalChannelProfile from a validated CustomCDLProfile (Phase 5 T5.3).
+
+    Caller responsibility:
+      profile = CustomCDLProfile.from_file(path)  # or from_dict(d)
+      builder = CustomCDLBuilder(profile)
+      channel_profile = builder.build()
+
+    This builder is the preferred path for external CDL input (MIMO-First
+    micro-service, GUI uploads, scripts). It supersedes ``CustomJSONBuilder``
+    which is now a thin deprecation shim.
+    """
+
+    def __init__(self, profile: CustomCDLProfile):
+        if not isinstance(profile, CustomCDLProfile):
+            raise TypeError(
+                f"CustomCDLBuilder expects a CustomCDLProfile object; got "
+                f"{type(profile).__name__}. Use CustomCDLProfile.from_dict(d) "
+                f"or CustomCDLProfile.from_file(path) to construct one."
+            )
+        self.profile = profile
+
+    def build(self) -> UniversalChannelProfile:
+        clusters: List[EngineCluster] = []
+        for c in self.profile.clusters:
+            # Convert xpr from dB to linear (Phase 5 plumb-only, see EngineCluster docstring)
+            xpr_linear = (10 ** (c.xpr_db / 10.0)) if c.xpr_db is not None else None
+            # initial_phases: stored as numpy (4,) array when provided. Phase 5
+            # uses index 0 (Θθθ) in strict_pfs T5.5; indices 1-3 plumbed for Phase 6.
+            init_phases = (
+                np.asarray(c.initial_phases_rad, dtype=float)
+                if c.initial_phases_rad is not None
+                else None
+            )
+            clusters.append(EngineCluster(
+                delay=c.delay_s,
+                power=c.power_linear,
+                aod_phi=c.aod_deg,
+                aoa_phi=c.aoa_deg,
+                zod_theta=c.zod_deg,
+                zoa_theta=c.zoa_deg,
+                as_aod=c.as_aod_deg,
+                as_aoa=c.as_aoa_deg,
+                as_zod=c.as_zod_deg,
+                as_zoa=c.as_zoa_deg,
+                k_n=1.0,  # global K-factor (k_factor_db) applied in T5.4 separately
+                initial_phases=init_phases,
+                xpr_linear=xpr_linear,
+            ))
+
+        # Normalize cluster powers to sum to 1.0 (defensive — schema doesn't enforce)
+        total_power = sum(c.power for c in clusters)
+        if total_power > 0:
+            for c in clusters:
+                c.power /= total_power
+
+        # T5.4 K-factor LOS boost lands here in a subsequent commit.
+
+        return UniversalChannelProfile(
+            center_frequency_hz=self.profile.center_frequency_hz,
+            ue_velocity=np.array(self.profile.ue_velocity_mps),
+            pathloss_db=self.profile.pathloss_db,
+            clusters=clusters,
+            lsps=None,
+            is_los=self.profile.is_los,
+        )
+
+
 class CustomJSONBuilder(ChannelProfileBuilder):
-    """Builds a channel profile by loading explicit clusters from a custom JSON file."""
+    """**DEPRECATED**: use ``CustomCDLBuilder(CustomCDLProfile.from_file(path))``.
+
+    Backward-compat shim that accepts a JSON file path. Schema is the legacy
+    v1.0 format (flat ``global_params`` + ``clusters`` with field names like
+    ``power_relative_linear``, ``ue_velocity_kph``). For new code use the
+    Pydantic-validated path via ``CustomCDLBuilder``.
+    """
+
     def __init__(self, json_filepath: str):
+        warnings.warn(
+            "CustomJSONBuilder is deprecated and will be removed in a future "
+            "release. Use CustomCDLBuilder(CustomCDLProfile.from_file(path)) "
+            "instead. See docs/plans/external-cdl-input-design.md §5.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.json_filepath = json_filepath
 
     def build(self) -> UniversalChannelProfile:
@@ -83,48 +167,42 @@ class CustomJSONBuilder(ChannelProfileBuilder):
                 data = json.load(f)
         except Exception as e:
             raise ValueError(f"Failed to read custom channel profile {self.json_filepath}: {str(e)}")
-            
+
+        # Legacy v1.0 → bridge into the v2.0 schema where possible
         global_params = data.get('global_params', {})
         clusters_data = data.get('clusters', [])
-        
+
         center_frequency_hz = global_params.get('center_frequency_hz', 2.4e9)
         pathloss_db = global_params.get('pathloss_db', 100.0)
-        vel = global_params.get('ue_velocity_kph', [0.0, 0.0, 0.0])
-        # Convert kph to m/s
-        ue_velocity = np.array(vel) * (1000.0 / 3600.0)
-        
-        clusters = []
+        vel_kph = global_params.get('ue_velocity_kph', [0.0, 0.0, 0.0])
+        if not isinstance(vel_kph, (list, tuple)):
+            vel_kph = [float(vel_kph), 0.0, 0.0]
+        vel_mps = [v * (1000.0 / 3600.0) for v in vel_kph]
+
+        # Map legacy field names to v2.0 cluster spec
+        v2_clusters = []
         for c in clusters_data:
-            clusters.append(EngineCluster(
-                delay=c.get('delay_s', 0.0),
-                power=c.get('power_relative_linear', 0.0),
-                aod_phi=c.get('aod_deg', 0.0),
-                aoa_phi=c.get('aoa_deg', 0.0),
-                zod_theta=c.get('zod_deg', 90.0),
-                zoa_theta=c.get('zoa_deg', 90.0),
-                as_aod=c.get('as_aod_deg', 0.0),
-                as_aoa=c.get('as_aoa_deg', 0.0),
-                as_zod=c.get('as_zod_deg', 0.0),
-                as_zoa=c.get('as_zoa_deg', 0.0),
-                k_n=1.0,
-                # Random initial phases to avoid deterministic coherent additions across all tests
-                initial_phases=np.random.uniform(-np.pi, np.pi, size=(4,))
-            ))
-            
-        # Normalize powers to sum to 1.0 (linear) to be safe
-        total_power = sum(c.power for c in clusters)
-        if total_power > 0:
-            for c in clusters:
-                c.power /= total_power
-                
-        return UniversalChannelProfile(
-            center_frequency_hz=center_frequency_hz,
-            ue_velocity=ue_velocity,
-            pathloss_db=pathloss_db,
-            clusters=clusters,
-            lsps=None,
-            is_los=data.get('is_los', False)
-        )
+            v2_clusters.append({
+                'delay_s': c.get('delay_s', 0.0),
+                'power_linear': c.get('power_relative_linear', c.get('power_linear', 1.0)),
+                'aoa_deg': c.get('aoa_deg', 0.0),
+                'aod_deg': c.get('aod_deg', 0.0),
+                'zoa_deg': c.get('zoa_deg', 90.0),
+                'zod_deg': c.get('zod_deg', 90.0),
+                'as_aoa_deg': c.get('as_aoa_deg', 0.0),
+                'as_aod_deg': c.get('as_aod_deg', 0.0),
+                'as_zoa_deg': c.get('as_zoa_deg', 0.0),
+                'as_zod_deg': c.get('as_zod_deg', 0.0),
+            })
+
+        profile = CustomCDLProfile.from_dict({
+            'center_frequency_hz': center_frequency_hz,
+            'pathloss_db': pathloss_db,
+            'ue_velocity_mps': vel_mps,
+            'is_los': data.get('is_los', False),
+            'clusters': v2_clusters,
+        })
+        return CustomCDLBuilder(profile).build()
 
 def create_builder(config: TargetChannelConfig) -> ChannelProfileBuilder:
     """Factory method to create the appropriate channel builder based on input config."""
