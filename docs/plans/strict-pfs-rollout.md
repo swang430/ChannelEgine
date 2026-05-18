@@ -79,24 +79,27 @@
 
 ---
 
-### Phase 1 —— Strict PFS 核心实现（3-4 工作日）
+### Phase 1 —— Strict PFS 核心实现 ✅ **DONE 2026-05-18**
 
 **Goal**: `synthesis_method='strict_pfs'` 可用，per-(probe, cluster) 独立 fading
 
-- [ ] **T1.1** 在 `simulator.py` 加 `synthesis_method` 第 4 个值 `'strict_pfs'`；schema/validation 更新
-- [ ] **T1.2** 设计 per-(probe, cluster) 独立 fading 数据结构（参考 ray 现有 `phi_rnd` 标量，扩展为 `(N_probes,)` 向量；命名待定）
-- [ ] **T1.3** 实现 strict_pfs 合成路径：每 cluster 每 probe 独立抽 phase；保持现有 angle/AS Gaussian weight 不变
-- [ ] **T1.4** 复用现有 Tx steering vector 计算逻辑（不重写）
-- [ ] **T1.5** 复用现有 Doppler / `ray_components` 数据结构（向 strict_pfs 兼容方式扩展）
-- [ ] **T1.6** ASC F64 export adapter：确认 strict_pfs 输出能喂给现有 F64 writer 不需特殊化（D6 假设验证 —— **这是方案 go/no-go 关键节点**）
-- [ ] **T1.7** UI 在 `app.py` / `gui.py` 加 `strict_pfs` 选项；标 "推荐（无需输出相位校准）"
-- [ ] **T1.8** `strict_pfs` 模式下 jitter checkbox 自动 disable + tooltip 说明
-- [ ] **T1.9** 文档化 `MIMO_OTA_Simulator.run()` 作为 stable public API（docstring + 一段 README）；不实现 adapter 方法（D11）—— MIMO-First 那边自己适配
+- [x] **T1.6** F64 兼容性 POC GO/NO-GO gate (commit `f71c0bb`)
+- [x] **T1.1** synthesis_method='strict_pfs' 路由 slot + Literal type (commit `e5c0989`)
+- [x] **T1.2** phi_init 数据契约 lock + 4 unit tests (commit `558751a`)
+- [x] **T1.3** strict_pfs 完整合成路径（merged with ray branch, 3-line delta）(commit `54017cf`)
+- [x] **T1.4** Tx steering / w_map reuse 验证（实现自证, 同 commit `54017cf`）
+- [x] **T1.5** UL/DL Option A reciprocity + axis-aware exporter broadcast (commit `92cdf8c`)
+- [x] **T1.7** UI 加 strict_pfs 选项 app.py + gui.py (commit `efe19fc`)
+- [x] **T1.8** UI strict_pfs ⇄ jitter mutex (Streamlit disabled=True + simulator runtime warn) (commit `efe19fc`)
+- [x] **T1.9** docs/api/mimo_ota_simulator.md public API contract (commit `929ed30`)
 
-**Acceptance**:
-- `synthesis_method='strict_pfs'` 路径可跑通；输出 `.asc` 文件可被 F64 reader 解析
-- UI 四个 method (`ray` / `cluster` / `pinv` / `strict_pfs`) 可切换；不需重启
-- 单 realization 跑通无 numerical NaN/Inf
+**Acceptance result**:
+- ✅ `synthesis_method='strict_pfs'` 跑通；F64 .asc 8 文件 82637 bytes (与 ray 结构一致)
+- ✅ UI 4 个 method 可切换；strict_pfs 选中时 jitter 自动 disabled
+- ✅ 单 realization A 无 NaN/Inf；strict vs ray mean abs diff 0.35 (RNG state divergent，对)
+- ✅ UL/DL: DL (8,2) ↔ UL (2,8)，phi_ul == -phi_dl，UL export 165047 bytes
+- ✅ Warning matrix 4/4 case 正确（strict+jitter / strict alone / ray+jitter / ray alone）
+- ✅ 测试: 15/15 pass (4 phi_init contract + 4 strict_pfs smoke + 7 regression)
 
 ---
 
@@ -194,3 +197,4 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 - 2026-05-18: Initial draft (Claude + @swang430). 决策 D1-D10 锁定；GCM Studio 移出 scope。
 - 2026-05-18: Phase 0 完成（commit `9eb1a06`）。
 - 2026-05-18: Phase 3 完成；D3/D4 lock 为 deprecate；新增 D11（不为 MIMO-First 实现 adapter）+ T1.9（API 文档化）。MIMO-First 三层 API gap 发现记入 §Phase 3。
+- 2026-05-18: Phase 1 完成 (feature/strict-pfs branch, commits f71c0bb..929ed30, 6 commits)。剩 Phase 2 (statistical validation tests) + Phase 4 (cross-repo sync)。
