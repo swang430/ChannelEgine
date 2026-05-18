@@ -300,6 +300,98 @@ class TestStrictPfsSmoke(unittest.TestCase):
         self.assertGreater(len(files), 0)
 
 
+class TestStrictPfsCrossCorrelation(unittest.TestCase):
+    """T2.1 (Phase 2): per-realization cross-correlation E[A_i · A_j*] → 0 for i≠j.
+
+    Math contract A (design §2):
+      strict_pfs draws independent phi_rnd[p] per probe per ray,
+      so cross-probe second-order correlation collapses in expectation.
+      ray mode (scalar phi shared across probes) keeps geometry-driven coupling.
+
+    Test averages over N realizations and checks normalized correlation coefficient
+    matrix's off-diagonal magnitude. strict_pfs should converge near 0 (noise floor
+    ~ 1/sqrt(N)); ray should retain a significant geometric residual.
+    """
+
+    N_REALIZATIONS = 80   # noise floor ~ 1/sqrt(80) ~ 0.11
+    # Use MEAN off-diag (more stable than MAX, which over P*(P-1)/2=120 entries
+    # picks up extreme-value tail ~ noise_floor × sqrt(2 ln 120) ~ 0.34).
+    THRESHOLD_STRICT_MEAN_OFF_DIAG = 0.20   # < 2x noise floor (0.11)
+    THRESHOLD_RATIO_RAY_OVER_STRICT = 1.8   # ray mean off-diag must be >1.8x strict's
+
+    def setUp(self):
+        self.chamber = ChamberConfig(
+            num_probes=16, distribution='ring', radius_m=1.5, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        self.channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name='CDL-C',
+            center_frequency_hz=3.5e9, random_seed=None,
+            tx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_rows=1, num_cols=1),
+            force_condition='NLOS',
+        )
+
+    def _empirical_corr_coeff(self, method):
+        """Run N realizations, return normalized correlation coefficient matrix
+        of the probe-domain A vector (column 0)."""
+        P = self.chamber.num_probes
+        R_sum = np.zeros((P, P), dtype=complex)
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            for k in range(self.N_REALIZATIONS):
+                np.random.seed(1000 + k)  # vary seed per realization
+                channel_k = self.channel.model_copy()
+                channel_k.random_seed = 1000 + k
+                res = sim.run(self.chamber, channel_k, synthesis_method=method)
+                a = res['transmit_mapping_matrix_A'][:, 0]  # (P,)
+                R_sum += np.outer(a, a.conj())
+        R_mean = R_sum / self.N_REALIZATIONS
+        # Normalize to correlation coefficient
+        d = np.sqrt(np.abs(np.diag(R_mean)))
+        denom = np.outer(d, d)
+        denom = np.where(denom < 1e-15, 1e-15, denom)  # avoid /0 on dead probes
+        return R_mean / denom
+
+    @staticmethod
+    def _mean_off_diag(rho):
+        P = rho.shape[0]
+        return np.abs(rho[~np.eye(P, dtype=bool)]).mean()
+
+    def test_strict_pfs_and_ray_off_diagonal_contrast(self):
+        """Two contracts in one test (avoids running 80 realizations × 2 modes twice):
+
+        Primary: strict_pfs mean off-diag |rho| < threshold (converges to 0)
+        Negative control: ray mean off-diag > strict_pfs's by factor >= ratio
+            (proves the test isn't trivially satisfied by sample size — same N
+             both methods, only strict_pfs collapses).
+        """
+        rho_strict = self._empirical_corr_coeff('strict_pfs')
+        rho_ray    = self._empirical_corr_coeff('ray')
+        m_strict = self._mean_off_diag(rho_strict)
+        m_ray    = self._mean_off_diag(rho_ray)
+
+        # Contract A: strict_pfs converges
+        self.assertLess(
+            m_strict, self.THRESHOLD_STRICT_MEAN_OFF_DIAG,
+            msg=(f"strict_pfs mean off-diag |rho|={m_strict:.4f} >= threshold "
+                 f"{self.THRESHOLD_STRICT_MEAN_OFF_DIAG} "
+                 f"(noise floor ~ {1/np.sqrt(self.N_REALIZATIONS):.3f}). "
+                 f"ray mean for context: {m_ray:.4f}.")
+        )
+        # Contract B: ray retains geometric coupling (negative control)
+        ratio = m_ray / max(m_strict, 1e-9)
+        self.assertGreater(
+            ratio, self.THRESHOLD_RATIO_RAY_OVER_STRICT,
+            msg=(f"ray/strict mean off-diag ratio={ratio:.2f} < "
+                 f"{self.THRESHOLD_RATIO_RAY_OVER_STRICT}. "
+                 f"strict={m_strict:.4f} ray={m_ray:.4f}. Either test config is "
+                 f"too benign (no geometric coupling to detect) or ray-mode behavior "
+                 f"unexpectedly converges (bug?).")
+        )
+
+
 class TestStrictPfsCalSuperposition(unittest.TestCase):
     """T2.3 (Phase 2): strict_pfs + calibration_vector 叠加正确性 (Plan D8).
 
