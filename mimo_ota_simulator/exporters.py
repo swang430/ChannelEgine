@@ -247,7 +247,25 @@ class PropsimASCIIExporter:
             
             eff_list = []
             for r in rays:
-                w = r['W_base'] * np.exp(1j * r['phi_init']) * scaling_factor * cal_vector
+                phi = r['phi_init']
+                W = r['W_base']
+                # phi_init may be:
+                #  - scalar (ray mode): broadcasts naturally
+                #  - (N_probes,) vector (strict_pfs):
+                #      DL: W shape (P, Tx) -> broadcast on rows -> [:, None]
+                #      UL: W shape (Tx, P) after transpose -> broadcast on cols -> [None, :]
+                if np.ndim(phi) == 0:
+                    phi_factor = np.exp(1j * phi)
+                elif phi.shape[0] == W.shape[0]:
+                    phi_factor = np.exp(1j * phi)[:, None]
+                elif phi.shape[0] == W.shape[1]:
+                    phi_factor = np.exp(1j * phi)[None, :]
+                else:
+                    raise ValueError(
+                        f"phi_init shape {phi.shape} cannot broadcast against "
+                        f"W_base shape {W.shape}"
+                    )
+                w = W * phi_factor * scaling_factor * cal_vector
                 eff_list.append({'W': w, 'w_doppler': 2*np.pi*r['doppler_hz']})
             
             if eff_list:

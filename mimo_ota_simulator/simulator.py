@@ -269,7 +269,7 @@ class MIMO_OTA_Simulator:
         return h_matrix[0:1, :]
 
     def run(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
-            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
             probe_phase_jitter: bool = False) -> Dict:
         """Legacy entry point, delegates to builder and synthesize_ota."""
         if channel_config.standard == 'wifi':
@@ -280,7 +280,7 @@ class MIMO_OTA_Simulator:
         return self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter)
 
     def _run_wifi(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
-            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
             probe_phase_jitter: bool = False) -> Dict:
         num_tx_antennas = channel_config.tx_antenna.num_cols * channel_config.tx_antenna.num_rows
         num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
@@ -326,7 +326,7 @@ class MIMO_OTA_Simulator:
 
     def synthesize_ota(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
             channel_profile: UniversalChannelProfile,
-            synthesis_method: Literal['pinv', 'cluster', 'ray'] = 'pinv',
+            synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
             probe_phase_jitter: bool = False,
             B_matrix: Optional[np.ndarray] = None,
             target_H_matrix: Optional[np.ndarray] = None) -> Dict:
@@ -421,9 +421,18 @@ class MIMO_OTA_Simulator:
             transmit_mapping_matrix_A = A_total
             probe_tx_power_contributions = np.abs(transmit_mapping_matrix_A)**2
             
-        elif synthesis_method == 'ray':
+        elif synthesis_method in ('ray', 'strict_pfs'):
             # Ray-Level Synthesis (Geometric GSCM)
             # This reconstructs rays from cluster parameters, bypassing the 'Rank-1' issue of simplified models.
+            #
+            # Two modes share this branch (per design §2 / §3):
+            #   - 'ray':        phi_rnd is a SCALAR per ray, shared across probes.
+            #                   Cross-probe coherence is geometry-driven; strict PFS only
+            #                   holds in the ensemble-average limit and benefits from jitter.
+            #   - 'strict_pfs': phi_rnd is a (N_probes,) VECTOR with iid U[-pi, pi] entries.
+            #                   E[A_i * conj(A_j)] = 0 for i != j per-realization (true strict PFS).
+            #                   Use case: avoid output phase calibration in hardware loop.
+            use_strict_pfs = (synthesis_method == 'strict_pfs')
             
             # 1. Get Ray Offsets
             default_ray_offsets = np.array([
@@ -485,17 +494,27 @@ class MIMO_OTA_Simulator:
                     
                     # 4. Synthesize Contribution
                     # Random phase for this ray (Decorrelation source!)
-                    phi_rnd = np.random.uniform(-np.pi, np.pi)
-                    
+                    # ray mode: scalar (broadcasts to all probes — geometry-coupled).
+                    # strict_pfs mode: (N_probes,) iid vector — per-probe independent fading.
+                    if use_strict_pfs:
+                        phi_rnd = np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
+                    else:
+                        phi_rnd = np.random.uniform(-np.pi, np.pi)
+
                     # Power per ray
                     p_ray = cluster.power / 20.0
-                    
+
                     # Base Weight (without random phase, for later reconstruction)
                     # W_base = sqrt(P) * w * g_tx
                     W_base = np.sqrt(p_ray) * (w_map_ray @ g_tx_ray)
-                    
-                    # Apply random phase for current snapshot
-                    A_ray = W_base * np.exp(1j * phi_rnd)
+
+                    # Apply random phase for current snapshot.
+                    # ray:        W_base (P, Tx) * scalar      -> (P, Tx)
+                    # strict_pfs: W_base (P, Tx) * (P, 1)       -> (P, Tx) per-probe independent
+                    if use_strict_pfs:
+                        A_ray = W_base * np.exp(1j * phi_rnd)[:, None]
+                    else:
+                        A_ray = W_base * np.exp(1j * phi_rnd)
                     
                     A_total += A_ray
                     cluster_A_accum += A_ray # Accumulate for tap
@@ -546,6 +565,14 @@ class MIMO_OTA_Simulator:
 
         # Apply Probe Phase Jitter (Simulating hardware inconsistency)
         if probe_phase_jitter:
+            if synthesis_method == 'strict_pfs':
+                warnings.warn(
+                    "probe_phase_jitter=True with synthesis_method='strict_pfs': "
+                    "strict_pfs already produces per-(probe, cluster) independent fading "
+                    "(per-realization strict PFS); adding jitter is redundant and pollutes the "
+                    "intentional phase structure. Set probe_phase_jitter=False with strict_pfs.",
+                    stacklevel=2,
+                )
             if chamber_config.calibration_vector is not None:
                 warnings.warn(
                     "probe_phase_jitter=True with calibration_vector present: "
