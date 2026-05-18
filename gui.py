@@ -557,7 +557,13 @@ class ChannelModelApp(tk.Tk):
                 log_msg += f" [MIMO OTA Mode: {params['ota_method']}, Probes: {params['ota_num_probes']}]"
             self.simulation_queue.put(("log", log_msg))
 
-            np.random.seed(seed)
+            # Defensive: seed before sim.run(). MIMO_OTA_Simulator.run() now also
+            # seeds when channel_config.random_seed is set (both WiFi + 3GPP paths,
+            # fixed 2026-05-18 after GUI parity bug discovery), so this explicit
+            # call is technically redundant for the OTA flow but kept for the
+            # non-OTA ChannelSimulator path further below (which doesn't auto-seed).
+            if seed is not None:
+                np.random.seed(seed)
 
             if ota_enabled:
                 if is_wifi and not WIFI_AVAILABLE:

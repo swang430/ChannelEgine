@@ -683,6 +683,88 @@ class TestStrictPfsCalSuperposition(unittest.TestCase):
             msg="effective_H identical with vs without cal — cal was silently dropped")
 
 
+class TestRunHonorsRandomSeed3GPP(unittest.TestCase):
+    """GUI parity regression: MIMO_OTA_Simulator.run() must honor
+    channel_config.random_seed in the 3GPP path the same way _run_wifi does.
+
+    Bug story (2026-05-18): TargetChannelConfig.random_seed was stored but never
+    consumed in the 3GPP path. _run_wifi seeded np.random; the 3GPP run() did not.
+    gui.py worked around it with an explicit np.random.seed() before sim.run().
+    app.py did not, causing LSP/cluster drift across Streamlit re-runs despite
+    fixing the seed.
+
+    This test pins the fix: same random_seed + same config → identical clusters,
+    WITHOUT the caller doing any np.random.seed().
+    """
+
+    def _run_no_explicit_seed(self, random_seed):
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.0, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name=None,  # stochastic UMa = uses RNG
+            center_frequency_hz=3.5e9, random_seed=random_seed,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+            force_condition='NLOS',
+        )
+        # Caller does NOT call np.random.seed() — verify run() handles it.
+        # Pre-perturb global state to confirm seed restore actually happens.
+        np.random.uniform(size=100)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            return MIMO_OTA_Simulator().run(chamber, channel, synthesis_method='ray')
+
+    def test_same_seed_same_clusters(self):
+        """Two runs with same random_seed → identical cluster angles, powers, delays."""
+        r1 = self._run_no_explicit_seed(random_seed=42)
+        r2 = self._run_no_explicit_seed(random_seed=42)
+        c1 = r1['clusters']
+        c2 = r2['clusters']
+        self.assertEqual(len(c1), len(c2))
+        for cluster1, cluster2 in zip(c1, c2):
+            self.assertAlmostEqual(cluster1.power, cluster2.power, places=12)
+            self.assertAlmostEqual(cluster1.aoa_phi, cluster2.aoa_phi, places=12)
+            self.assertAlmostEqual(cluster1.aod_phi, cluster2.aod_phi, places=12)
+            self.assertAlmostEqual(cluster1.delay, cluster2.delay, places=15)
+
+    def test_different_seed_different_clusters(self):
+        """Negative control: different random_seed → different clusters."""
+        r_a = self._run_no_explicit_seed(random_seed=42)
+        r_b = self._run_no_explicit_seed(random_seed=7)
+        powers_a = [c.power for c in r_a['clusters']]
+        powers_b = [c.power for c in r_b['clusters']]
+        # At least one cluster differs (overwhelmingly likely for stochastic gen)
+        self.assertNotEqual(powers_a, powers_b,
+            msg="Different seeds produced same clusters — RNG not actually used?")
+
+    def test_none_seed_still_random(self):
+        """random_seed=None → run() does NOT seed; output depends on global state."""
+        # Set global state to a known value, run, then set again to same value, run.
+        # If run() doesn't auto-seed with None, both runs use the same global state → match.
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.0, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name=None,
+            center_frequency_hz=3.5e9, random_seed=None,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+            force_condition='NLOS',
+        )
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            np.random.seed(99)
+            r_a = sim.run(chamber, channel, synthesis_method='ray')
+            np.random.seed(99)
+            r_b = sim.run(chamber, channel, synthesis_method='ray')
+        # Both runs start from same global state → identical
+        self.assertAlmostEqual(r_a['clusters'][0].power, r_b['clusters'][0].power, places=12)
+
+
 class TestRunDefaultMethod(unittest.TestCase):
     """PR #7 Codex P2 regression: MIMO_OTA_Simulator.run() default must be 'ray'.
 

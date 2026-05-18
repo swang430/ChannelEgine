@@ -383,14 +383,23 @@ class MIMO_OTA_Simulator:
         """Extracts the transmit-side channel vector from a cluster's H matrix."""
         return h_matrix[0:1, :]
 
-    def run(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
+    def run(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig,
             synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'ray',
             probe_phase_jitter: bool = False) -> Dict:
         """Legacy entry point, delegates to builder and synthesize_ota."""
         if channel_config.standard == 'wifi':
-            # Keep wifi legacy path intact for now
+            # Keep wifi legacy path intact for now (it seeds at _run_wifi L407-408)
             return self._run_wifi(chamber_config, channel_config, synthesis_method, probe_phase_jitter)
-            
+
+        # 3GPP path: honor channel_config.random_seed by seeding np.random ONCE
+        # before delegating to the builder + OTA synthesis. Previously only the
+        # WiFi branch did this, so 3GPP callers saw non-reproducible LSP/cluster
+        # generation despite passing random_seed (the field was stored but unread).
+        # GUI parity bug found 2026-05-18: gui.py compensated by np.random.seed()
+        # before sim.run(); app.py did not, hence Streamlit users saw drifting LSPs.
+        if channel_config.random_seed is not None:
+            np.random.seed(channel_config.random_seed)
+
         profile = create_builder(channel_config).build()
         return self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter)
 
