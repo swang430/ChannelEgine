@@ -408,5 +408,79 @@ class TestDualPolE2E(unittest.TestCase):
         self.assertLess(ratio, expected * 1.4)
 
 
+class TestStandard3GPPXPRPlumbed(unittest.TestCase):
+    """PR #6 Codex P2 regression: standard 3GPP path must populate
+    EngineCluster.xpr_linear (canonical Phase 6 field), not just the
+    legacy `k_n` field.
+
+    Without this fix, every 3GPP-scenario cluster fell through Phase 6
+    _build_pol_matrix's fallback and used the 7 dB default XPR, silently
+    ignoring the scenario-specific generated XPR.
+
+    The fix mirrors channel_generator.py writes to both `k_n` (back-compat)
+    and `xpr_linear` (canonical).
+    """
+
+    def _generate_3gpp_clusters(self, cluster_model_name):
+        import numpy as np
+        import warnings as _warnings
+        from mimo_ota_simulator.data_models import (
+            AntennaArrayConfig, ChamberConfig, TargetChannelConfig,
+        )
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.5,
+            dual_polarized=True,  # exercises Phase 6 dual-pol path
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        config = TargetChannelConfig(
+            model_name='UMa', cluster_model_name=cluster_model_name,
+            center_frequency_hz=3.5e9,
+            tx_antenna=AntennaArrayConfig(num_cols=1, polarization='V'),
+            rx_antenna=AntennaArrayConfig(num_cols=1, polarization='V'),
+            force_condition='NLOS',
+        )
+        np.random.seed(42)
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter('always')
+            res = MIMO_OTA_Simulator().run(chamber, config, synthesis_method='strict_pfs')
+            # Capture xpr_linear fallback warnings (should be NONE)
+            xpr_fallback_warns = [
+                wi for wi in w
+                if 'EngineCluster.xpr_linear is None' in str(wi.message)
+            ]
+        return res, xpr_fallback_warns
+
+    def test_deterministic_cdl_populates_xpr_linear(self):
+        """CDL-A clusters carry scenario XPR in xpr_linear."""
+        result, warns = self._generate_3gpp_clusters('CDL-A')
+        clusters = result['clusters']
+        self.assertGreater(len(clusters), 0)
+        for i, c in enumerate(clusters):
+            self.assertIsNotNone(c.xpr_linear,
+                msg=f"CDL-A cluster {i} xpr_linear=None; Phase 6 will fall back to default")
+            self.assertGreater(c.xpr_linear, 0)
+            # k_n (legacy field) must mirror xpr_linear
+            self.assertAlmostEqual(c.k_n, c.xpr_linear, places=10,
+                msg="3GPP path: k_n and xpr_linear must mirror each other")
+        # No fallback warning emitted (xpr_linear was populated)
+        self.assertEqual(len(warns), 0,
+            msg=f"Spurious xpr fallback warnings ({len(warns)}); xpr_linear should "
+                f"have been populated by ChannelGenerator")
+
+    def test_stochastic_uma_populates_xpr_linear(self):
+        """Stochastic UMa (cluster_model_name=None / 'Stochastic') clusters
+        also carry per-cluster generated XPR in xpr_linear."""
+        result, warns = self._generate_3gpp_clusters('Stochastic')
+        clusters = result['clusters']
+        self.assertGreater(len(clusters), 0)
+        for i, c in enumerate(clusters):
+            self.assertIsNotNone(c.xpr_linear,
+                msg=f"Stochastic UMa cluster {i} xpr_linear=None")
+            self.assertGreater(c.xpr_linear, 0)
+            self.assertAlmostEqual(c.k_n, c.xpr_linear, places=10)
+        self.assertEqual(len(warns), 0)
+
+
 if __name__ == '__main__':
     unittest.main()

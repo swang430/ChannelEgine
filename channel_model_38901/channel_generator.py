@@ -189,6 +189,13 @@ class ChannelGenerator:
             zoa = c_data.get('zoa_deg', last_zoa)
             last_aod, last_aoa, last_zod, last_zoa = aod, aoa, zod, zoa
 
+            # Phase 6 fix (PR #6 Codex P2): mirror the generated linear XPR
+            # into both fields. `k_n` is the legacy name (kept for backward
+            # compat); `xpr_linear` is the canonical Phase 6+ field consumed
+            # by the dual-pol synthesizer. Until k_n is fully renamed, the
+            # 3GPP path must write both so Phase 6 _build_pol_matrix sees the
+            # scenario-specific XPR instead of the 7 dB default fallback.
+            xpr_lin = 10 ** (model_params.get('xpr_db', 11) / 10)
             cluster = EngineCluster(
                 delay=c_data['delay_ns'] * 1e-9,
                 power=normalized_power,
@@ -197,7 +204,8 @@ class ChannelGenerator:
                 as_aoa=c_data.get('as_aoa_deg', 0.0),
                 as_zod=c_data.get('as_zod_deg', 0.0),
                 as_zoa=c_data.get('as_zoa_deg', 0.0),
-                k_n=10**(model_params.get('xpr_db', 11) / 10) # 使用模型全局的XPR
+                k_n=xpr_lin,            # legacy field (was sole XPR storage)
+                xpr_linear=xpr_lin,     # canonical Phase 6+ field
             )
             clusters.append(cluster)
         return clusters
@@ -214,13 +222,17 @@ class ChannelGenerator:
         
         clusters = []
         for i in range(num_clusters):
+            # Phase 6 fix (PR #6 Codex P2): mirror per-cluster XPR into both
+            # `k_n` (legacy) and `xpr_linear` (canonical Phase 6+ field).
             clusters.append(EngineCluster(
                 delay=tau_n[i], power=P_n[i],
                 aod_phi=angles['aod_phi'][i], aoa_phi=angles['aoa_phi'][i],
                 zod_theta=angles['zod_theta'][i], zoa_theta=angles['zoa_theta'][i],
                 as_aod=lsps.departure_azimuth_spread_deg, as_aoa=lsps.arrival_azimuth_spread_deg,
                 as_zod=lsps.departure_zenith_spread_deg, as_zoa=lsps.arrival_zenith_spread_deg,
-                k_n=k_n[i], initial_phases=initial_phases[i]
+                k_n=k_n[i],
+                xpr_linear=k_n[i],
+                initial_phases=initial_phases[i],
             ))
         return clusters
 

@@ -119,7 +119,14 @@ class CustomCDLBuilder(ChannelProfileBuilder):
                 as_aoa=c.as_aoa_deg,
                 as_zod=c.as_zod_deg,
                 as_zoa=c.as_zoa_deg,
-                k_n=1.0,  # global K-factor (k_factor_db) applied in T5.4 separately
+                # NOTE: despite the legacy name `k_n` (kept for back-compat), this
+                # field stores per-cluster XPR (cross-polarization ratio), NOT the
+                # global Ricean K-factor. The K-factor LOS boost from CustomCDLProfile.
+                # k_factor_db is applied separately in T5.4 by redistributing cluster.power.
+                # Per Phase 6: canonical XPR storage is xpr_linear (set below from c.xpr_db);
+                # k_n is mirrored to xpr_linear (or left default 1.0 when xpr_db is None)
+                # for back-compat with downstream code still reading k_n.
+                k_n=xpr_linear if xpr_linear is not None else 1.0,
                 initial_phases=init_phases,
                 xpr_linear=xpr_linear,
             ))
