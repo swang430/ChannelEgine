@@ -477,7 +477,6 @@ class ChannelModelApp(tk.Tk):
             method = self.controls.get('ota_method', {}).get('var', tk.StringVar()).get()
             jitter = bool(self.controls.get('ota_jitter', {}).get('var',
                           tk.BooleanVar(value=False)).get())
-            cal_loaded = getattr(self, 'current_cal_config', None) is not None
             if method == 'strict_pfs' and jitter:
                 messagebox.showwarning(
                     "Conflict: strict_pfs + jitter",
@@ -487,15 +486,12 @@ class ChannelModelApp(tk.Tk):
                     "Fix: uncheck '相位抖动 ±180°' OR switch '合成方法' to 'ray'."
                 )
                 return
-            if jitter and cal_loaded:
-                messagebox.showwarning(
-                    "Conflict: jitter + calibration",
-                    "Probe phase jitter (±180° random) will swamp the per-probe phase "
-                    "compensation provided by the loaded calibration CSV; calibration "
-                    "data would be silently dropped.\n\n"
-                    "Fix: uncheck '相位抖动 ±180°' OR remove the calibration file."
-                )
-                return
+            # NOTE (PR #8 Codex P2): no cal+jitter check here. In this TKinter GUI
+            # `current_cal_config` is only consumed by export_to_propsim (F64 file
+            # writer); run_simulation builds ChamberConfig WITHOUT calibration_vector,
+            # so jitter cannot swamp anything in the simulation path. If a future
+            # change wires cal into the simulator (à la app.py's "仿真中引入硬件响应"
+            # mode), re-add the guard gated on that flag.
 
         self.run_button.config(state=tk.DISABLED)
         self.log_text.config(state=tk.NORMAL); self.log_text.delete(1.0, tk.END); self.log_text.config(state=tk.DISABLED)

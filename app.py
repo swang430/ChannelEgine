@@ -246,7 +246,15 @@ with st.sidebar:
         )
         if _jitter_disabled:
             st.info("ℹ️ strict_pfs 已内建 per-probe 独立 fading，无需 jitter（已自动禁用）。")
-        if cal_file is not None and probe_phase_jitter:
+        # Only warn when cal will actually flow into the simulator. The "仅导出预失真"
+        # mode keeps cal data for the F64 exporter only and never builds a
+        # calibration_vector for ChamberConfig — jitter cannot swamp anything in
+        # that case (per PR #8 Codex P2).
+        _cal_goes_to_sim = (
+            cal_file is not None
+            and calibration_usage.startswith("仿真中引入硬件响应")
+        )
+        if _cal_goes_to_sim and probe_phase_jitter:
             st.warning(
                 "⚠️ 已同时启用 probe_phase_jitter 和 calibration_vector："
                 "jitter 注入 ±180° 随机相位会**完全覆盖**校准文件提供的 per-probe 相位补偿信息，"
