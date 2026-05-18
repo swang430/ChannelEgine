@@ -150,6 +150,68 @@ class MIMO_OTA_Simulator:
         else:
             raise NotImplementedError(f"DUT antenna array type '{antenna_config.array_type}' is not yet supported.")
 
+    # Default XPR when caller does not set cluster.xpr_linear (Phase 6 OQ2):
+    # 7 dB matches TR 38.901 §7.7-2 typical UMa/UMi NLOS cross-polarization ratio.
+    DEFAULT_XPR_DB = 7.0
+    _DEFAULT_XPR_LINEAR = 10 ** 0.7  # ≈ 5.0119
+
+    def _build_pol_matrix(self, cluster: EngineCluster) -> np.ndarray:
+        """Build the 2×2 per-cluster polarization mixing matrix per TR 38.901 §7.3.2.
+
+        Returns a complex (2, 2) array:
+            [[exp(jΦ_θθ),             sqrt(1/κ)·exp(jΦ_θφ)],
+             [sqrt(1/κ)·exp(jΦ_φθ),   exp(jΦ_φφ)         ]]
+
+        where κ = XPR_linear and Φ_* are per-cluster initial phases.
+
+        Falls back to defaults when fields are missing:
+          - xpr_linear missing → DEFAULT_XPR_DB (7 dB) + one-time warning
+          - initial_phases missing → all zeros (no phase shift)
+
+        Phase 6 OQ2: warn (not raise) so legacy callers that have dual_polarized=True
+        but never supplied xpr_db still produce a sensible (rather than ZeroDivision)
+        result; explicit xpr_db on the cluster suppresses the warning.
+        """
+        if cluster.xpr_linear is not None:
+            kappa = float(cluster.xpr_linear)
+            if kappa <= 0:
+                raise ValueError(
+                    f"cluster.xpr_linear must be positive; got {kappa}"
+                )
+        else:
+            warnings.warn(
+                f"EngineCluster.xpr_linear is None under dual-pol synthesis; "
+                f"falling back to default {self.DEFAULT_XPR_DB} dB "
+                f"(TR 38.901 §7.7-2 typical NLOS value). Set "
+                f"CDLClusterSpec.xpr_db explicitly to suppress this warning.",
+                stacklevel=2,
+            )
+            kappa = self._DEFAULT_XPR_LINEAR
+
+        if cluster.initial_phases is not None and len(cluster.initial_phases) >= 4:
+            phi = np.asarray(cluster.initial_phases[:4], dtype=float)
+        else:
+            phi = np.zeros(4, dtype=float)
+
+        sqrt_inv_kappa = 1.0 / np.sqrt(kappa)
+        return np.array([
+            [np.exp(1j * phi[0]),                  sqrt_inv_kappa * np.exp(1j * phi[1])],
+            [sqrt_inv_kappa * np.exp(1j * phi[2]), np.exp(1j * phi[3])],
+        ], dtype=complex)
+
+    @staticmethod
+    def _pol_vec(polarization: str) -> np.ndarray:
+        """Return the [θ-component, φ-component] basis vector for a polarization label."""
+        if polarization == 'V':
+            return np.array([1.0, 0.0])
+        elif polarization == 'H':
+            return np.array([0.0, 1.0])
+        else:
+            raise ValueError(
+                f"Unsupported polarization {polarization!r}; Phase 6 supports 'V' or 'H'. "
+                f"Slant ±45° / arbitrary angles are Phase 7 (deferred)."
+            )
+
     @staticmethod
     def _estimate_pathloss_db(bs_position, ue_position, center_freq_hz: float) -> float:
         """Estimates free-space path loss between BS and UE."""
