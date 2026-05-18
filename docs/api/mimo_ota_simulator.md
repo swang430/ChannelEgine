@@ -18,7 +18,7 @@ sim = MIMO_OTA_Simulator()
 result = sim.run(
     chamber_config: ChamberConfig,
     channel_config: TargetChannelConfig,
-    synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'pinv',
+    synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'ray',
     probe_phase_jitter: bool = False,
 ) -> Dict
 ```
