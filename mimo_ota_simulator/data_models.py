@@ -2,6 +2,7 @@ import numpy as np
 from typing import Literal, List, Optional, Tuple, Any
 from pydantic import BaseModel, Field, ConfigDict
 from channel_model_38901.common.data_models import EngineCluster, LargeScaleParameters
+from mimo_ota_simulator.cdl_schema import CustomCDLProfile
 
 # --- V2.0 Data Models ---
 
@@ -19,8 +20,9 @@ class TargetChannelConfig(BaseModel):
     Comprehensive configuration for the target wireless channel to be emulated.
     """
     # Scenario & Geometry
-    input_mode: Literal['standard', 'custom'] = Field('standard', description="Input mode: standard 3GPP or custom json profile")
-    custom_profile_path: Optional[str] = Field(None, description="Path to custom JSON if input_mode is custom")
+    input_mode: Literal['standard', 'custom'] = Field('standard', description="Input mode: standard 3GPP or custom CDL profile")
+    custom_profile_path: Optional[str] = Field(None, description="DEPRECATED: legacy v1.0 JSON file path. Use custom_profile (Pydantic object) instead.")
+    custom_profile: Optional[CustomCDLProfile] = Field(None, description="Preferred Phase 5+ entry: validated CustomCDLProfile object. Takes precedence over custom_profile_path when both are set.")
     standard: Literal['3gpp', 'wifi'] = Field('3gpp', description="Channel standard: 3gpp or wifi")
     model_name: str = Field('UMa', description="Name of the standard channel model (scenario or TGax model)")
     cluster_model_name: Optional[str] = Field('Stochastic', description="Name of the small-scale cluster model")

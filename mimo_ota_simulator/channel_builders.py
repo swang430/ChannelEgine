@@ -205,8 +205,20 @@ class CustomJSONBuilder(ChannelProfileBuilder):
         return CustomCDLBuilder(profile).build()
 
 def create_builder(config: TargetChannelConfig) -> ChannelProfileBuilder:
-    """Factory method to create the appropriate channel builder based on input config."""
-    if config.input_mode == 'custom' and config.custom_profile_path:
-        return CustomJSONBuilder(config.custom_profile_path)
-    # Default to 3GPP 
+    """Factory: pick the right ChannelProfileBuilder for a TargetChannelConfig.
+
+    Precedence (Phase 5+):
+      1. input_mode='custom' + custom_profile is set  -> CustomCDLBuilder (preferred)
+      2. input_mode='custom' + custom_profile_path is set -> CustomJSONBuilder (deprecated shim)
+      3. otherwise -> Standard3GPPBuilder
+    """
+    if config.input_mode == 'custom':
+        if config.custom_profile is not None:
+            return CustomCDLBuilder(config.custom_profile)
+        if config.custom_profile_path:
+            return CustomJSONBuilder(config.custom_profile_path)
+        raise ValueError(
+            "input_mode='custom' but neither custom_profile nor "
+            "custom_profile_path is set."
+        )
     return Standard3GPPBuilder(config)
