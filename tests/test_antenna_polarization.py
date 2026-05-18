@@ -5,6 +5,7 @@ explicit 'V' / 'H' is accepted while invalid values are rejected.
 """
 from __future__ import annotations
 
+import glob
 import os
 import sys
 import unittest
@@ -222,6 +223,189 @@ class TestPolarizationMatrixHelper(unittest.TestCase):
     def test_pol_vec_invalid_raises(self):
         with self.assertRaises(ValueError):
             self._sim()._pol_vec('+45')
+
+
+class TestDualPolCrossCorrelationContract(unittest.TestCase):
+    """T6.5: strict_pfs cross-corr contract (T2.1) preserved under dual-pol.
+
+    Per design §3 / §6: applying a constant per-cluster pol_factor (m_col[0]
+    or m_col[1]) doesn't break per-probe independence — random phase per
+    effective probe still gives E[exp(j(phi_i - phi_j))] = 0 for i ≠ j,
+    so probe-domain cross-correlation collapses regardless of pol_factor.
+
+    This is a key safety net: dual-pol math must not silently degrade the
+    strict_pfs property that motivates skipping output phase calibration.
+    """
+
+    N_REALIZATIONS = 60
+    THRESHOLD_MEAN_OFF_DIAG = 0.25  # same as T2.1 floor (1/sqrt(60) ~ 0.13, 2x safety)
+
+    def test_strict_pfs_dual_pol_off_diag_converges(self):
+        """V DUT + V Tx + dual_polarized=True: probe-domain mean off-diag |rho| < 0.25.
+
+        Uses 8 probes (= 16 effective in dual-pol). Threshold is mean
+        off-diagonal of the normalized correlation matrix R̂ / sqrt(d_i d_j).
+        """
+        import numpy as np
+        import warnings as _warnings
+        from mimo_ota_simulator.cdl_schema import CustomCDLProfile
+        from mimo_ota_simulator.data_models import (
+            AntennaArrayConfig, ChamberConfig, TargetChannelConfig,
+        )
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+
+        chamber = ChamberConfig(
+            num_probes=8, distribution='ring', radius_m=1.5,
+            dual_polarized=True,  # ← Phase 6 dual-pol path
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        P_eff = 16  # 8 * 2
+
+        sim = MIMO_OTA_Simulator()
+        R_sum = np.zeros((P_eff, P_eff), dtype=complex)
+        for k in range(self.N_REALIZATIONS):
+            profile = CustomCDLProfile.from_dict({
+                'center_frequency_hz': 2.6e9, 'pathloss_db': 85.0,
+                'ue_velocity_mps': [0.0, 0.0, 0.0], 'is_los': False,
+                'clusters': [{
+                    'delay_s': 0.0, 'power_linear': 1.0,
+                    'aoa_deg': 30, 'aod_deg': 15,
+                    'as_aoa_deg': 5.0, 'as_aod_deg': 2.0,
+                    'xpr_db': 7.0,
+                }],
+            })
+            config = TargetChannelConfig(
+                input_mode='custom', custom_profile=profile,
+                tx_antenna=AntennaArrayConfig(num_cols=1, polarization='V'),
+                rx_antenna=AntennaArrayConfig(num_cols=1, polarization='V'),
+            )
+            np.random.seed(3000 + k)
+            with _warnings.catch_warnings():
+                _warnings.simplefilter('ignore')
+                res = sim.run(chamber, config, synthesis_method='strict_pfs')
+            a = res['transmit_mapping_matrix_A'][:, 0]  # (P_eff,)
+            R_sum += np.outer(a, a.conj())
+        R = R_sum / self.N_REALIZATIONS
+
+        # Normalize to correlation coefficient
+        d = np.sqrt(np.abs(np.diag(R)))
+        denom = np.outer(d, d)
+        denom = np.where(denom < 1e-15, 1e-15, denom)
+        rho = R / denom
+        off_mask = ~np.eye(P_eff, dtype=bool)
+        mean_off = np.abs(rho[off_mask]).mean()
+        self.assertLess(
+            mean_off, self.THRESHOLD_MEAN_OFF_DIAG,
+            msg=(f"dual-pol strict_pfs mean off-diag |rho|={mean_off:.4f} "
+                 f">= threshold {self.THRESHOLD_MEAN_OFF_DIAG}. Dual-pol "
+                 f"factorization broke the per-realization strict-PFS contract.")
+        )
+
+
+class TestDualPolE2E(unittest.TestCase):
+    """T6.6: dual-pol DUT + XPR + initial_phases → strict_pfs → Propsim DL ASC."""
+
+    def setUp(self):
+        self.base = '_dual_pol_e2e.asc'
+
+    def tearDown(self):
+        for f in glob.glob(self.base.replace('.asc', '*.asc')):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+    def _run(self, rx_pol, tx_pol):
+        import numpy as np
+        import warnings as _warnings
+        from mimo_ota_simulator.cdl_schema import CustomCDLProfile
+        from mimo_ota_simulator.data_models import (
+            AntennaArrayConfig, ChamberConfig, TargetChannelConfig,
+            PropsimExportConfig,
+        )
+        from mimo_ota_simulator.exporters import PropsimASCIIExporter
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+
+        chamber = ChamberConfig(
+            num_probes=8, distribution='ring', radius_m=1.5,
+            dual_polarized=True,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        profile = CustomCDLProfile.from_dict({
+            'center_frequency_hz': 2.6e9, 'pathloss_db': 88.5,
+            'ue_velocity_mps': [4.17, 0.0, 0.0], 'is_los': False,
+            'clusters': [{
+                'delay_s': 0.0, 'power_linear': 1.0,
+                'aoa_deg': 0, 'aod_deg': 0,
+                'as_aoa_deg': 2.0, 'as_aod_deg': 1.0,
+                'xpr_db': 7.0,
+                'initial_phases_rad': [0.0, 0.7853981633974483, 1.5707963267948966, 3.141592653589793],
+            }],
+        })
+        config = TargetChannelConfig(
+            input_mode='custom', custom_profile=profile,
+            tx_antenna=AntennaArrayConfig(num_cols=1, polarization=tx_pol),
+            rx_antenna=AntennaArrayConfig(num_cols=1, polarization=rx_pol),
+        )
+        np.random.seed(42)
+        sim = MIMO_OTA_Simulator()
+        with _warnings.catch_warnings():
+            _warnings.simplefilter('ignore')
+            res = sim.run(chamber, config, synthesis_method='strict_pfs')
+            cfg = PropsimExportConfig(
+                filename=self.base, mode='B', duration_s=0.01, sample_rate_hz=1000,
+            )
+            PropsimASCIIExporter(cfg).export(res, direction='dl')
+        return res
+
+    def test_dual_pol_A_shape_and_asc_generated(self):
+        import numpy as np
+        result = self._run(rx_pol='V', tx_pol='V')
+        A = result['transmit_mapping_matrix_A']
+        # 8 probes * 2 pol = 16 effective probe ports; 1 Tx antenna
+        self.assertEqual(A.shape, (16, 1))
+        self.assertFalse(np.any(np.isnan(A)))
+        files = glob.glob(self.base.replace('.asc', '*.asc'))
+        self.assertGreater(len(files), 0)
+
+    def test_v_tx_v_rx_v_port_dominates(self):
+        """V Tx + V DUT: V probe ports get co-pol drive |exp(jΦθθ)|=1,
+        H probe ports get cross-pol drive |sqrt(1/κ)·exp(jΦφθ)|=sqrt(1/κ).
+
+        Per-port magnitude ratio |A_V| / |A_H| ≈ sqrt(κ) = sqrt(10^0.7) ≈ 2.24.
+        Tolerance is loose because A is the sum of 20 randomly-phased rays per
+        cluster; sample mean magnitude isn't exactly sqrt(κ).
+        """
+        import numpy as np
+        result = self._run(rx_pol='V', tx_pol='V')
+        A = result['transmit_mapping_matrix_A']
+        v_ports = A[0::2, 0]   # (8,) V probe ports
+        h_ports = A[1::2, 0]   # (8,) H probe ports
+        expected_ratio = np.sqrt(10 ** 0.7)  # sqrt(κ) for 7 dB XPR
+        actual_ratio = np.abs(v_ports).mean() / np.abs(h_ports).mean()
+        # ±10% tolerance: V/H ratio is dominated by the |m_col| factor (exact
+        # sqrt(κ)) but the random ray sum introduces ~few % sample variance.
+        self.assertAlmostEqual(
+            actual_ratio, expected_ratio, delta=expected_ratio * 0.10,
+            msg=(f"V/H magnitude ratio {actual_ratio:.4f} not within ±10% of "
+                 f"expected sqrt(κ)={expected_ratio:.4f} for XPR=7 dB"),
+        )
+
+    def test_effective_H_cross_pol_attenuation(self):
+        """V DUT + V Tx vs H DUT + V Tx — both work, but effective_H magnitudes
+        relate via XPR (orthogonal-pol case heavily attenuated)."""
+        import numpy as np
+        r_co = self._run(rx_pol='V', tx_pol='V')   # co-pol (channel scale 1)
+        r_cross = self._run(rx_pol='H', tx_pol='V') # cross-pol (channel scale sqrt(1/κ))
+        H_co_norm = np.linalg.norm(r_co['effective_H_matrix'])
+        H_cross_norm = np.linalg.norm(r_cross['effective_H_matrix'])
+        # cross-pol effective_H magnitude ratio ≈ sqrt(1/κ) for XPR 7 dB
+        ratio = H_cross_norm / H_co_norm
+        expected = 1.0 / np.sqrt(10 ** 0.7)  # sqrt(1/κ) ≈ 0.447
+        # ±40% tolerance: effective_H aggregates many random-phase rays + the
+        # cross-pol/co-pol channel difference. Looser than V/H per-port ratio.
+        self.assertGreater(ratio, expected * 0.6)
+        self.assertLess(ratio, expected * 1.4)
 
 
 if __name__ == '__main__':
