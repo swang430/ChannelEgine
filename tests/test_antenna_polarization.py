@@ -48,5 +48,69 @@ class TestAntennaPolarizationField(unittest.TestCase):
                 AntennaArrayConfig(polarization=invalid)
 
 
+class TestBMatrixDualPol(unittest.TestCase):
+    """T6.2: _synthesize_b_matrix dual-pol H/V port coupling.
+
+    Convention (per design doc §6 / source comment):
+      - Index 2p of the B-matrix column axis = V port (θ-polarized)
+      - Index 2p+1 = H port (φ-polarized)
+    DUT polarization picks which port couples; the orthogonal port gets 0.
+    """
+
+    def _build(self, dual_polarized, rx_pol):
+        from mimo_ota_simulator.data_models import (
+            AntennaArrayConfig, ChamberConfig, TargetChannelConfig,
+        )
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+        sim = MIMO_OTA_Simulator()
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.5,
+            dual_polarized=dual_polarized,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        cfg = TargetChannelConfig(
+            center_frequency_hz=2.6e9,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1, polarization=rx_pol),
+        )
+        return sim._synthesize_b_matrix(chamber, cfg)
+
+    def test_dual_pol_v_dut_h_ports_zero(self):
+        """dual_polarized=True + DUT V-pol → H ports (2p+1) all zero."""
+        import numpy as np
+        B = self._build(dual_polarized=True, rx_pol='V')
+        # Shape: (1 rx_antenna, 4 probes * 2 pol = 8 effective probes)
+        self.assertEqual(B.shape, (1, 8))
+        v_ports = B[:, 0::2]  # 2p = V ports
+        h_ports = B[:, 1::2]  # 2p+1 = H ports
+        self.assertTrue(np.all(np.abs(v_ports) > 0), "V ports should carry signal for V-pol DUT")
+        self.assertTrue(np.all(np.abs(h_ports) == 0), "H ports should be zero for V-pol DUT")
+
+    def test_dual_pol_h_dut_v_ports_zero(self):
+        """dual_polarized=True + DUT H-pol → V ports (2p) all zero."""
+        import numpy as np
+        B = self._build(dual_polarized=True, rx_pol='H')
+        self.assertEqual(B.shape, (1, 8))
+        v_ports = B[:, 0::2]
+        h_ports = B[:, 1::2]
+        self.assertTrue(np.all(np.abs(v_ports) == 0), "V ports should be zero for H-pol DUT")
+        self.assertTrue(np.all(np.abs(h_ports) > 0), "H ports should carry signal for H-pol DUT")
+
+    def test_single_pol_v_dut_unchanged(self):
+        """dual_polarized=False + DUT V (default) → behavior unchanged (regression baseline)."""
+        import numpy as np
+        B = self._build(dual_polarized=False, rx_pol='V')
+        self.assertEqual(B.shape, (1, 4))  # single-pol: 4 effective probes
+        self.assertTrue(np.all(np.abs(B) > 0), "Single-pol B-matrix should have all-nonzero values")
+
+    def test_single_pol_h_dut_raises_oq4(self):
+        """dual_polarized=False + DUT H → raise ValueError per OQ4 decision."""
+        with self.assertRaises(ValueError) as ctx:
+            self._build(dual_polarized=False, rx_pol='H')
+        msg = str(ctx.exception)
+        self.assertIn('dual_polarized=True', msg)  # error message suggests fix
+        self.assertIn("'V'", msg)
+
+
 if __name__ == '__main__':
     unittest.main()
