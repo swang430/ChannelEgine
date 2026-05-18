@@ -505,10 +505,24 @@ class MIMO_OTA_Simulator:
                     # Random phase for this ray (Decorrelation source!)
                     # ray mode: scalar (broadcasts to all probes — geometry-coupled).
                     # strict_pfs mode: (N_probes,) iid vector — per-probe independent fading.
+                    #
+                    # Phase 5 T5.5: if the cluster carries CDL initial_phases
+                    # (4-element polarization phases [Θθθ, Θθφ, Θφθ, Θφφ]),
+                    # use index 0 (Θθθ) as a per-cluster base phase shared by
+                    # all sub-rays. Indices 1-3 (cross-polarization) are plumbed
+                    # but not consumed until dual-pol synthesizer (Phase 6).
+                    # The base + uniform construction preserves strict_pfs
+                    # cross-correlation contract: E[exp(j(base + rnd_i - base - rnd_j))]
+                    # = E[exp(j(rnd_i - rnd_j))] = 0 for i ≠ j.
+                    base_phase = (
+                        float(cluster.initial_phases[0])
+                        if cluster.initial_phases is not None and len(cluster.initial_phases) >= 1
+                        else 0.0
+                    )
                     if use_strict_pfs:
-                        phi_rnd = np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
+                        phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
                     else:
-                        phi_rnd = np.random.uniform(-np.pi, np.pi)
+                        phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi)
 
                     # Power per ray
                     p_ray = cluster.power / 20.0
