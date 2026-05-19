@@ -78,7 +78,11 @@ class ChamberConfig(BaseModel):
                 raise ValueError(...)
             if len(self.probe_positions) != self.num_probes:
                 raise ValueError(...)
-        # 'ring' + probe_positions != None → emit warning, prefer explicit positions
+        elif self.distribution == 'ring' and self.probe_positions is not None:
+            # Tightened post-PR #9 Codex P2: reject ambiguous combo.
+            # Original loose policy (allow + ignore) caused silent B-matrix
+            # vs cluster-weight inconsistency. Single source of truth: pick one.
+            raise ValueError("ring + probe_positions is ambiguous; pick one.")
         return self
 ```
 
