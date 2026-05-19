@@ -1,6 +1,6 @@
 # ChannelEngine - 3GPP TR 38.901 信道模型与MIMO OTA仿真器
 
-## ⭐ Cross-project context (last updated 2026-05-18, post-Phase-6)
+## ⭐ Cross-project context (last updated 2026-05-19, post-Phase-8 / P2-7)
 
 > 本节是 cross-repo coordination notes，**任何 AI session 或新加入的开发者进入本 repo 时应先读完这里**。
 > 详细 strict-PFS rollout 完整 plan 见 [`docs/plans/strict-pfs-rollout.md`](docs/plans/strict-pfs-rollout.md)。
@@ -20,6 +20,7 @@ Strict-PFS rollout (PR #1, #2, #3, #4, #5, #6) 完整落地。下面是关键事
 | **`probe_phase_jitter` ±180°** | ✅ Phase 0 UI 修正 | 跟 phase cal 互斥时 runtime warning + UI st.warning；strict_pfs 下 UI 自动 disable |
 | **External CDL 输入** (Phase 5) | ✅ `CustomCDLProfile` Pydantic schema | `from_file` / `from_dict` 双入口；含 XPR / K-factor / per-ray init phases 字段；SPEC v2.0 [`doc/MIMO_First_Integration_Spec.md`](doc/MIMO_First_Integration_Spec.md) |
 | **Dual-Polarization synthesizer** (Phase 6) | ✅ XPR + cross-pol init phases 真用 | `AntennaArrayConfig.polarization: Literal['V', 'H']`；TR 38.901 §7.3.2 per-cluster 2×2 pol matrix；Tx 投影在 A 矩阵，Rx 投影在 B 矩阵 |
+| **Non-Ring 暗室** (Phase 8 / P2-7, 2026-05-19) | ✅ `ChamberConfig.distribution = custom` + `probe_positions` | 修 MIMO-First architecture note flagged "ring-only silent constraint"；sphere→Cartesian 公式 `(r·cos(el)·cos(az), r·cos(el)·sin(az), r·sin(el))`；ring 默认 backward compat 不变 |
 
 ### MIMO-First 集成路径（推荐写法 post-Phase-6）
 
@@ -79,8 +80,9 @@ MIMO-First `channel-engine-service/app/api/endpoints/hardware_pipeline.py` 的�
 | Phase | 状态 | 内容 |
 |---|---|---|
 | 0 / 1 / 2 / 3 / 5 / 6 | ✅ DONE | 见 `docs/plans/strict-pfs-rollout.md` |
-| 4 | ✅ DONE (本文档) | Cross-repo sync |
+| 4 | ✅ DONE | Cross-repo sync (本文档 + Meta-3D issue #55) |
 | 7 | ⏸️ DEFERRED | Slant ±45° / 任意角 DUT polarization (memory: `project_phase7_slant_pol_roadmap.md`) |
+| 8 (P2-7) | ✅ DONE (2026-05-19) | Non-ring chamber probe geometry; MIMO-First architecture note 推动 |
 
 ### Cross-project memory (machine-local)
 
