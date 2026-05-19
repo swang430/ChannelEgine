@@ -65,6 +65,33 @@ class TargetChannelConfig(BaseModel):
         description="Reciprocity transform for UL channel"
     )
 
+    @model_validator(mode='after')
+    def _validate_wifi_input_mode(self):
+        """Audit F4 (2026-05-19): reject standard='wifi' + input_mode='custom'.
+
+        The simulator's run() branches on standard=='wifi' BEFORE
+        create_builder() is consulted (simulator.py L435), so the WiFi path
+        regenerates clusters from WiFiChannelSimulator and silently drops
+        any custom_profile / custom_profile_path the caller supplied. Users
+        who fed a CustomCDLProfile expecting CDL-style synthesis on WiFi
+        got a Tgax-derived channel with no error / warning.
+
+        WiFi custom-profile support is not implemented (the WiFi path lacks
+        a CustomCDLBuilder branch). Until that is wired up, fail fast at
+        config-construction time rather than silently honoring 'wifi' over
+        'custom'.
+        """
+        if self.standard == 'wifi' and self.input_mode == 'custom':
+            raise ValueError(
+                "standard='wifi' + input_mode='custom' is not supported: the "
+                "WiFi path in MIMO_OTA_Simulator._run_wifi() regenerates "
+                "clusters from WiFiChannelSimulator and silently ignores "
+                "custom_profile / custom_profile_path. Either set "
+                "standard='3gpp' to use CustomCDLBuilder, or set "
+                "input_mode='standard' to use the WiFi Tgax model."
+            )
+        return self
+
 class CalibrationEntry(BaseModel):
     """Calibration data for a single RF chain (Cable + Attenuator + Probe)."""
     port_id: int = Field(..., description="F64 Output Port ID (1-based)")
@@ -169,7 +196,19 @@ class ChamberConfig(BaseModel):
         ),
     )
     probe_antenna: ProbeAntennaConfig = Field(default_factory=ProbeAntennaConfig, description="The antenna specification for each probe.")
-    quiet_zone_radius_m: Optional[float] = Field(None, description="Radius of the chamber's quiet zone in meters for validation.")
+    quiet_zone_radius_m: Optional[float] = Field(
+        None,
+        description=(
+            "Operator metadata: nominal quiet-zone radius (m) of the physical chamber. "
+            "**The library does NOT validate against this field** — it is stored for "
+            "documentation / report-generation purposes and downstream consumers can "
+            "read it back from the config. If you need quiet-zone-aware geometry "
+            "checks (e.g. probe-radius vs QZ), gate them in the calling layer "
+            "(GUI / micro-service) before constructing the ChamberConfig. "
+            "Audit F1 (2026-05-19): wording sharpened from 'for validation' to "
+            "prevent the misread that this triggers a runtime check."
+        ),
+    )
     calibration_vector: Optional[np.ndarray] = Field(None, description="Complex vector for amplitude and phase calibration.")
 
     @model_validator(mode='after')

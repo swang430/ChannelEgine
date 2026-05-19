@@ -141,8 +141,19 @@ class CustomCDLBuilder(ChannelProfileBuilder):
         # If LOS scenario AND user provided global k_factor_db, redistribute
         # cluster powers so first cluster (LOS path) carries K/(K+1) and the
         # remaining clusters share 1/(K+1) of total power (preserving their
-        # relative shape). K-factor only applies under LOS; with is_los=False
-        # we skip silently — the caller may have set k_factor_db speculatively.
+        # relative shape). K-factor only applies under LOS.
+        # Audit F2 (2026-05-19): emit UserWarning when k_factor_db is set but
+        # is_los=False — previously we skipped silently, which masked user
+        # config errors (e.g. MIMO-First adapter forgetting to flip is_los).
+        if self.profile.k_factor_db is not None and not self.profile.is_los:
+            warnings.warn(
+                f"CustomCDLProfile.k_factor_db={self.profile.k_factor_db} dB is set "
+                f"but is_los=False; K-factor LOS boost (TR 38.901 §7.5.6) only applies "
+                f"under LOS, so the value will be IGNORED. Either set is_los=True or "
+                f"remove k_factor_db. Audit batch 1 / F2.",
+                UserWarning,
+                stacklevel=2,
+            )
         if self.profile.is_los and self.profile.k_factor_db is not None and len(clusters) >= 1:
             k_linear = 10 ** (self.profile.k_factor_db / 10.0)
             p_los_share = k_linear / (k_linear + 1.0)
