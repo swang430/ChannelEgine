@@ -80,3 +80,6 @@ tests/propsim_modeA_*.asc
 
 # Statistical test cache files
 tests/cache/*.pkl
+
+# Streamlit runtime upload artifacts (app.py custom-profile uploader)
+temp_uploaded_*.json
