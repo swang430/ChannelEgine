@@ -762,5 +762,85 @@ class TestRayRegression(unittest.TestCase):
         )
 
 
+class TestRunHonorsRandomSeed3GPP(unittest.TestCase):
+    """GUI 一致性回归: MIMO_OTA_Simulator.run() 必须在 3GPP path 也消费
+    channel_config.random_seed, 跟 _run_wifi 行为一致.
+
+    Bug 历史 (2026-05-18): TargetChannelConfig.random_seed 字段一直存在,
+    但 3GPP path 从来不读. WiFi path 在 _run_wifi 里调用 np.random.seed,
+    3GPP path 跳过. 结果:
+      - gui.py L560 自己 np.random.seed(seed) 补救 (legacy code)
+      - app.py 没显式 seed, 依赖 random_seed 字段 (不工作)
+      - Streamlit 用户固定 seed 仍看到 LSP/cluster 漂移
+
+    本测试锁定修复: 同 random_seed + 同 config -> identical clusters, 不需要
+    caller 自己调 np.random.seed().
+    """
+
+    def _run_no_explicit_seed(self, random_seed):
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.0, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name=None,  # stochastic UMa: 用 RNG
+            center_frequency_hz=3.5e9, random_seed=random_seed,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+            force_condition='NLOS',
+        )
+        # Caller 不调 np.random.seed() — 验 run() 自己处理.
+        # 故意 pre-perturb 全局状态以确认 seed 真的 reset 了.
+        np.random.uniform(size=100)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            return MIMO_OTA_Simulator().run(chamber, channel, synthesis_method='ray')
+
+    def test_same_seed_same_clusters(self):
+        """同 random_seed 跑两次 → cluster 角度/功率/延迟全 bit-identical."""
+        r1 = self._run_no_explicit_seed(random_seed=42)
+        r2 = self._run_no_explicit_seed(random_seed=42)
+        c1 = r1['clusters']
+        c2 = r2['clusters']
+        self.assertEqual(len(c1), len(c2))
+        for cluster1, cluster2 in zip(c1, c2):
+            self.assertAlmostEqual(cluster1.power, cluster2.power, places=12)
+            self.assertAlmostEqual(cluster1.aoa_phi, cluster2.aoa_phi, places=12)
+            self.assertAlmostEqual(cluster1.aod_phi, cluster2.aod_phi, places=12)
+            self.assertAlmostEqual(cluster1.delay, cluster2.delay, places=15)
+
+    def test_different_seed_different_clusters(self):
+        """负 control: 不同 random_seed → 不同 clusters."""
+        r_a = self._run_no_explicit_seed(random_seed=42)
+        r_b = self._run_no_explicit_seed(random_seed=7)
+        powers_a = [c.power for c in r_a['clusters']]
+        powers_b = [c.power for c in r_b['clusters']]
+        self.assertNotEqual(powers_a, powers_b,
+            msg="不同 seed 产生相同 clusters — RNG 没真用?")
+
+    def test_none_seed_still_random(self):
+        """random_seed=None → run() 不 auto-seed; output 跟 caller 全局状态走."""
+        chamber = ChamberConfig(
+            num_probes=4, distribution='ring', radius_m=1.0, dual_polarized=False,
+            probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+        )
+        channel = TargetChannelConfig(
+            model_name='UMa', cluster_model_name=None,
+            center_frequency_hz=3.5e9, random_seed=None,
+            tx_antenna=AntennaArrayConfig(num_cols=1),
+            rx_antenna=AntennaArrayConfig(num_cols=1),
+            force_condition='NLOS',
+        )
+        sim = MIMO_OTA_Simulator()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            np.random.seed(99)
+            r_a = sim.run(chamber, channel, synthesis_method='ray')
+            np.random.seed(99)
+            r_b = sim.run(chamber, channel, synthesis_method='ray')
+        # 两次从相同全局状态起步 → 一致
+        self.assertAlmostEqual(r_a['clusters'][0].power, r_b['clusters'][0].power, places=12)
+
+
 if __name__ == '__main__':
     unittest.main()
