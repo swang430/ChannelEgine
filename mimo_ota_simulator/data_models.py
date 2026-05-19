@@ -162,8 +162,10 @@ class ChamberConfig(BaseModel):
         None,
         description=(
             "Per-probe azimuth/elevation. REQUIRED when distribution != 'ring' "
-            "(P2-7 non-ring support). MUST have length == num_probes. Ignored "
-            "(with warning) when distribution='ring'."
+            "(P2-7 non-ring support). MUST have length == num_probes. MUST be "
+            "None when distribution='ring' (the uniform-ring formula is the "
+            "authoritative source there; allowing both would cause silent "
+            "B-matrix vs cluster-weight inconsistency — see PR #9 Codex P2)."
         ),
     )
     probe_antenna: ProbeAntennaConfig = Field(default_factory=ProbeAntennaConfig, description="The antenna specification for each probe.")
@@ -172,7 +174,17 @@ class ChamberConfig(BaseModel):
 
     @model_validator(mode='after')
     def _validate_probe_positions(self):
-        """Enforce P2-7 schema consistency between distribution and probe_positions."""
+        """Enforce P2-7 schema consistency between distribution and probe_positions.
+
+        Strict rule (per PR #9 Codex P2): the two fields cannot disagree.
+          - distribution='ring'      => probe_positions MUST be None
+          - distribution='custom'/'multi-ring' => probe_positions REQUIRED, length == num_probes
+
+        The earlier looser policy (allow ring + probe_positions, ignore positions)
+        caused a silent inconsistency: _calculate_probe_positions used the ring
+        formula while _calculate_weights_for_cluster picked up the supplied
+        azimuths — B-matrix geometry and cluster→probe weighting disagreed.
+        """
         if self.distribution in ('custom', 'multi-ring'):
             if self.probe_positions is None:
                 raise ValueError(
@@ -186,10 +198,12 @@ class ChamberConfig(BaseModel):
                     f"{self.num_probes}. Provide exactly one ProbePosition per physical probe."
                 )
         elif self.distribution == 'ring' and self.probe_positions is not None:
-            # Don't reject — caller may set both inadvertently. Warn loud via field
-            # docstring; runtime warnings are noisy in Streamlit context. Builder
-            # code uses ring formula regardless when distribution='ring'.
-            pass
+            raise ValueError(
+                f"distribution='ring' with probe_positions provided is ambiguous "
+                f"(ring formula vs supplied positions disagree). Either set "
+                f"distribution='custom' (positions authoritative) or drop "
+                f"probe_positions (ring formula authoritative)."
+            )
         return self
 
 class UniversalChannelProfile(BaseModel):

@@ -67,11 +67,21 @@ class TestChamberConfigDistributionConsistency(unittest.TestCase):
         c = ChamberConfig(distribution='ring', **self._common_kwargs())
         self.assertIsNone(c.probe_positions)
 
-    def test_ring_with_positions_allowed(self):
-        """distribution='ring' + probe_positions set is allowed (positions ignored)."""
+    def test_ring_with_positions_rejected(self):
+        """distribution='ring' + probe_positions set is REJECTED (PR #9 Codex P2).
+
+        Previously the validator allowed both with docs saying "positions ignored",
+        but _calculate_weights_for_cluster picked up the supplied azimuths while
+        _calculate_probe_positions used the ring formula — silent B-matrix vs
+        cluster-weighting inconsistency. Tighter rule: caller picks one source
+        explicitly.
+        """
         positions = [ProbePosition(azimuth_deg=a) for a in [0, 90, 180, 270]]
-        c = ChamberConfig(distribution='ring', probe_positions=positions, **self._common_kwargs())
-        self.assertIsNotNone(c.probe_positions)
+        with self.assertRaises(ValidationError) as ctx:
+            ChamberConfig(distribution='ring', probe_positions=positions, **self._common_kwargs())
+        msg = str(ctx.exception)
+        self.assertIn('ambiguous', msg.lower())
+        self.assertIn("'custom'", msg)
 
     def test_custom_requires_positions(self):
         with self.assertRaises(ValidationError) as ctx:
