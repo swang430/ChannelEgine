@@ -213,6 +213,32 @@ Phase 1 落地 strict_pfs 时**顺便文档化 `run()` 签名作为 stable publi
 
 ---
 
+### Phase 8 (P2-7) —— Non-Ring Chamber Probe Geometry ✅ **DONE 2026-05-19**
+
+**Trigger**: MIMO-First `docs/architecture/channel-engine-data-flow.md` (2026-05-19) flagged "ring-only silent constraint" as explicit cross-repo work item. Their P2-7 label = our Phase 8.
+
+**Scope**: ChannelEgine accepts non-uniform probe layouts (sparse / sector / dual-ring).
+
+**Sub-tasks** (8 commits + tests, single PR):
+- [x] **T8.1** `ProbePosition` Pydantic model + `ChamberConfig.distribution` extended to `'custom' / 'multi-ring'` + `probe_positions: Optional[List[ProbePosition]]` field + `_validate_probe_positions` model_validator
+- [x] **T8.2** `_calculate_probe_positions` custom branch (sphere → Cartesian, el=0 reduces to ring)
+- [x] **T8.3** `_calculate_weights_for_cluster` consumes real azimuths when `probe_positions` is set
+- [x] **T8.4** 18 new tests in `tests/test_non_ring_chamber.py` covering schema validation + ring regression bit-identical + custom horizontal + custom elevation + sparse weight peaking
+- [x] **T8.5** Docs: API doc §9, SPEC v2.0 §3.2, CLAUDE.md status table, rollout plan (本)
+
+**Acceptance**:
+- ✅ 163 pass + 1 skip (+18 new tests)
+- ✅ Ring path bit-identical via existing `golden_mimo_ota_ray_results.npz`
+- ✅ Sparse layout (4 probes at 0/77/154/231°) cluster AoA-matching uses real azimuths (not ring assumption)
+- ✅ Elevation correctly Cartesianizes (z = `r·sin(el)`)
+
+**Out of scope**:
+- Per-probe radius (uniform from `chamber.radius_m`, matches MIMO-First DB schema)
+- ZoA-aware probe weight Gaussian (azimuth-only weights kept; P3 follow-up)
+- MIMO-First DB plumbing (their side; SPEC v2.0 §3.2 documents payload format for them)
+
+---
+
 ### Phase 7 —— Full Slant Polarization Model（DEFERRED, roadmap only）
 
 **Status**: ⏸️ NOT SCHEDULED. 等真 slant ±45° DUT 需求才启动。
