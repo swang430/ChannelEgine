@@ -11,17 +11,42 @@ from wifi_channel_model.common.data_models import WiFiScenarioConfig
 
 class MIMO_OTA_Simulator:
     def _calculate_probe_positions(self, chamber_config: ChamberConfig) -> np.ndarray:
-        """Calculates the 3D Cartesian coordinates of each physical probe."""
+        """Calculates the 3D Cartesian coordinates of each physical probe.
+
+        P2-7: supports two layouts:
+          - 'ring' (default, TR 37.977 §6.1 standard): uniform horizontal-plane
+            ring computed from num_probes + radius_m alone.
+          - 'custom' / 'multi-ring': explicit probe_positions list with per-probe
+            (azimuth_deg, elevation_deg); radius_m applied uniformly.
+            (MIMO-First Probe.position {az, el} maps 1:1 to this schema.)
+
+        Both layouts return (num_probes, 3) Cartesian coordinates with the
+        chamber center at origin. Single-pol mode in caller; dual-pol port
+        doubling is downstream of this method.
+        """
+        num_probes = chamber_config.num_probes
+        radius = chamber_config.radius_m
+
         if chamber_config.distribution == 'ring':
-            num_probes = chamber_config.num_probes
-            radius = chamber_config.radius_m
             angles = np.arange(num_probes) * (2 * np.pi / num_probes)
             x_coords = radius * np.cos(angles)
             y_coords = radius * np.sin(angles)
             z_coords = np.zeros(num_probes)
             return np.stack([x_coords, y_coords, z_coords], axis=1)
-        else:
-            raise NotImplementedError(f"Probe distribution '{chamber_config.distribution}' is not yet supported.")
+
+        if chamber_config.distribution in ('custom', 'multi-ring'):
+            # Validator has ensured probe_positions is set and len == num_probes.
+            az_rad = np.deg2rad([p.azimuth_deg for p in chamber_config.probe_positions])
+            el_rad = np.deg2rad([p.elevation_deg for p in chamber_config.probe_positions])
+            # Sphere → Cartesian. el=0 reduces exactly to ring formula (z=0).
+            x_coords = radius * np.cos(el_rad) * np.cos(az_rad)
+            y_coords = radius * np.cos(el_rad) * np.sin(az_rad)
+            z_coords = radius * np.sin(el_rad)
+            return np.stack([x_coords, y_coords, z_coords], axis=1)
+
+        raise NotImplementedError(
+            f"Probe distribution '{chamber_config.distribution}' is not supported."
+        )
 
     @staticmethod
     def _calculate_physical_channel_properties(probe_position: np.ndarray, center_freq_hz: float) -> tuple[float, complex]:
@@ -338,19 +363,39 @@ class MIMO_OTA_Simulator:
 
     @staticmethod
     def _calculate_weights_for_cluster(cluster: EngineCluster, chamber_config: ChamberConfig, num_candidate_probes: int = 4) -> np.ndarray:
-        """Calculates probe weights for a single cluster to synthesize its AoA and AS."""
+        """Calculates probe weights for a single cluster to synthesize its AoA and AS.
+
+        P2-7: when chamber_config has explicit `probe_positions` (non-ring layouts —
+        sparse, sector, dual-ring), use the per-probe azimuth from the position
+        list instead of the ring `(p-1)·2π/N` assumption. This is the core fix
+        for the "ring-only silent constraint" flagged in MIMO-First
+        docs/architecture/channel-engine-data-flow.md (2026-05-19).
+
+        Note: weights are still azimuth-only; elevation is not consumed by the
+        Gaussian here. ZoA-aware weighting is a potential P3 extension.
+        """
         num_physical_probes = chamber_config.num_probes
         num_effective_probes = num_physical_probes * 2 if chamber_config.dual_polarized else num_physical_probes
-        probe_angles_rad = np.linspace(0, 2 * np.pi, num_physical_probes, endpoint=False)
+
+        # P2-7: real azimuths when probe_positions is set, ring-uniform otherwise.
+        if chamber_config.probe_positions is not None:
+            probe_angles_rad = np.deg2rad(
+                np.array([p.azimuth_deg for p in chamber_config.probe_positions])
+            )
+        else:
+            probe_angles_rad = np.linspace(0, 2 * np.pi, num_physical_probes, endpoint=False)
+
         target_angle_rad = np.deg2rad(cluster.aoa_phi)
         target_as_rad = np.deg2rad(cluster.as_aoa)
 
         # --- ADAPTIVE BROADENING FIX ---
         # Ensure the Gaussian width is at least a fraction of the probe spacing.
-        # Otherwise, rays falling between probes are lost (weights -> 0).
+        # For non-uniform layouts we use 2π/N as the "mean effective spacing" —
+        # OK for sparse/sector approximations; future P3 work may switch to
+        # per-probe nearest-neighbor distance for very irregular layouts.
         probe_spacing_rad = 2 * np.pi / num_physical_probes
         min_as_rad = probe_spacing_rad / 1.5  # Sigma approx 2/3 of spacing ensures overlap
-        
+
         effective_as_rad = max(target_as_rad, min_as_rad)
         # -------------------------------
 

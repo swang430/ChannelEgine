@@ -1,8 +1,8 @@
 # MIMO-First ↔ Channel Engine 集成契约 (v2.0)
 
-**Status**: ACTIVE (生效 2026-05-18, 更新 Phase 6 完成后)
+**Status**: ACTIVE (生效 2026-05-19, 更新 P2-7 non-ring chamber 落地后)
 **Supersedes**: v1.0 (2026-04, 见 §6 历史)
-**Library version**: Phase 6 (post-Phase-6 of strict-pfs-rollout, dual-pol synthesizer active)
+**Library version**: Phase 8 / P2-7 (post-Phase-6 dual-pol + non-ring chamber probe geometry)
 
 ---
 
@@ -76,6 +76,9 @@ chamber = ChamberConfig(
     num_probes=16, distribution='ring', radius_m=1.5,
     dual_polarized=True,
     probe_antenna={'gain_dBi': 8.5, 'pattern': 'Isotropic'},
+    # P2-7 non-ring layout (sparse / sector / dual-ring): set
+    # distribution='custom' and pass probe_positions=[ProbePosition(az,el), ...]
+    # See §3.2 below.
 )
 sim = MIMO_OTA_Simulator()
 result = sim.run(chamber, config, synthesis_method='strict_pfs')
@@ -117,6 +120,57 @@ PropsimASCIIExporter(cfg).export(result, direction='dl')
 | `num_rays` | int (>0, default 20) | ❌ | 当前 strict_pfs/ray 实现忽略此字段固定 20；Phase 7+ 可配 |
 
 `extra='forbid'`: 多余字段（拼错的、v1.0 残留字段）会被 Pydantic ValidationError 拒绝。常见坑：`pwr_linear` (typo)、`global_params` (v1.0 嵌套)、`ray_tracing_channel` (v1.0 嵌套)。
+
+---
+
+## 3.2 Non-Ring 暗室支持 (Phase 8 / P2-7, 2026-05-19)
+
+`ChamberConfig.distribution`: 现在支持 `'ring'` (默认) / `'multi-ring'` / `'custom'`。
+非 ring 配置（sparse / sector / dual-ring）必须显式传 `probe_positions`：
+
+```python
+from mimo_ota_simulator.data_models import ChamberConfig, ProbePosition
+
+chamber = ChamberConfig(
+    num_probes=4, radius_m=1.5, distribution='custom',  # 'multi-ring' 同
+    probe_positions=[
+        ProbePosition(azimuth_deg=10.0),                       # 全水平面
+        ProbePosition(azimuth_deg=95.0),
+        ProbePosition(azimuth_deg=180.0, elevation_deg=15.0),  # 仰角 +15°
+        ProbePosition(azimuth_deg=270.0, elevation_deg=-15.0), # 俯角 -15°
+    ],
+    dual_polarized=False,
+    probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+)
+```
+
+**MIMO-First 微服务侧 schema 扩展建议**:
+```jsonc
+"chamber_config": {
+  "num_probes": 8,
+  "radius_m": 2.0,
+  "dual_polarized": true,
+  "distribution": "ring",           // OR "custom" / "multi-ring"
+  "probe_positions": [               // P2-7: 仅 distribution != "ring" 时需要
+    { "azimuth_deg": 0.0,   "elevation_deg": 0.0 },
+    { "azimuth_deg": 90.0,  "elevation_deg": 0.0 },
+    // ... 每 probe 一个
+  ]
+}
+```
+
+**MIMO-First DB 已有的 `Probe.position: {azimuth, elevation}` 字段** 直接 map 到这。
+其他规则:
+- `distribution='ring'` (默认): `probe_positions` 可省略，走 `(p × 360°/N)` 等距公式
+- `distribution='custom'` / `'multi-ring'`: `probe_positions` 必须，且 `len() == num_probes`
+- `radius_m` 仍 chamber-wide uniform (MIMO-First DB 也没存 per-probe radius)
+
+**触发场景** (per MIMO-First architecture note):
+- PWS 工程 (sector geometry)
+- 非标暗室 (sparse layout 省 probe / dual-ring 增强 elevation)
+- 当前 lab ring 8-probe 不触发此 path; ring 默认 backward compat 不变
+
+详见 [`docs/api/mimo_ota_simulator.md`](../docs/api/mimo_ota_simulator.md) §9。
 
 ---
 

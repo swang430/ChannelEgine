@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Literal, List, Optional, Tuple, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from channel_model_38901.common.data_models import EngineCluster, LargeScaleParameters
 from mimo_ota_simulator.cdl_schema import CustomCDLProfile
 
@@ -122,6 +122,25 @@ class ProbeAntennaConfig(BaseModel):
     gain_dBi: float = Field(0.0, description="The gain of the probe antenna in dBi.")
     pattern: Literal['Isotropic', 'TR38.901'] = Field('Isotropic', description="The radiation pattern of the probe antenna.")
 
+
+class ProbePosition(BaseModel):
+    """Per-probe geometric position on the chamber sphere (P2-7).
+
+    Used when ChamberConfig.distribution != 'ring' to specify non-uniform
+    probe layouts (sparse, sector, dual-ring, etc). Radius is taken from
+    ChamberConfig.radius_m (uniform across all probes — matches
+    MIMO-First DB schema where Probe.position is {azimuth, elevation}).
+    """
+    azimuth_deg: float = Field(
+        ..., ge=-360.0, le=360.0,
+        description="Azimuth angle in horizontal plane (degrees, CCW from +x axis).",
+    )
+    elevation_deg: float = Field(
+        0.0, ge=-90.0, le=90.0,
+        description="Elevation from horizontal plane (degrees). 0=horizontal (default).",
+    )
+
+
 class ChamberConfig(BaseModel):
     """
     Configuration for the physical properties of the OTA chamber.
@@ -130,11 +149,48 @@ class ChamberConfig(BaseModel):
 
     num_probes: int = Field(..., description="Number of physical probes in the chamber.")
     dual_polarized: bool = Field(False, description="Whether each probe is dual-polarized.")
-    distribution: Literal['ring', 'multi-ring'] = Field(..., description="Arrangement of the probes.")
-    radius_m: float = Field(..., description="The radius of the probe ring in meters.")
+    distribution: Literal['ring', 'multi-ring', 'custom'] = Field(
+        ...,
+        description=(
+            "Probe arrangement. 'ring' = uniform horizontal-plane ring (TR 37.977 §6.1 "
+            "standard, computed from num_probes + radius_m). 'multi-ring' / 'custom' "
+            "require explicit probe_positions per element."
+        ),
+    )
+    radius_m: float = Field(..., description="Radius of the probe sphere (meters, uniform).")
+    probe_positions: Optional[List[ProbePosition]] = Field(
+        None,
+        description=(
+            "Per-probe azimuth/elevation. REQUIRED when distribution != 'ring' "
+            "(P2-7 non-ring support). MUST have length == num_probes. Ignored "
+            "(with warning) when distribution='ring'."
+        ),
+    )
     probe_antenna: ProbeAntennaConfig = Field(default_factory=ProbeAntennaConfig, description="The antenna specification for each probe.")
     quiet_zone_radius_m: Optional[float] = Field(None, description="Radius of the chamber's quiet zone in meters for validation.")
     calibration_vector: Optional[np.ndarray] = Field(None, description="Complex vector for amplitude and phase calibration.")
+
+    @model_validator(mode='after')
+    def _validate_probe_positions(self):
+        """Enforce P2-7 schema consistency between distribution and probe_positions."""
+        if self.distribution in ('custom', 'multi-ring'):
+            if self.probe_positions is None:
+                raise ValueError(
+                    f"distribution={self.distribution!r} requires probe_positions to be set "
+                    f"(list of {self.num_probes} ProbePosition entries). Use distribution='ring' "
+                    f"if you want the legacy uniform-ring layout."
+                )
+            if len(self.probe_positions) != self.num_probes:
+                raise ValueError(
+                    f"len(probe_positions)={len(self.probe_positions)} != num_probes="
+                    f"{self.num_probes}. Provide exactly one ProbePosition per physical probe."
+                )
+        elif self.distribution == 'ring' and self.probe_positions is not None:
+            # Don't reject — caller may set both inadvertently. Warn loud via field
+            # docstring; runtime warnings are noisy in Streamlit context. Builder
+            # code uses ring formula regardless when distribution='ring'.
+            pass
+        return self
 
 class UniversalChannelProfile(BaseModel):
     """

@@ -335,7 +335,54 @@ draws across ports. Verified by `TestDualPolCrossCorrelationContract`.
 
 ---
 
-## 9. See also
+## 9. Chamber Probe Layout (Phase 8 / P2-7)
+
+For non-uniform chambers (sparse, sector, dual-ring), pass explicit per-probe
+positions instead of relying on the ring assumption:
+
+```python
+from mimo_ota_simulator.data_models import ChamberConfig, ProbePosition
+
+chamber = ChamberConfig(
+    num_probes=4,
+    radius_m=1.5,
+    distribution='custom',  # or 'multi-ring'
+    probe_positions=[
+        ProbePosition(azimuth_deg=10.0),                       # probe 0
+        ProbePosition(azimuth_deg=95.0),                       # probe 1
+        ProbePosition(azimuth_deg=180.0, elevation_deg=15.0),  # probe 2 (elevated)
+        ProbePosition(azimuth_deg=270.0, elevation_deg=-15.0), # probe 3 (depressed)
+    ],
+    dual_polarized=False,
+    probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
+)
+```
+
+### Validation rules
+
+- `distribution='ring'` (default): `probe_positions` may be omitted → ring formula `(p × 360°/N)`. If set, ignored.
+- `distribution='custom'` or `'multi-ring'`: `probe_positions` REQUIRED; length must equal `num_probes`.
+- `ProbePosition.azimuth_deg`: `-360 ≤ az ≤ 360`
+- `ProbePosition.elevation_deg`: `-90 ≤ el ≤ 90` (default 0)
+
+### What consumes `probe_positions`
+
+| Component | Behavior |
+|---|---|
+| `_calculate_probe_positions` (B-matrix path loss + phase) | `(r·cos(el)·cos(az), r·cos(el)·sin(az), r·sin(el))`. el=0 reduces exactly to ring case. |
+| `_calculate_weights_for_cluster` (Gaussian probe weights) | Per-probe `azimuth_deg` replaces `np.linspace(0, 2π, N)` assumption. Cluster AoA-matching works correctly for irregular layouts. |
+| Elevation in weights | **Not consumed** — Gaussian is azimuth-only. ZoA-aware weighting is potential P3 future work. |
+
+### Backward compat guarantee
+
+`distribution='ring'` + `probe_positions=None` produces bit-identical output
+to pre-Phase-8 code. Verified by
+`tests/test_non_ring_chamber.py::test_ring_e2e_unchanged_vs_pre_p2_7` against
+the existing `golden_mimo_ota_ray_results.npz` baseline.
+
+---
+
+## 10. See also
 
 - [strict-pfs-rollout.md](../plans/strict-pfs-rollout.md) — overall multi-phase plan
 - [strict-pfs-design.md](../plans/strict-pfs-design.md) — Phase 1 design rationale
