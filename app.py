@@ -197,6 +197,13 @@ with st.sidebar:
         wavelength = 3e8 / center_frequency_hz
         st.caption(f"💡 远场条件参考：R > 2D²/λ (当前波长: {wavelength*100:.2f} cm)")
         st.caption(f"   例如：DUT尺寸0.5m需要>5.8m，1.0m需要>23m，2.0m需要>92m")
+        st.caption(
+            "📐 非标暗室 (sparse / sector / dual-ring) 通过 Python API 或 "
+            "MIMO-First 微服务配置 `ChamberConfig.distribution='custom' + "
+            "probe_positions=[ProbePosition(az, el), ...]`；详见 "
+            "[docs/api/mimo_ota_simulator.md §9](../docs/api/mimo_ota_simulator.md)。"
+            "GUI 暂不支持手工配 probe positions（场景需求暂未触发，避免 UI 噪声）。"
+        )
 
     with st.expander("3. 物理参数与校准", expanded=False):
         probe_gain_dBi = st.number_input("探头天线增益 (dBi)", -10.0, 20.0, 0.0, 0.1)

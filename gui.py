@@ -214,6 +214,27 @@ class ChannelModelApp(tk.Tk):
 
             self.export_f64_button = ttk.Button(ota_frame, text="Export to F64", command=self.export_to_propsim)
             self.export_f64_button.grid(row=15, column=0, columnspan=2, pady=5)
+
+            # P2-7 footnote: non-ring chambers are configured via Python API or
+            # MIMO-First micro-service, not via this GUI. Avoid surfacing
+            # ChamberConfig.distribution / probe_positions controls because the
+            # 99% Ring 8-probe user doesn't need them and TKinter has no clean
+            # variable-length probe-position editor. Static pointer to docs.
+            non_ring_note = ttk.Label(
+                ota_frame,
+                text=(
+                    "📐 非标暗室 (sparse / sector / dual-ring): 通过 Python API 或\n"
+                    "MIMO-First 微服务配置 ChamberConfig.distribution='custom'\n"
+                    "+ probe_positions=[ProbePosition(az, el), ...]；\n"
+                    "详见 docs/api/mimo_ota_simulator.md §9。\n"
+                    "GUI 暂不支持手工配 probe positions（避免 UI 噪声）。"
+                ),
+                font=("Arial", 9, "italic"),
+                foreground="#666666",
+                justify=tk.LEFT,
+                wraplength=380,
+            )
+            non_ring_note.grid(row=16, column=0, columnspan=2, sticky='ew', pady=(8, 2))
             
         else:
             ttk.Label(ota_frame, text="MIMO OTA 库未安装").pack()
