@@ -135,6 +135,25 @@ class TestMissingSpreadWarns:
             warnings.simplefilter('error')
             gen._load_deterministic_clusters('CDL-A')
 
+    def test_partial_ray_spread_block_warns_for_missing_dim(self):
+        """ray_spread_deg 块存在但缺某个 key 时, 该维度仍须告警 (Codex PR#18 P2)。"""
+        gen = _generator('CDL-A')
+        pt = ParameterTables('synthetic')
+        pt.data = {'cdl_models': {'CDL-Z': {
+            'xpr_db': 10,
+            'ray_spread_deg': {'c_asd_deg': 5.0, 'c_asa_deg': 11.0,
+                               'c_zsd_deg': 3.0},  # 缺 c_zsa_deg
+            'clusters': [
+                {'id': 1, 'delay_ns': 0.0, 'power_db': 0.0,
+                 'aod_deg': 0.0, 'aoa_deg': 0.0, 'zod_deg': 90.0, 'zoa_deg': 90.0},
+            ],
+        }}}
+        gen.params = pt
+        with pytest.warns(UserWarning, match='as_zoa_deg'):
+            clusters = gen._load_deterministic_clusters('CDL-Z')
+        assert clusters[0].as_zoa == 0.0
+        assert clusters[0].as_aoa == 11.0
+
     def test_full_cluster_level_spread_does_not_warn(self):
         """模型级缺 ray_spread_deg 但簇级 as_* 齐全时不告警 (Codex PR#18 P3)。"""
         gen = _generator('CDL-A')

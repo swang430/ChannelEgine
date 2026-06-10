@@ -346,14 +346,24 @@ class ChannelGenerator:
         # 塌缩到簇均值角。模型级字段作默认值, 簇级 as_*_deg 仍可覆盖;
         # 两级都缺时必须告警而不是无声给 0。
         ray_spread = model_params.get('ray_spread_deg', {})
-        _AS_KEYS = ('as_aod_deg', 'as_aoa_deg', 'as_zod_deg', 'as_zoa_deg')
-        # 只在真的会塌缩到 0 时告警: 模型级缺失且至少一行簇级也没覆盖全
-        # (Codex PR#18 P3 — 自带完整簇级 as_* 的 custom 模型不该被吵)。
-        if not ray_spread and any(k not in c for c in raw for k in _AS_KEYS):
+        _AS_TO_SPREAD = {
+            'as_aod_deg': 'c_asd_deg',
+            'as_aoa_deg': 'c_asa_deg',
+            'as_zod_deg': 'c_zsd_deg',
+            'as_zoa_deg': 'c_zsa_deg',
+        }
+        # 逐维告警: 某维度模型级 (ray_spread_deg 块缺或块内缺 key) 与簇级
+        # 都没提供时, 该维度簇内角度扩展塌缩为 0 (Codex PR#18 P3+P2 —
+        # 自带完整簇级 as_* 的 custom 模型不吵, 部分缺失的块也不漏报)。
+        missing_dims = [
+            as_key for as_key, c_key in _AS_TO_SPREAD.items()
+            if c_key not in ray_spread and any(as_key not in c for c in raw)
+        ]
+        if missing_dims:
             warnings.warn(
-                f"确定性模型 '{model_name}' 未定义 ray_spread_deg (c_ASD/c_ASA/"
-                f"c_ZSD/c_ZSA), 且簇级未覆盖时簇内角度扩展为 0 — ray 级导出"
-                f"(SoS/OTA) 的射线将塌缩到簇均值角",
+                f"确定性模型 '{model_name}' 的 ray_spread_deg 与簇级 as_* 均未"
+                f"覆盖维度 {missing_dims}, 这些维度簇内角度扩展为 0 — ray 级"
+                f"导出 (SoS/OTA) 的射线在该维度将塌缩到簇均值角",
                 UserWarning,
             )
         default_as = {
