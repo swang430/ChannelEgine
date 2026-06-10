@@ -72,6 +72,25 @@ class TestLosDirectionCentering:
         los = _los_dirs()
         assert abs(np.mean(zoas) - los['zoa']) < 15.0
 
+    def test_indoor_nlos_zoa_centered_at_90(self):
+        """室内 UT (InH) NLOS 的 ZOA 中心是 90° 而非几何 LOS zenith
+        (eq 7.5-16 θ̄_ZOA, Codex PR#25 P2 r3)。用高低差大的几何放大区分度。"""
+        zoas = []
+        for seed in range(40, 50):
+            np.random.seed(seed)
+            sim = ChannelSimulator('InH-Office', 3.5e9)
+            sim.config.bs_positions = np.array([[0.0, 0.0, 25.0]])
+            sim.config.ue_positions = np.array([[15.0, 0.0, 1.5]])
+            sim.generator = sim._build_generator()
+            while True:
+                results = sim.run(logger=None)
+                if not results['is_los']:
+                    break
+            zoas.extend(c.zoa_theta for c in results['clusters'])
+        # 几何 LOS zenith ≈ 122.9° (高低差 23.5m / 距离 15m); 室内规则应使
+        # 均值留在 90° 附近
+        assert abs(np.mean(zoas) - 90.0) < 15.0
+
     def test_zenith_within_valid_range(self):
         for seed in (3, 4, 5):
             results = _run(seed=seed)

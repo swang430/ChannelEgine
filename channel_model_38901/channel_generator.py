@@ -605,9 +605,14 @@ class ChannelGenerator:
             aod = aod - aod[0]
             zoa = zoa - zoa[0]
             zod = zod - zod[0]
+        # eq 7.5-16 的 θ̄_ZOA: 室内 UT (InH/InF 场景) 的 NLOS 链路中心固定
+        # 90°, 仅室外链路用几何 LOS zenith (Codex PR#25 P2 round 3)。
+        # LOS 情形减首簇项后中心必须是真实 LOS 方向, 不受室内规则影响。
+        indoor_ut = self.config.scenario_name.startswith(('InH', 'InF'))
+        zoa_center = 90.0 if (indoor_ut and not is_los) else los['zoa']
         aoa = aoa + los['aoa']
         aod = aod + los['aod']
-        zoa = zoa + los['zoa']
+        zoa = zoa + zoa_center
         zod = zod + los['zod']  # + μ_offset,ZOD (=0, 见 docstring)
 
         wrap = lambda a: (a + 180.0) % 360.0 - 180.0
