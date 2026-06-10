@@ -2,6 +2,7 @@ import numpy as np
 from .abc_models import ABC_ChannelConditionModel, ABC_PathlossModel, ABC_FadingModel
 from channel_model_38901.common.data_models import ScenarioConfig, LargeScaleParameters
 from channel_model_38901.common.expression_eval import safe_eval
+from channel_model_38901.common.lsp_correlation import build_lsp_correlation_matrix
 from channel_model_38901.parameters.parameter_loader import ParameterTables
 
 class UMa_ChannelCondition(ABC_ChannelConditionModel):
@@ -125,13 +126,7 @@ class UMa_Fading(ABC_FadingModel):
             x = np.array(mu)
         else:
             # 构建相关矩阵
-            C = np.identity(len(param_order))
-            for i, p1 in enumerate(param_order):
-                for j, p2 in enumerate(param_order):
-                    if i < j:
-                        key = f'{p1}_vs_{p2}'
-                        if key in correlations:
-                            C[i, j] = C[j, i] = correlations[key]
+            C = build_lsp_correlation_matrix(param_order, correlations)
 
             # Cholesky分解 - 对非正定矩阵进行特征值修正
             try:
