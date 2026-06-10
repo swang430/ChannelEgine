@@ -83,8 +83,6 @@ OTA_CASES = [
     ('channel.use_median_lsps', {}, dict(use_median_lsps=True), {}),
     ('channel.scale_to_scenario', {}, dict(scale_to_scenario=True), {}),
     ('channel.split_subclusters', {}, dict(split_subclusters=True), {}),
-    ('channel.c_ds_ns', {},
-     dict(split_subclusters=True, c_ds_ns=10.0), {}),
     ('tx_antenna.num_cols', {}, dict(tx_antenna=_antenna(num_cols=3)), {}),
     ('rx_antenna.num_cols', {}, dict(rx_antenna=_antenna(num_cols=3)), {}),
     ('tx_antenna.spacing_h', {}, dict(tx_antenna=_antenna(spacing_h=0.8)), {}),
@@ -108,6 +106,11 @@ OTA_CASES = [
 # 需要非默认基线的成对比较 (Codex PR#29 P2: 字段只在特定配置下生效 —
 # spacing_v 要 URA, polarization 要双极化 chamber, slant 要 TR38.901 方向图)
 PAIR_CASES = [
+    # c_ds_ns 只在 split_subclusters=True 下生效, 两侧都开 split 才能
+    # 隔离该字段 (Codex PR#29 P2 r2: 混入 split 翻转会掩盖 c_ds_ns 失效)
+    ('channel.c_ds_ns',
+     (dict(), dict(split_subclusters=True, c_ds_ns=3.91)),
+     (dict(), dict(split_subclusters=True, c_ds_ns=10.0))),
     ('tx_antenna.spacing_v',
      (dict(), dict(tx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2, spacing_v=0.5))),
      (dict(), dict(tx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2, spacing_v=0.9)))),
