@@ -98,12 +98,15 @@ class ChannelGenerator:
 
     @staticmethod
     def _unit_vector(zenith_deg: float, azimuth_deg: float) -> np.ndarray:
+        """球面单位向量, zenith 约定 (TR 38.901 §7.1, eq 7.1-6): θ 从 +z 轴量起,
+        θ=90° 为水平方向。历史 bug (audit batch 2, A2): 此处曾用 elevation 约定
+        (z=sinθ), 与 SoS 导出 / LCS 变换 / 元件方向图的 zenith 约定矛盾。"""
         theta = np.deg2rad(zenith_deg)
         phi = np.deg2rad(azimuth_deg)
         return np.array([
-            np.cos(theta) * np.cos(phi),
-            np.cos(theta) * np.sin(phi),
-            np.sin(theta)
+            np.sin(theta) * np.cos(phi),
+            np.sin(theta) * np.sin(phi),
+            np.cos(theta)
         ])
 
     @staticmethod
@@ -399,12 +402,24 @@ class ChannelGenerator:
         zod_unscaled = -lsps.departure_zenith_spread_deg * np.log(P_n / np.max(P_n))
         X_n_signs = np.random.choice([-1, 1], size=(num_clusters, 4))
         Y_n_offsets = np.random.randn(num_clusters, 4)
+        # zenith 角以 90° (水平) 为中心, 符合 zenith 约定 (θ 从 +z 量起)。
+        # 几何 LOS 方向中心化 (§7.5 step 7 的 θ_LOS,ZOA 项) 属 PR10 范围。
+        zoa = 90.0 + X_n_signs[:, 2] * zoa_unscaled + Y_n_offsets[:, 2] * (lsps.arrival_zenith_spread_deg / 7.0)
+        zod = 90.0 + X_n_signs[:, 3] * zod_unscaled + Y_n_offsets[:, 3] * (lsps.departure_zenith_spread_deg / 7.0)
         return {
             'aoa_phi': X_n_signs[:, 0] * aoa_unscaled + Y_n_offsets[:, 0] * (lsps.arrival_azimuth_spread_deg / 7.0),
             'aod_phi': X_n_signs[:, 1] * aod_unscaled + Y_n_offsets[:, 1] * (lsps.departure_azimuth_spread_deg / 7.0),
-            'zoa_theta': X_n_signs[:, 2] * zoa_unscaled + Y_n_offsets[:, 2] * (lsps.arrival_zenith_spread_deg / 7.0),
-            'zod_theta': X_n_signs[:, 3] * zod_unscaled + Y_n_offsets[:, 3] * (lsps.departure_zenith_spread_deg / 7.0)
+            'zoa_theta': self._fold_zenith(zoa),
+            'zod_theta': self._fold_zenith(zod)
         }
+
+    @staticmethod
+    def _fold_zenith(theta_deg: np.ndarray) -> np.ndarray:
+        """把 zenith 角镜像折叠回 [0, 180]° (TR 38.901 §7.5 step 7:
+        θ∈[180°,360°] 时取 360°-θ)。弱簇的 -ZS·log(P/Pmax) 项可超 90°,
+        加 90° 偏移后可能越界 (Codex PR#17 P2)。"""
+        theta = np.abs(np.asarray(theta_deg, dtype=float)) % 360.0
+        return np.where(theta > 180.0, 360.0 - theta, theta)
 
     def _generate_xpr(self, scenario_params, is_los, num_clusters):
         """生成交叉极化功率比 (XPR)。"""
@@ -473,11 +488,9 @@ class ChannelGenerator:
 
             cluster.h_matrix = H_corr
             
-            # 计算多普勒频移
+            # 计算多普勒频移 (zenith 约定, 复用 _unit_vector 避免再次出现两套公式)
             v = self.config.ue_velocities[0]
-            r_rx_mean = np.array([np.cos(np.deg2rad(cluster.zoa_theta)) * np.cos(np.deg2rad(cluster.aoa_phi)),
-                                  np.cos(np.deg2rad(cluster.zoa_theta)) * np.sin(np.deg2rad(cluster.aoa_phi)),
-                                  np.sin(np.deg2rad(cluster.zoa_theta))])
+            r_rx_mean = self._unit_vector(cluster.zoa_theta, cluster.aoa_phi)
             doppler_shift_hz = np.dot(r_rx_mean, v) / lambda_0
             doppler_term = np.exp(1j * 2 * np.pi * doppler_shift_hz * time_s)
             

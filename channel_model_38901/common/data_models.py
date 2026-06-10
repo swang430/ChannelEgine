@@ -59,8 +59,10 @@ class EngineCluster(BaseModel):
     power: float = 0.0
     aod_phi: float = 0.0
     aoa_phi: float = 0.0
-    zod_theta: float = 0.0
-    zoa_theta: float = 0.0
+    # zenith 约定 (θ 从 +z 量起), 默认 90° = 水平方向, 与 mimo_ota_simulator
+    # 一致 (audit batch 2, A2; 历史默认 0.0 在 zenith 约定下意为"垂直向上")
+    zod_theta: float = 90.0
+    zoa_theta: float = 90.0
     as_aod: float = 0.0
     as_aoa: float = 0.0
     as_zod: float = 0.0

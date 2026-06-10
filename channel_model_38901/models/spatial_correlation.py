@@ -31,8 +31,11 @@ def _calculate_ura_correlation(num_rows: int, num_cols: int, spacing_v: float, s
     The URA correlation is modeled as the Kronecker product of two ULA correlations.
     """
     # Correlation for the vertical elements (rows)
-    # Note: The 3GPP model relates vertical correlation to zenith angle (theta)
-    R_vertical = _calculate_ula_correlation(num_rows, zenith_deg, zenith_spread_deg, spacing_v)
+    # Note: The 3GPP model relates vertical correlation to zenith angle (theta).
+    # _calculate_ula_correlation 的相位项是 sin(angle) (broadside 在 0°), 而
+    # zenith 约定下垂直阵的 broadside 是水平方向 θ=90°, 沿 z 的相位差 ∝ cos(θ)
+    # = sin(90°-θ), 故传入 90°-θ (audit batch 2, A2)。
+    R_vertical = _calculate_ula_correlation(num_rows, 90.0 - zenith_deg, zenith_spread_deg, spacing_v)
 
     # Correlation for the horizontal elements (columns)
     # Note: The 3GPP model relates horizontal correlation to azimuth angle (phi)
