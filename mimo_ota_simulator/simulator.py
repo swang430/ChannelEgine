@@ -977,7 +977,16 @@ class MIMO_OTA_Simulator:
         effective_H_matrix_ul = None
         channel_impulse_response_ul = None
         ray_components_ul = None
+        jitter_vector_ul = None
         if channel_config.enable_ul_dl:
+            # UL 侧与 A_ul 一致的 jitter 相量: A_ul = transform(A·jv) — transpose
+            # 时列携带 jv, conjugate_transpose 时列携带 conj(jv) (Codex PR#22 P2)。
+            if jitter_vector is not None:
+                jitter_vector_ul = (
+                    jitter_vector
+                    if channel_config.reciprocity_transform == 'transpose'
+                    else np.conj(jitter_vector)
+                )
             if target_H_matrix is not None:
                 target_H_matrix_ul = self._apply_reciprocity_transform(
                     target_H_matrix, channel_config.reciprocity_transform
@@ -1008,6 +1017,7 @@ class MIMO_OTA_Simulator:
             "cluster_probe_mapping": cluster_probe_mapping,
             "ray_components": ray_components, # Explicit variable
             "probe_phase_jitter_vector": jitter_vector,
+            "probe_phase_jitter_vector_ul": jitter_vector_ul,
             "channel_impulse_response": impulse_response, # Wideband Taps
             "target_H_matrix_ul": target_H_matrix_ul,
             "transmit_mapping_matrix_A_ul": transmit_mapping_matrix_A_ul,

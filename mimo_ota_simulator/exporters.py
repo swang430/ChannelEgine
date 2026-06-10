@@ -71,7 +71,10 @@ class PropsimASCIIExporter:
             data_tensor, delays = self._compute_static_tensor(
                 sim_result, impulse_response, apply_calibration=apply_calibration
             )
-            
+
+        # Jitter 相量按方向施加到物理探头轴 (audit batch 2 / Codex PR#22 P2)
+        data_tensor = self._apply_export_jitter(data_tensor, sim_result, direction)
+
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
 
         # Write Files (One per Link / Logical Channel)
@@ -166,7 +169,10 @@ class PropsimASCIIExporter:
             data_tensor, delays = self._compute_static_tensor(
                 sim_result, impulse_response, apply_calibration=apply_calibration
             )
-            
+
+        # Jitter 相量按方向施加到物理探头轴 (audit batch 2 / Codex PR#22 P2)
+        data_tensor = self._apply_export_jitter(data_tensor, sim_result, direction)
+
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
         num_samples, num_effective_probes, num_tx, num_taps = data_tensor.shape
         
@@ -202,10 +208,6 @@ class PropsimASCIIExporter:
         # Apply Cal & Scaling
         scaling_factor = self._calculate_scaling_factor(sim_result, sorted_taps)
         cal_vector = self._get_calibration_vector(num_probes, apply_calibration=apply_calibration) # (P, 1)
-        # Audit batch 2 / A-jitter: probe_phase_jitter 此前只乘进 A 快照,
-        # 导出的 .asc 不含 jitter, 与 effective_H_matrix 静默不一致。
-        # jitter_vector 是 (P,1) 复相量, 折进 per-probe 因子。
-        cal_vector = self._apply_jitter_vector(cal_vector, sim_result, num_probes)
         
         for k, tap in enumerate(sorted_taps):
             # coeff is (P, T)
@@ -246,8 +248,6 @@ class PropsimASCIIExporter:
         # Pre-calc Scaling & Cal
         scaling_factor = self._calculate_scaling_factor(sim_result, sorted_taps)
         cal_vector = self._get_calibration_vector(num_probes, apply_calibration=apply_calibration)
-        # 与 static 路径一致: jitter 折进 per-probe 因子 (audit batch 2)
-        cal_vector = self._apply_jitter_vector(cal_vector, sim_result, num_probes)
         
         # Pre-compute Effective Rays per Tap
         tap_engines = []
@@ -396,22 +396,34 @@ class PropsimASCIIExporter:
         return 1.0
 
     @staticmethod
-    def _apply_jitter_vector(cal_vector, sim_result, num_probes):
-        """把 sim_result['probe_phase_jitter_vector'] ((P,1) 复相量, 可为 None)
-        折进 per-probe 校正因子, 保证导出与 effective_H_matrix 一致
-        (audit batch 2: 此前 exporter 从不消费该向量)。"""
-        jv = sim_result.get('probe_phase_jitter_vector')
+    def _apply_export_jitter(data_tensor, sim_result, direction: str):
+        """把 probe phase jitter 相量施加到导出 tensor 的物理探头轴
+        (audit batch 2: 此前 exporter 从不消费 jitter, .asc 与 effective_H
+        静默不一致)。
+
+        轴选择 (Codex PR#22 P2): tensor 形状 (Samples, dim0, dim1, Taps)。
+        DL 时 dim0=探头; UL 时 coeff/W_base 已被互易转置, 探头在 dim1,
+        且 conjugate_transpose 下相量须共轭 — simulator 已按 transform
+        预先生成 probe_phase_jitter_vector_ul, 这里只按方向选 key 和轴。
+        """
+        key = ('probe_phase_jitter_vector' if direction == 'dl'
+               else 'probe_phase_jitter_vector_ul')
+        jv = sim_result.get(key)
         if jv is None:
-            return cal_vector
-        jv = np.asarray(jv).reshape(-1, 1)
-        if jv.shape[0] != num_probes:
+            return data_tensor
+        jv = np.asarray(jv).ravel()
+        axis = 1 if direction == 'dl' else 2
+        if jv.shape[0] != data_tensor.shape[axis]:
             warnings.warn(
-                f"probe_phase_jitter_vector 长度 {jv.shape[0]} 与导出 probe 数 "
-                f"{num_probes} 不符, 忽略 jitter — 导出将与 effective_H 不一致",
+                f"{key} 长度 {jv.shape[0]} 与导出 tensor 探头轴 "
+                f"{data_tensor.shape[axis]} 不符, 忽略 jitter — 导出将与 "
+                f"effective_H 不一致",
                 UserWarning,
             )
-            return cal_vector
-        return cal_vector * jv
+            return data_tensor
+        shape = [1, 1, 1, 1]
+        shape[axis] = -1
+        return data_tensor * jv.reshape(shape)
 
     def _get_calibration_vector(self, num_probes, apply_calibration: bool = True):
         cal = np.ones((num_probes, 1), dtype=complex)
@@ -481,7 +493,10 @@ class MFSWRawExporter(PropsimASCIIExporter):
             data_tensor, delays = self._compute_static_tensor(
                 sim_result, impulse_response, apply_calibration=apply_calibration
             )
-            
+
+        # Jitter 相量按方向施加到物理探头轴 (audit batch 2 / Codex PR#22 P2)
+        data_tensor = self._apply_export_jitter(data_tensor, sim_result, direction)
+
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
         num_samples, num_effective_probes, num_tx, num_taps = data_tensor.shape
         
