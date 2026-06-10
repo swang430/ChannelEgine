@@ -499,19 +499,21 @@ LSP = 10^x  (for DS, ASD, ASA, ZSA, K)
 LSP = x     (for SF, already in dB)
 ```
 
-### 2. 簇功率归一化
+### 2. 簇功率归一化(2026-06-11 audit batch 2 PR11 后的实际行为)
 
 ```python
-# Step 1: 生成原始功率
+# Step 1: 生成原始功率 (Z_n ~ N(0, ζ²), ζ 读 JSON per_cluster_shadowing_std_db)
 P_n = exp(-τ_n × (r_τ - 1) / r_τ / DS) × 10^(-Z_n/10)
 
-# Step 2: LOS情况加入K因子
-if is_los:
-    P_1 = P_1 + K / (K + 1)
-    P_n = P_n × (1 / (K + 1))  # for n > 1
-
-# Step 3: 归一化
+# Step 2: 归一化 (扩散功率, 不含 K)
 P_n = P_n / sum(P_n)
+
+# Step 3: -25 dB 弱簇删除, 剩余重新归一化 (§7.5 step 5 末)
+
+# 注: LOS 的 K 因子不进簇功率本身 —— 引擎在 _synthesize_channel 做全局
+# Rician 混合 sqrt(K/(K+1))·H_los + sqrt(1/(K+1))·H_nlos; K 调整功率
+# (P_1 += K/(K+1)) 仅用于 step 6/7 的角度生成归一化 (eq 7.5-9/7.5-14)。
+# LOS 的延迟另按 step 4 的 D(K) 多项式缩放 (功率生成用未缩放延迟)。
 ```
 
 ### 3. OTA cluster合成算法

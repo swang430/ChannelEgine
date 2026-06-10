@@ -430,7 +430,30 @@ class ChannelGenerator:
         num_clusters = scenario_params['num_clusters_los'] if is_los else scenario_params['num_clusters_nlos']
         tau_n = self._generate_cluster_delays(lsps, num_clusters, is_los, scenario_params)
         P_n = self._generate_cluster_powers(tau_n, lsps, is_los, scenario_params)
-        angles = self._generate_angles(P_n, lsps, num_clusters, is_los, scenario_params)
+
+        # §7.5 step 5 末: 删除相对最强簇低于 -25 dB 的簇 (audit batch 2, F7)。
+        # 删除后重新归一化以维持引擎的单位功率约定 (被删簇功率占比 <0.3%/个)。
+        # 判据用扩散功率 (eq 7.5-6, Codex PR#26 P2 r4/r5): K 调整功率只用于
+        # 角度方程; 且本引擎的镜面分量在 _synthesize_channel 里由
+        # k_factor_linear 独立合成 (全局 Rician 混合), 不依赖簇列表 — 弱的
+        # 首扩散簇按规则正常删除, 不需要保护 (角度生成在删簇之后, LOS 对齐
+        # 自然落在剩余的第一簇上)。
+        table_n = num_clusters  # C_φ/C_θ 表按场景簇数 N 查, 不随删簇变
+        tau_n, P_n = self._prune_weak_clusters(tau_n, P_n)
+        num_clusters = len(P_n)
+
+        # §7.5 step 4 末 (audit batch 2, F6): LOS 时延迟除以 D(K) 补偿镜面
+        # 分量对 RMS DS 的压缩; 缩放只作用于输出延迟, 功率生成 (上方) 按
+        # spec 使用未缩放延迟。多项式系数待 spec 核验 (PDF 403)。
+        if is_los and lsps.k_factor_linear > 0:
+            k_db = 10.0 * np.log10(lsps.k_factor_linear)
+            d_scale = (0.7705 - 0.0433 * k_db + 0.0002 * k_db**2
+                       + 0.000017 * k_db**3)
+            if d_scale > 1e-6:
+                tau_n = tau_n / d_scale
+
+        angles = self._generate_angles(P_n, lsps, num_clusters, is_los,
+                                       scenario_params, table_n=table_n)
         k_n = self._generate_xpr(scenario_params, is_los, num_clusters)
         initial_phases = self._generate_initial_phases(num_clusters)
 
@@ -490,17 +513,60 @@ class ChannelGenerator:
         }
         return 0.375 * 10.0 ** safe_eval(mu_expr, local_scope)
 
+    @staticmethod
+    def _r_tau(scenario_params, is_los):
+        """Table 7.5-6 的 r_τ 是 LOS/NLOS 分列的 (audit batch 2, F6d)。
+        参数文件提供 delay_scaling_factor_los/_nlos 时分别使用, 否则回退
+        共用的 delay_scaling_factor (当前 JSON 仅有共用值, 分列值随
+        V19.2.0 参数升级补)。"""
+        key = 'delay_scaling_factor_los' if is_los else 'delay_scaling_factor_nlos'
+        # 惰性回退 (Codex PR#26 P2 r2): dict.get 的默认参数会被急切求值,
+        # 只有分列 key 的升级参数文件会在这里 KeyError
+        if key in scenario_params:
+            return scenario_params[key]
+        return scenario_params['delay_scaling_factor']
+
+    @staticmethod
+    def _prune_weak_clusters(tau_n, P_n, threshold_db: float = -25.0):
+        """§7.5 step 5 末的弱簇删除: 按扩散功率 (eq 7.5-6) 判据, 低于
+        max·10^(threshold/10) 的簇移除, 剩余重新归一化 (引擎单位功率约定)。
+
+        LOS 不需要首簇特殊保护 (Codex PR#26 P2 r5): 本引擎的镜面分量由
+        k_factor_linear 在合成阶段独立生成, 不依赖簇列表。"""
+        keep = P_n >= np.max(P_n) * 10.0 ** (threshold_db / 10.0)
+        if np.all(keep):
+            return tau_n, P_n
+        tau_n = tau_n[keep]
+        P_n = P_n[keep]
+        return tau_n, P_n / np.sum(P_n)
+
     def _generate_cluster_delays(self, lsps, num_clusters, is_los, scenario_params):
-        """生成簇时延。参考 TR 38.901, 步骤 4。"""
-        r_tau = scenario_params['delay_scaling_factor']
+        """生成簇时延。参考 TR 38.901, 步骤 4 (LOS 的 D(K) 缩放在调用方,
+        因功率生成须用未缩放延迟)。"""
+        r_tau = self._r_tau(scenario_params, is_los)
         X_n = np.random.rand(num_clusters)
         tau_prime = -r_tau * lsps.delay_spread_s * np.log(X_n)
         return np.sort(tau_prime - np.min(tau_prime))
 
     def _generate_cluster_powers(self, tau_n, lsps, is_los, scenario_params):
-        """生成簇功率。参考 TR 38.901, 步骤 5。"""
-        r_tau = scenario_params['delay_scaling_factor']
-        P_prime = np.exp(-tau_n * (r_tau - 1) / (r_tau * lsps.delay_spread_s)) * 10**(-np.random.randn(len(tau_n)) / 10)
+        """生成簇功率。参考 TR 38.901, 步骤 5。
+
+        Per-cluster shadowing Z_n ~ N(0, ζ²): ζ 读 Table 7.5-6 的
+        per_cluster_shadowing_std_db (audit batch 2, F6c — 此前硬编码
+        σ=1 dB)。字段缺失 (旧参数文件) 时回退历史 1 dB 并告警。"""
+        r_tau = self._r_tau(scenario_params, is_los)
+        lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
+        zeta_db = scenario_params.get(lsp_set, {}).get('per_cluster_shadowing_std_db')
+        if zeta_db is None:
+            warnings.warn(
+                f"场景 '{self.config.scenario_name}'/{lsp_set} 缺 "
+                f"per_cluster_shadowing_std_db (Table 7.5-6 ζ), 回退历史值 "
+                f"1 dB — 请升级参数文件",
+                UserWarning,
+            )
+            zeta_db = 1.0
+        Z_n = np.random.randn(len(tau_n)) * zeta_db
+        P_prime = np.exp(-tau_n * (r_tau - 1) / (r_tau * lsps.delay_spread_s)) * 10**(-Z_n / 10)
         return P_prime / np.sum(P_prime)
 
     def _scaling_factor(self, table: dict, num_clusters: int, name: str,
@@ -545,8 +611,13 @@ class ChannelGenerator:
             'zoa': float(np.rad2deg(np.arccos(np.clip(-dz / d3, -1.0, 1.0)))),
         }
 
-    def _generate_angles(self, P_n, lsps, num_clusters, is_los, scenario_params):
+    def _generate_angles(self, P_n, lsps, num_clusters, is_los, scenario_params,
+                         table_n: Optional[int] = None):
         """生成簇的离开角和到达角。TR 38.901 §7.5 step 7 (eq 7.5-9..7.5-16)。
+
+        table_n: C_φ/C_θ 表的查表簇数 (场景配置的 N)。弱簇删除后实际簇数
+        可能小于 N, 但 Table 7.5-2/7.5-4 的 C 常数按场景 N 定义, 不随删簇变。
+        默认 None 时用 num_clusters。
 
         Audit batch 2 / F4 修复: (a) 使用 JSON scaling_factors_aoa_aod /
         scaling_factors_zoa_zod 的 C_φ(N)/C_θ(N) 表 (此前 dead config,
@@ -568,11 +639,12 @@ class ChannelGenerator:
             P_angles[0] += k_lin / (k_lin + 1.0)
         ratio = -np.log(P_angles / np.max(P_angles))
 
+        lookup_n = table_n if table_n is not None else num_clusters
         c_phi = self._scaling_factor(
-            scenario_params.get('scaling_factors_aoa_aod'), num_clusters,
+            scenario_params.get('scaling_factors_aoa_aod'), lookup_n,
             'scaling_factors_aoa_aod', legacy_fallback=2.0)
         c_theta = self._scaling_factor(
-            scenario_params.get('scaling_factors_zoa_zod'), num_clusters,
+            scenario_params.get('scaling_factors_zoa_zod'), lookup_n,
             'scaling_factors_zoa_zod', legacy_fallback=1.0)
         if is_los and lsps.k_factor_linear > 0:
             # eq 7.5-10 / 7.5-15 的 LOS K 修正多项式 (K 为 dB)

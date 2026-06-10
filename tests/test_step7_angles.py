@@ -55,13 +55,16 @@ class TestLosAlignment:
 class TestLosDirectionCentering:
     def test_nlos_angles_centered_at_los_direction(self):
         """NLOS 簇角围绕几何 LOS 方向分布 (修复前围绕 0° — 与 UE 在 +x
-        方向时 AoA 应约 180° 矛盾)。"""
-        aoas = []
+        方向时 AoA 应约 180° 矛盾)。
+
+        用功率加权环绕均值: 弱簇 -ln(P/Pmax) 大、偏移可绕圈 (spec 行为),
+        简单均值会退化; 强簇偏移小, 加权后中心物理上有意义。"""
+        z = 0.0
         for seed in range(20, 30):
             results = _run(force='NLOS', seed=seed)
-            aoas.extend(c.aoa_phi for c in results['clusters'])
-        # 环绕均值接近 180° (LOS AoA); 修复前接近 0°
-        mean = np.rad2deg(np.angle(np.mean(np.exp(1j * np.deg2rad(aoas)))))
+            for c in results['clusters']:
+                z += c.power * np.exp(1j * np.deg2rad(c.aoa_phi))
+        mean = np.rad2deg(np.angle(z))
         assert abs(abs(mean) - 180.0) < 30.0
 
     def test_zenith_centered_at_geometric_los_zenith(self):
