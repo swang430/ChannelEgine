@@ -135,6 +135,25 @@ class TestMissingSpreadWarns:
             warnings.simplefilter('error')
             gen._load_deterministic_clusters('CDL-A')
 
+    def test_full_cluster_level_spread_does_not_warn(self):
+        """模型级缺 ray_spread_deg 但簇级 as_* 齐全时不告警 (Codex PR#18 P3)。"""
+        gen = _generator('CDL-A')
+        pt = ParameterTables('synthetic')
+        pt.data = {'cdl_models': {'CDL-Y': {
+            'xpr_db': 10,
+            'clusters': [
+                {'id': 1, 'delay_ns': 0.0, 'power_db': 0.0,
+                 'aod_deg': 0.0, 'aoa_deg': 0.0, 'zod_deg': 90.0, 'zoa_deg': 90.0,
+                 'as_aod_deg': 5.0, 'as_aoa_deg': 11.0,
+                 'as_zod_deg': 3.0, 'as_zoa_deg': 3.0},
+            ],
+        }}}
+        gen.params = pt
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            clusters = gen._load_deterministic_clusters('CDL-Y')
+        assert clusters[0].as_aoa == 11.0
+
 
 class TestEndToEndSosExport:
     def test_rays_fan_out_in_doppler(self):

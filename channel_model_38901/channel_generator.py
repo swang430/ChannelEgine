@@ -346,7 +346,10 @@ class ChannelGenerator:
         # 塌缩到簇均值角。模型级字段作默认值, 簇级 as_*_deg 仍可覆盖;
         # 两级都缺时必须告警而不是无声给 0。
         ray_spread = model_params.get('ray_spread_deg', {})
-        if not ray_spread:
+        _AS_KEYS = ('as_aod_deg', 'as_aoa_deg', 'as_zod_deg', 'as_zoa_deg')
+        # 只在真的会塌缩到 0 时告警: 模型级缺失且至少一行簇级也没覆盖全
+        # (Codex PR#18 P3 — 自带完整簇级 as_* 的 custom 模型不该被吵)。
+        if not ray_spread and any(k not in c for c in raw for k in _AS_KEYS):
             warnings.warn(
                 f"确定性模型 '{model_name}' 未定义 ray_spread_deg (c_ASD/c_ASA/"
                 f"c_ZSD/c_ZSA), 且簇级未覆盖时簇内角度扩展为 0 — ray 级导出"
