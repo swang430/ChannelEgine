@@ -106,6 +106,27 @@ class TestJitterReachesExport:
             warnings.simplefilter('error')
             _tensor(r_plain)  # 无 jitter: 行为与修复前 bit-identical, 零告警
 
+    def test_ul_vector_derived_when_filtered_out(self):
+        """白名单过滤掉 *_ul 键时, 由 DL 相量 + 互易模式就地推导
+        (Codex PR#22 P2: GUI adapter 场景)。"""
+        r = _run(jitter=True, ul=True, reciprocity='conjugate_transpose')
+        expected = r['probe_phase_jitter_vector_ul']
+        filtered = dict(r)
+        filtered['probe_phase_jitter_vector_ul'] = None  # 模拟 GUI 白名单丢键
+        t_full, exporter = _tensor(r, direction='ul', return_exporter=True)
+        t_filtered = _tensor(filtered, direction='ul')
+        np.testing.assert_allclose(t_filtered, t_full, rtol=1e-12)
+        np.testing.assert_allclose(
+            expected, np.conj(r['probe_phase_jitter_vector']))
+
+    def test_ul_vector_missing_and_underivable_warns(self):
+        r = _run(jitter=True, ul=True)
+        filtered = dict(r)
+        filtered['probe_phase_jitter_vector_ul'] = None
+        filtered['reciprocity_transform'] = None
+        with pytest.warns(UserWarning, match='probe_phase_jitter_vector_ul'):
+            _tensor(filtered, direction='ul')
+
     def test_mismatched_jitter_length_warns(self):
         r_jit = _run(jitter=True)
         r_jit['probe_phase_jitter_vector'] = np.ones((7, 1), dtype=complex)

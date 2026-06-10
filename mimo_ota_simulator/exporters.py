@@ -409,6 +409,20 @@ class PropsimASCIIExporter:
         key = ('probe_phase_jitter_vector' if direction == 'dl'
                else 'probe_phase_jitter_vector_ul')
         jv = sim_result.get(key)
+        if jv is None and direction == 'ul':
+            # 防御 (Codex PR#22 P2): 经过白名单过滤的结果 dict (如 GUI adapter)
+            # 可能丢失 *_ul 键 — 有 DL 相量 + 互易模式时就地推导, 而非静默丢 jitter
+            dl_jv = sim_result.get('probe_phase_jitter_vector')
+            mode = sim_result.get('reciprocity_transform')
+            if dl_jv is not None and mode is not None:
+                jv = dl_jv if mode == 'transpose' else np.conj(dl_jv)
+            elif dl_jv is not None:
+                warnings.warn(
+                    "UL 导出: 结果 dict 缺 probe_phase_jitter_vector_ul 且无 "
+                    "reciprocity_transform 可推导, 忽略 jitter — UL 导出将与 "
+                    "effective_H_ul 不一致 (结果 dict 被过滤? 请透传 *_ul 键)",
+                    UserWarning,
+                )
         if jv is None:
             return data_tensor
         jv = np.asarray(jv).ravel()
