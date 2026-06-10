@@ -90,6 +90,39 @@ class TestRaySpreadLoaded:
         assert clusters[0].as_aod == 5.0    # 模型级默认
 
 
+class TestScenarioScalingAppliesToRaySpread:
+    def test_spread_scales_with_scenario_ratio(self):
+        """scale_to_scenario=True 时簇内 ray spread 须按 §7.7.5.1 的
+        AS_desired/AS_model 比例缩放, 而非保持表值 (Codex PR#18 P2)。"""
+        from channel_model_38901.channel_generator import ChannelGenerator
+
+        np.random.seed(13)
+        sim = ChannelSimulator('UMa', 3.5e9, 'CDL-A',
+                               use_median_lsps=True, scale_to_scenario=True)
+        results = sim.run(logger=None)
+        clusters, lsps = results['clusters'], results['lsps']
+
+        table = _DATA['cdl_models']['CDL-A']
+        powers = np.array([10 ** (c['power_db'] / 10) for c in table['clusters']])
+        powers = powers / powers.sum()
+        aoa_table = np.array([c['aoa_deg'] for c in table['clusters']])
+        ratio = ChannelGenerator._azimuth_spread_ratio(
+            aoa_table, powers, lsps.arrival_azimuth_spread_deg)
+        expected = table['ray_spread_deg']['c_asa_deg'] * ratio
+
+        assert ratio != pytest.approx(1.0, abs=1e-3)  # 前提: 缩放真发生了
+        for c in clusters:
+            assert c.as_aoa == pytest.approx(expected)
+
+    def test_no_scaling_keeps_table_values(self):
+        np.random.seed(13)
+        sim = ChannelSimulator('UMa', 3.5e9, 'CDL-A', scale_to_scenario=False)
+        clusters = sim.run(logger=None)['clusters']
+        expected = _DATA['cdl_models']['CDL-A']['ray_spread_deg']['c_asa_deg']
+        for c in clusters:
+            assert c.as_aoa == expected
+
+
 class TestMissingSpreadWarns:
     def test_scme_warns_on_missing_ray_spread(self):
         gen = _generator('SCME')
