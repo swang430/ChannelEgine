@@ -74,7 +74,7 @@ OTA_CASES = [
      dict(probe_antenna={'gain_dBi': 6.0, 'pattern': 'Isotropic'}), {}, {}),
     ('chamber.probe_antenna.pattern',
      dict(probe_antenna={'gain_dBi': 0.0, 'pattern': 'TR38.901'}), {}, {}),
-    ('chamber.probe_positions',
+    ('chamber.distribution+probe_positions',
      dict(distribution='custom',
           probe_positions=[ProbePosition(azimuth_deg=a, elevation_deg=e)
                            for a, e in ((0, 30), (90, 30), (180, 30), (270, 30),
@@ -139,12 +139,20 @@ PAIR_CASES = [
 # 已知 metadata-only / 间接生效字段的豁免清单 (必须写明原因)
 EXEMPT = {
     'chamber.quiet_zone_radius_m': 'metadata-only (audit batch 1 F1 已注明)',
+    'chamber.calibration_vector': 'B 矩阵专项 (test_propsim_export/audit) 覆盖',
     'channel.bandwidth_hz': '仅 WiFi 标准生效 (test_ofdm_passthrough 覆盖)',
     'channel.enable_ofdm': 'test_ofdm_passthrough 覆盖',
     'channel.n_fft': 'test_ofdm_passthrough 覆盖',
     'channel.enable_ul_dl': '只增 *_ul 键, A/B 不变 (test_jitter_export 覆盖 UL)',
     'channel.reciprocity_transform': '仅 enable_ul_dl=True 生效 (test_jitter_export 覆盖)',
-    'channel.input_mode/custom_profile': 'test_validation_guards/test_custom_cdl_e2e 覆盖',
+    'channel.standard': 'wifi/3gpp 分支选择 (test_ofdm_passthrough 走 wifi 分支)',
+    'channel.input_mode': 'custom 分支 (test_validation_guards/test_custom_cdl_e2e 覆盖)',
+    'channel.custom_profile': '同上',
+    'channel.custom_profile_path': 'from_file 入口 (test_cdl_schema 覆盖)',
+    'channel.phase_policy': 'WiFi tap 路径 (test_propsim_export 覆盖)',
+    'channel.normalize_power': 'WiFi tap 路径 (test_propsim_export 覆盖)',
+    'channel.delay_scale': 'WiFi tap 路径 (test_propsim_export 覆盖)',
+    'antenna.num_rows': 'URA case (array_type_URA) 中随 2x2 配置生效',
     'export.*': 'test_propsim_export/test_mode_a_power/test_jitter_export 覆盖',
 }
 
@@ -164,6 +172,30 @@ class TestOtaParamSensitivity:
                          **run_kw)
         assert _changed(baseline_signature, sig), \
             f'{name}: 改非默认值后输出未变化 — silent-ignore?'
+
+
+class TestRegistryCompleteness:
+    """登记契约的机器强制 (Codex PR#29 P2 r3): 每个 Pydantic config 字段
+    必须出现在 OTA_CASES/PAIR_CASES 的 case 名或 EXEMPT key 里 (子串匹配),
+    否则新字段会绕过守门。"""
+
+    REGISTRY = ' | '.join([c[0] for c in OTA_CASES]
+                          + [c[0] for c in PAIR_CASES]
+                          + list(EXEMPT))
+
+    @pytest.mark.parametrize('model,skip', [
+        (ChamberConfig, ()),
+        (TargetChannelConfig, ('tx_antenna', 'rx_antenna')),  # 嵌套模型单独查
+        (AntennaArrayConfig, ()),
+        (type(_chamber().probe_antenna), ()),  # ProbeAntennaConfig
+    ], ids=['ChamberConfig', 'TargetChannelConfig', 'AntennaArrayConfig',
+            'ProbeAntennaConfig'])
+    def test_every_field_registered(self, model, skip):
+        missing = [f for f in model.model_fields
+                   if f not in skip and f not in self.REGISTRY]
+        assert not missing, (
+            f'{model.__name__} 字段未登记敏感性 case 或 EXEMPT 豁免: {missing} '
+            f'— 新增 config 字段必须二选一登记')
 
 
 class TestOtaPairedSensitivity:
