@@ -112,6 +112,19 @@ class CustomCDLBuilder(ChannelProfileBuilder):
         self.profile = profile
 
     def build(self) -> UniversalChannelProfile:
+        # Audit batch 2 / A5: num_rays 字段被 schema 校验但合成器硬编码
+        # 20 rays/cluster (Table 7.5-3 偏移表只有 20 项) — 非 20 值会被
+        # 静默忽略, 必须告警而非无声接受。
+        ignored_rays = [i for i, c in enumerate(self.profile.clusters)
+                        if c.num_rays != 20]
+        if ignored_rays:
+            warnings.warn(
+                f"clusters {ignored_rays}: num_rays != 20 将被忽略 — 当前实现"
+                f"固定 20 rays/cluster (TR 38.901 Table 7.5-3 偏移表为 20 项)。"
+                f"可变 ray 数尚未支持。",
+                UserWarning,
+                stacklevel=2,
+            )
         clusters: List[EngineCluster] = []
         for c in self.profile.clusters:
             # Convert xpr from dB to linear (Phase 5 plumb-only, see EngineCluster docstring)

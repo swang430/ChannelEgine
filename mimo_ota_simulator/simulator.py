@@ -571,16 +571,28 @@ class MIMO_OTA_Simulator:
             probe_phase_jitter: bool = False,
             B_matrix: Optional[np.ndarray] = None,
             target_H_matrix: Optional[np.ndarray] = None) -> Dict:
+        # Audit batch 2 / A7: 单极化 chamber 下 tx 侧极化此前不校验, 'H'/±45
+        # 被静默按 V 处理 (rx 侧在 _synthesize_b_matrix 一直有同款 ValueError)。
+        tx_pol = channel_config.tx_antenna.polarization
+        if not chamber_config.dual_polarized and tx_pol != 'V':
+            raise ValueError(
+                f"chamber.dual_polarized=False but tx_antenna.polarization="
+                f"{tx_pol!r}. Single-pol mode implicitly assumes matched "
+                f"polarization (V); any non-V polarization ('H', '+45', '-45') "
+                f"requires chamber.dual_polarized=True. Either set "
+                f"dual_polarized=True or polarization='V'."
+            )
+
         num_tx_antennas = channel_config.tx_antenna.num_cols * channel_config.tx_antenna.num_rows
         num_effective_probes = chamber_config.num_probes * 2 if chamber_config.dual_polarized else chamber_config.num_probes
         probe_tx_power_contributions = np.zeros((num_effective_probes, num_tx_antennas))
         cluster_probe_mapping = {}
         ray_components = None # Initialize for export
         jitter_vector = None
-        
+
         # Wideband Impulse Response: List of taps {delay, coeff_matrix (PxT)}
         impulse_response = []
-        
+
         # synthesize_ota ignores random seed setting here since generation is already done
 
         # Detect frequency mismatch (Codex P2 on PR #5): when input_mode='custom'
@@ -597,6 +609,22 @@ class MIMO_OTA_Simulator:
                 f"({channel_profile.center_frequency_hz:.3e}); profile wins "
                 f"(used for both B-matrix and synthesis). When input_mode='custom', "
                 f"prefer setting frequency on the CustomCDLProfile only.",
+                stacklevel=2,
+            )
+
+        # Audit batch 2 / A7 (warn 方向): custom profile 显式给了 xpr_db /
+        # initial_phases_rad, 但 chamber 是单极化 → 这些字段不会生效
+        # (dual-pol 缺 xpr 的反方向已有 warning, 这里补正方向, 同 F2 风格)。
+        if (channel_config.input_mode == 'custom'
+                and not chamber_config.dual_polarized
+                and any(c.xpr_linear is not None or c.initial_phases is not None
+                        for c in channel_profile.clusters)):
+            warnings.warn(
+                "CustomCDLProfile 提供了 xpr_db / initial_phases_rad, 但 "
+                "chamber.dual_polarized=False — 单极化路径会忽略 XPR 与交叉极化"
+                "初相 (仅 initial_phases[0] 经 base_phase 生效)。如需双极化合成, "
+                "设 chamber.dual_polarized=True。",
+                UserWarning,
                 stacklevel=2,
             )
 
