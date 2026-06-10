@@ -146,6 +146,48 @@ class TestScalingTableConsumed:
             sim.run(logger=None)
 
 
+class TestLosPowerAdjustedRatio:
+    def test_los_ratio_uses_k_adjusted_powers(self):
+        """LOS 角度功率比须用 K 调整功率 (step 6, Codex PR#25 P2 r2):
+        高 K 下首簇主导 → ratio[0]=0 且其余簇 ratio 显著大于 NLOS 情形。"""
+        from channel_model_38901.common.data_models import LargeScaleParameters
+
+        np.random.seed(9)
+        sim = ChannelSimulator('UMa', 3.5e9)
+        gen = sim.generator
+        scenario_params = gen.params.get_scenario_params('UMa')
+        lsps_hi_k = LargeScaleParameters(
+            delay_spread_s=1e-7,
+            departure_azimuth_spread_deg=10.0, arrival_azimuth_spread_deg=20.0,
+            departure_zenith_spread_deg=5.0, arrival_zenith_spread_deg=5.0,
+            k_factor_linear=100.0,  # 20 dB — 镜面强主导
+            shadow_fade_db=0.0)
+        # 扩散功率谱: 首簇并非最强 (验证 K 调整后首簇翻转为主导)
+        P_n = np.array([0.1, 0.5, 0.4] + [0.0] * 0 + list(np.full(9, 0.0)))
+        P_n[3:] = 0.01
+        P_n = P_n / P_n.sum()
+
+        np.random.seed(9)
+        a = gen._generate_angles(P_n, lsps_hi_k, 12, True, scenario_params)
+
+        # 精确复算: K 调整功率 → ratio → φ' → X/Y 组装 → 减首簇 → +LOS
+        k_lin = 100.0
+        P_adj = P_n / (k_lin + 1.0)
+        P_adj[0] += k_lin / (k_lin + 1.0)
+        ratio = -np.log(P_adj / P_adj.max())
+        k_db = 10.0 * np.log10(k_lin)
+        c_phi = scenario_params['scaling_factors_aoa_aod']['12'] * (
+            1.1035 - 0.028 * k_db - 0.002 * k_db**2 + 0.0001 * k_db**3)
+        phi_prime = 2.0 * (20.0 / 1.4) * np.sqrt(ratio) / c_phi
+        np.random.seed(9)
+        X = np.random.choice([-1, 1], size=(12, 4))
+        Y = np.random.randn(12, 4)
+        aoa = X[:, 0] * phi_prime + Y[:, 0] * (20.0 / 7.0)
+        aoa = aoa - aoa[0] + 180.0
+        aoa = (aoa + 180.0) % 360.0 - 180.0
+        np.testing.assert_allclose(a['aoa_phi'], aoa, rtol=1e-12)
+
+
 class TestLosKCorrection:
     def test_k_correction_changes_los_angles(self):
         """同 K 修正只在 LOS 生效: 人工放大 K 修正输入应改变 LOS 簇角。

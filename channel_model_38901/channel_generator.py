@@ -557,7 +557,16 @@ class ChannelGenerator:
         已知遗留 (V19.2.0 参数升级时处理): NLOS 的 μ_offset,ZOD
         (Table 7.5-7 系列) 参数文件没有该字段, 此处取 0。
         """
-        ratio = -np.log(P_n / np.max(P_n))
+        # Step 6 (Codex PR#25 P2): LOS 时 eq 7.5-9/7.5-14 的功率比用
+        # K 调整后的簇功率 (P_1 并入镜面 K/(K+1), 其余乘 1/(K+1)),
+        # 高 K 下首簇主导角度归一化, 而非沿用 NLOS 扩散功率谱。
+        P_angles = np.asarray(P_n, dtype=float)
+        if is_los and lsps.k_factor_linear > 0:
+            k_lin = lsps.k_factor_linear
+            P_angles = P_angles / (k_lin + 1.0)
+            P_angles = P_angles.copy()
+            P_angles[0] += k_lin / (k_lin + 1.0)
+        ratio = -np.log(P_angles / np.max(P_angles))
 
         c_phi = self._scaling_factor(
             scenario_params.get('scaling_factors_aoa_aod'), num_clusters,
