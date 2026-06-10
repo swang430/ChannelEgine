@@ -46,6 +46,15 @@ class ChannelGenerator:
         self.config = config
         self.params = params
         self.cluster_model_name = cluster_model_name if cluster_model_name else 'Stochastic'
+        # Audit batch 2 / F12: 未知簇模型名 (如 'cdl-a' 小写 typo) 此前会
+        # 静默落入 Stochastic 路径。白名单校验, 拒绝无声 fallback。
+        _name = self.cluster_model_name
+        if not (_name == 'Stochastic' or _name.startswith('CDL-')
+                or _name == 'SCME' or _name.startswith('SCME-')):
+            raise ValueError(
+                f"未知 cluster_model_name {_name!r}。合法值: None/'Stochastic' "
+                f"(随机簇), 'CDL-A'..'CDL-E', 'SCME'/'SCME-*'。注意大小写敏感。"
+            )
         self.use_median_lsps = use_median_lsps
         # Opt-in: rescale tabulated CDL delays/angles to the scenario LSPs (TR 38.901
         # Sec 7.7.3 / 7.7.5.1). Default False preserves raw-table CDL behaviour.
