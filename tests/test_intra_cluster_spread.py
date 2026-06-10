@@ -71,6 +71,18 @@ class TestClusterSpreadUsesTableConstants:
         assert c_asa != pytest.approx(total_asa)
 
 
+class TestZsdFallbackNoShrink:
+    def test_missing_mu_zsd_falls_back_to_sampled_without_multiplier(self):
+        """mu_log10_ZSD 缺失时回退采样 ZSD 原值, 不乘 3/8 (Codex PR#24 P2 r2)。"""
+        np.random.seed(5)
+        sim = ChannelSimulator('UMa', 3.5e9)
+        for ls in ('lsp_parameters_los', 'lsp_parameters_nlos'):
+            sim.params.get_scenario_params('UMa')[ls].pop('mu_log10_ZSD', None)
+        results = sim.run(logger=None)
+        assert results['clusters'][0].as_zod == pytest.approx(
+            results['lsps'].departure_zenith_spread_deg)
+
+
 class TestMissingConstantFallback:
     def test_missing_constants_warn_and_fall_back(self):
         np.random.seed(5)

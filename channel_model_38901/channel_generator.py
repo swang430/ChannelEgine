@@ -455,7 +455,7 @@ class ChannelGenerator:
         as_aoa = c_asa if c_asa is not None else lsps.arrival_azimuth_spread_deg
         as_aod = c_asd if c_asd is not None else lsps.departure_azimuth_spread_deg
         as_zoa = c_zsa if c_zsa is not None else lsps.arrival_zenith_spread_deg
-        as_zod = 0.375 * self._mean_zsd_deg(lsp_params, lsps)
+        as_zod = self._c_zsd_deg(lsp_params, lsps)
 
         clusters = []
         for i in range(num_clusters):
@@ -473,10 +473,10 @@ class ChannelGenerator:
             ))
         return clusters
 
-    def _mean_zsd_deg(self, lsp_params: dict, lsps: LargeScaleParameters) -> float:
-        """10^μ_lgZSD — c_ZSD=(3/8)·10^μ 用的表均值 (Codex PR#24 P2:
-        不能用采样 ZSD, 否则簇内 ZoD 扩展随实现抖动)。表达式缺失/N/A 时
-        回退采样 ZSD (旧参数文件兼容)。"""
+    def _c_zsd_deg(self, lsp_params: dict, lsps: LargeScaleParameters) -> float:
+        """最终簇内 ZoD 扩展 c_ZSD = (3/8)·10^μ_lgZSD, 用表均值表达式求值
+        (Codex PR#24 P2: 不能用采样 ZSD, 否则随实现抖动)。表达式缺失/N/A 时
+        回退采样 ZSD 原值 — 即历史行为, 不乘 3/8 (Codex PR#24 P2 round 2)。"""
         from .common.expression_eval import safe_eval
         mu_expr = lsp_params.get('mu_log10_ZSD')
         if not mu_expr or mu_expr == 'N/A':
@@ -488,7 +488,7 @@ class ChannelGenerator:
             'h_bs': cfg.bs_positions[0, 2],
             'd_2d': float(np.linalg.norm(cfg.bs_positions[0, :2] - cfg.ue_positions[0, :2])),
         }
-        return 10.0 ** safe_eval(mu_expr, local_scope)
+        return 0.375 * 10.0 ** safe_eval(mu_expr, local_scope)
 
     def _generate_cluster_delays(self, lsps, num_clusters, is_los, scenario_params):
         """生成簇时延。参考 TR 38.901, 步骤 4。"""
