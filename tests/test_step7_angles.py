@@ -98,6 +98,41 @@ class TestScalingTableConsumed:
         b_angles = [c.aoa_phi for c in r_b['clusters']]
         assert not np.allclose(a_angles, b_angles)
 
+    def test_missing_table_falls_back_to_legacy_constants(self):
+        """整表缺失 (备用参数文件) 时方位 C=2.0 / zenith C=1.0, 等效旧公式
+        幅度, 不被新系数 2 无声放大 (Codex PR#25 P2)。"""
+        np.random.seed(7)
+        sim = ChannelSimulator('UMa', 3.5e9)
+        params = sim.params.get_scenario_params('UMa')
+        params.pop('scaling_factors_aoa_aod')
+        params.pop('scaling_factors_zoa_zod')
+        with pytest.warns(UserWarning, match='历史等效常数'):
+            r_fallback = sim.run(logger=None)
+
+        # 与有表版本对比: fallback 幅度量级与旧公式一致 (C_φ=2 抵消系数 2)
+        gen = sim.generator
+        from channel_model_38901.common.data_models import LargeScaleParameters
+        lsps = LargeScaleParameters(
+            delay_spread_s=1e-7,
+            departure_azimuth_spread_deg=10.0, arrival_azimuth_spread_deg=20.0,
+            departure_zenith_spread_deg=5.0, arrival_zenith_spread_deg=5.0,
+            k_factor_linear=0.0, shadow_fade_db=0.0)
+        P_n = np.linspace(1.0, 0.1, 12)
+        np.random.seed(3)
+        with pytest.warns(UserWarning):
+            a = gen._generate_angles(P_n, lsps, 12, False,
+                                     {'scaling_factors_aoa_aod': None,
+                                      'scaling_factors_zoa_zod': None})
+        # 旧公式: aoa offset = X·sqrt(ratio)·(ASA/1.4) + Y·ASA/7 + LOS(180°)
+        np.random.seed(3)
+        X = np.random.choice([-1, 1], size=(12, 4))
+        Y = np.random.randn(12, 4)
+        ratio = -np.log(P_n / np.max(P_n))
+        legacy = X[:, 0] * np.sqrt(ratio) * (20.0 / 1.4) + Y[:, 0] * (20.0 / 7.0) + 180.0
+        legacy = (legacy + 180.0) % 360.0 - 180.0
+        np.testing.assert_allclose(a['aoa_phi'], legacy, rtol=1e-12)
+        assert r_fallback['clusters']  # fallback 路径端到端可跑
+
     def test_missing_n_falls_back_to_nearest_with_warning(self):
         np.random.seed(7)
         sim = ChannelSimulator('UMa', 3.5e9)

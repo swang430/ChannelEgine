@@ -503,15 +503,22 @@ class ChannelGenerator:
         P_prime = np.exp(-tau_n * (r_tau - 1) / (r_tau * lsps.delay_spread_s)) * 10**(-np.random.randn(len(tau_n)) / 10)
         return P_prime / np.sum(P_prime)
 
-    def _scaling_factor(self, table: dict, num_clusters: int, name: str) -> float:
+    def _scaling_factor(self, table: dict, num_clusters: int, name: str,
+                        legacy_fallback: float) -> float:
         """按簇数 N 查 §7.5 step 7 的 C_φ/C_θ 表 (JSON scaling_factors_*,
-        audit batch 2 前是 dead config)。N 不在表中时取最近档位并告警。"""
+        audit batch 2 前是 dead config)。N 不在表中时取最近档位并告警。
+
+        legacy_fallback (Codex PR#25 P2): 整张表缺失 (如备用参数文件
+        parameters_tr38901/parameters2_tr38901) 时回退到与历史公式等效的
+        常数 — 方位 C=2.0 (抵消 eq 7.5-9 新增的系数 2), zenith C=1.0 —
+        而不是 1.0 一刀切, 避免旧参数文件用户的角度被无声放大。"""
         if not table:
             warnings.warn(
-                f"场景 '{self.config.scenario_name}' 缺 {name} 缩放表, 用 C=1.0",
+                f"场景 '{self.config.scenario_name}' 缺 {name} 缩放表, 回退"
+                f"历史等效常数 C={legacy_fallback} — 请升级参数文件",
                 UserWarning,
             )
-            return 1.0
+            return legacy_fallback
         key = str(num_clusters)
         if key in table:
             return float(table[key])
@@ -554,10 +561,10 @@ class ChannelGenerator:
 
         c_phi = self._scaling_factor(
             scenario_params.get('scaling_factors_aoa_aod'), num_clusters,
-            'scaling_factors_aoa_aod')
+            'scaling_factors_aoa_aod', legacy_fallback=2.0)
         c_theta = self._scaling_factor(
             scenario_params.get('scaling_factors_zoa_zod'), num_clusters,
-            'scaling_factors_zoa_zod')
+            'scaling_factors_zoa_zod', legacy_fallback=1.0)
         if is_los and lsps.k_factor_linear > 0:
             # eq 7.5-10 / 7.5-15 的 LOS K 修正多项式 (K 为 dB)
             k = 10.0 * np.log10(lsps.k_factor_linear)
