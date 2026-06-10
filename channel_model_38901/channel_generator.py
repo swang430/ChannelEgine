@@ -433,7 +433,30 @@ class ChannelGenerator:
         angles = self._generate_angles(P_n, lsps, num_clusters)
         k_n = self._generate_xpr(scenario_params, is_los, num_clusters)
         initial_phases = self._generate_initial_phases(num_clusters)
-        
+
+        # Audit batch 2 / F5: 簇内 ray spread 用 Table 7.5-6 的 per-cluster
+        # 常数 c_ASA/c_ASD/c_ZSA (JSON lsp_parameters 一直有但从未被读取),
+        # 而不是把 LSP 总扩展 (大一个量级) 当簇内扩展 — 历史 bug 让 SoS/ray
+        # 导出的射线偏移被系统性放大。c_ZSD 按 spec 为 (3/8)·10^μ_lgZSD —
+        # 用表均值表达式求值 (Codex PR#24 P2), 表达式缺失时才回退采样 ZSD。
+        lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
+        lsp_params = scenario_params.get(lsp_set, {})
+        c_asa = lsp_params.get('c_asa_deg')
+        c_asd = lsp_params.get('c_asd_deg')
+        c_zsa = lsp_params.get('c_zsa_deg')
+        missing = [k for k, v in (('c_asa_deg', c_asa), ('c_asd_deg', c_asd),
+                                  ('c_zsa_deg', c_zsa)) if v is None]
+        if missing:
+            warnings.warn(
+                f"场景 '{self.config.scenario_name}'/{lsp_set} 缺 Table 7.5-6 "
+                f"簇内扩展常数 {missing}, 回退到 LSP 总扩展 (偏大) — 请补参数文件",
+                UserWarning,
+            )
+        as_aoa = c_asa if c_asa is not None else lsps.arrival_azimuth_spread_deg
+        as_aod = c_asd if c_asd is not None else lsps.departure_azimuth_spread_deg
+        as_zoa = c_zsa if c_zsa is not None else lsps.arrival_zenith_spread_deg
+        as_zod = self._c_zsd_deg(lsp_params, lsps)
+
         clusters = []
         for i in range(num_clusters):
             # Phase 6 fix (PR #6 Codex P2): mirror per-cluster XPR into both
@@ -442,13 +465,30 @@ class ChannelGenerator:
                 delay=tau_n[i], power=P_n[i],
                 aod_phi=angles['aod_phi'][i], aoa_phi=angles['aoa_phi'][i],
                 zod_theta=angles['zod_theta'][i], zoa_theta=angles['zoa_theta'][i],
-                as_aod=lsps.departure_azimuth_spread_deg, as_aoa=lsps.arrival_azimuth_spread_deg,
-                as_zod=lsps.departure_zenith_spread_deg, as_zoa=lsps.arrival_zenith_spread_deg,
+                as_aod=as_aod, as_aoa=as_aoa,
+                as_zod=as_zod, as_zoa=as_zoa,
                 k_n=k_n[i],
                 xpr_linear=k_n[i],
                 initial_phases=initial_phases[i],
             ))
         return clusters
+
+    def _c_zsd_deg(self, lsp_params: dict, lsps: LargeScaleParameters) -> float:
+        """最终簇内 ZoD 扩展 c_ZSD = (3/8)·10^μ_lgZSD, 用表均值表达式求值
+        (Codex PR#24 P2: 不能用采样 ZSD, 否则随实现抖动)。表达式缺失/N/A 时
+        回退采样 ZSD 原值 — 即历史行为, 不乘 3/8 (Codex PR#24 P2 round 2)。"""
+        from .common.expression_eval import safe_eval
+        mu_expr = lsp_params.get('mu_log10_ZSD')
+        if not mu_expr or mu_expr == 'N/A':
+            return lsps.departure_zenith_spread_deg
+        cfg = self.config
+        local_scope = {
+            'fc_ghz': cfg.center_frequency_hz / 1e9,
+            'h_ut': cfg.ue_positions[0, 2],
+            'h_bs': cfg.bs_positions[0, 2],
+            'd_2d': float(np.linalg.norm(cfg.bs_positions[0, :2] - cfg.ue_positions[0, :2])),
+        }
+        return 0.375 * 10.0 ** safe_eval(mu_expr, local_scope)
 
     def _generate_cluster_delays(self, lsps, num_clusters, is_los, scenario_params):
         """生成簇时延。参考 TR 38.901, 步骤 4。"""
