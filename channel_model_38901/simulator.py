@@ -23,6 +23,16 @@ class ChannelSimulator:
                                                        默认为 None。
             use_median_lsps (bool, optional): 是否使用大尺度参数（LSP）的中位值，而不是从统计分布中随机抽样。
                                              这对于需要确定性LSP的测试非常有用。默认为 False。
+            scale_to_scenario (bool, optional): 是否把 CDL 表格延迟/角度/簇内扩展重缩放到场景 LSP
+                                             (TR 38.901 §7.7.3 / §7.7.5.1)。默认 False (原表值)。
+            split_subclusters (bool, optional): 是否对两个最强簇做 §7.7.1 子簇分裂。默认 False。
+            c_ds_ns (float, optional): 子簇延迟扩展常数 c_DS (纳秒), 仅 split_subclusters=True 时生效。
+                                             默认 3.91 ns。
+
+        Note:
+            BS/UE 位置默认 (0,0,25)/(100,0,1.5), 速度默认 0 — 用
+            set_bs_ue_positions() / set_velocities() 覆盖 (影响 pathloss、
+            LSP 表达式中的 d_2d/h_*、LOS 方向与多普勒)。
         """
         param_file = Path(__file__).resolve().parent / "parameters" / "parameters1013_tr38901_v19.0.0.json"
         self.params = ParameterLoader.load_parameters(str(param_file))
