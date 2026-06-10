@@ -1,6 +1,7 @@
 
 import numpy as np
 import os
+import warnings
 from typing import Dict, List, Optional
 import csv
 import zipfile
@@ -70,7 +71,10 @@ class PropsimASCIIExporter:
             data_tensor, delays = self._compute_static_tensor(
                 sim_result, impulse_response, apply_calibration=apply_calibration
             )
-            
+
+        # Jitter 相量按方向施加到物理探头轴 (audit batch 2 / Codex PR#22 P2)
+        data_tensor = self._apply_export_jitter(data_tensor, sim_result, direction)
+
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
 
         # Write Files (One per Link / Logical Channel)
@@ -165,7 +169,10 @@ class PropsimASCIIExporter:
             data_tensor, delays = self._compute_static_tensor(
                 sim_result, impulse_response, apply_calibration=apply_calibration
             )
-            
+
+        # Jitter 相量按方向施加到物理探头轴 (audit batch 2 / Codex PR#22 P2)
+        data_tensor = self._apply_export_jitter(data_tensor, sim_result, direction)
+
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
         num_samples, num_effective_probes, num_tx, num_taps = data_tensor.shape
         
@@ -388,6 +395,50 @@ class PropsimASCIIExporter:
                 return scale
         return 1.0
 
+    @staticmethod
+    def _apply_export_jitter(data_tensor, sim_result, direction: str):
+        """把 probe phase jitter 相量施加到导出 tensor 的物理探头轴
+        (audit batch 2: 此前 exporter 从不消费 jitter, .asc 与 effective_H
+        静默不一致)。
+
+        轴选择 (Codex PR#22 P2): tensor 形状 (Samples, dim0, dim1, Taps)。
+        DL 时 dim0=探头; UL 时 coeff/W_base 已被互易转置, 探头在 dim1,
+        且 conjugate_transpose 下相量须共轭 — simulator 已按 transform
+        预先生成 probe_phase_jitter_vector_ul, 这里只按方向选 key 和轴。
+        """
+        key = ('probe_phase_jitter_vector' if direction == 'dl'
+               else 'probe_phase_jitter_vector_ul')
+        jv = sim_result.get(key)
+        if jv is None and direction == 'ul':
+            # 防御 (Codex PR#22 P2): 经过白名单过滤的结果 dict (如 GUI adapter)
+            # 可能丢失 *_ul 键 — 有 DL 相量 + 互易模式时就地推导, 而非静默丢 jitter
+            dl_jv = sim_result.get('probe_phase_jitter_vector')
+            mode = sim_result.get('reciprocity_transform')
+            if dl_jv is not None and mode is not None:
+                jv = dl_jv if mode == 'transpose' else np.conj(dl_jv)
+            elif dl_jv is not None:
+                warnings.warn(
+                    "UL 导出: 结果 dict 缺 probe_phase_jitter_vector_ul 且无 "
+                    "reciprocity_transform 可推导, 忽略 jitter — UL 导出将与 "
+                    "effective_H_ul 不一致 (结果 dict 被过滤? 请透传 *_ul 键)",
+                    UserWarning,
+                )
+        if jv is None:
+            return data_tensor
+        jv = np.asarray(jv).ravel()
+        axis = 1 if direction == 'dl' else 2
+        if jv.shape[0] != data_tensor.shape[axis]:
+            warnings.warn(
+                f"{key} 长度 {jv.shape[0]} 与导出 tensor 探头轴 "
+                f"{data_tensor.shape[axis]} 不符, 忽略 jitter — 导出将与 "
+                f"effective_H 不一致",
+                UserWarning,
+            )
+            return data_tensor
+        shape = [1, 1, 1, 1]
+        shape[axis] = -1
+        return data_tensor * jv.reshape(shape)
+
     def _get_calibration_vector(self, num_probes, apply_calibration: bool = True):
         cal = np.ones((num_probes, 1), dtype=complex)
         if self.calibration and apply_calibration:
@@ -456,7 +507,10 @@ class MFSWRawExporter(PropsimASCIIExporter):
             data_tensor, delays = self._compute_static_tensor(
                 sim_result, impulse_response, apply_calibration=apply_calibration
             )
-            
+
+        # Jitter 相量按方向施加到物理探头轴 (audit batch 2 / Codex PR#22 P2)
+        data_tensor = self._apply_export_jitter(data_tensor, sim_result, direction)
+
         carrier_frequency_hz = sim_result.get('center_frequency_hz', 3.5e9)
         num_samples, num_effective_probes, num_tx, num_taps = data_tensor.shape
         

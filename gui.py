@@ -711,6 +711,8 @@ class ChannelModelApp(tk.Tk):
                     'transmit_mapping_matrix_A': ota_results['transmit_mapping_matrix_A'], # Required for F64 Export
                     'ray_components': ota_results.get('ray_components'), # Required for Doppler Export
                     'probe_phase_jitter_vector': ota_results.get('probe_phase_jitter_vector'),
+                    # UL 导出需要 (Codex PR#22 P2): exporter 按方向读 *_ul 相量
+                    'probe_phase_jitter_vector_ul': ota_results.get('probe_phase_jitter_vector_ul'),
                     'channel_impulse_response': ota_results.get('channel_impulse_response'), # Required for Exporter
                     'channel_impulse_response_ul': ota_results.get('channel_impulse_response_ul'),
                     'ray_components_ul': ota_results.get('ray_components_ul'),
