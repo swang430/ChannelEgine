@@ -45,6 +45,17 @@ class TestConsumptionValidator:
         with pytest.warns(UserWarning, match='c_asa_dge'):
             ParameterLoader.load_parameters(str(p))
 
+    def test_misspelled_lsp_name_warns(self, tmp_path):
+        """mu_log10_DSS 这类带合法前缀的拼写错误也必须告警
+        (Codex PR#30 P2: 前缀匹配会放过)。"""
+        with open(PARAM_FILE, encoding='utf-8') as f:
+            d = json.load(f)
+        d['scenarios']['UMa']['lsp_parameters_los']['mu_log10_DSS'] = '-7.0'
+        p = tmp_path / 'params.json'
+        p.write_text(json.dumps(d))
+        with pytest.warns(UserWarning, match='mu_log10_DSS'):
+            ParameterLoader.load_parameters(str(p))
+
     def test_unknown_pathloss_key_warns(self, tmp_path):
         with open(PARAM_FILE, encoding='utf-8') as f:
             d = json.load(f)

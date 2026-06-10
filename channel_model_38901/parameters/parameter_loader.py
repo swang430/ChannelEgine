@@ -54,12 +54,16 @@ class ParameterLoader:
         'xpr_mu_los', 'xpr_mu_nlos', 'xpr_sigma_los', 'xpr_sigma_nlos',
         'V', 'S',  # InF 专用 (inf_models.py)
     })
-    _KNOWN_LSP_KEYS = frozenset({
-        'correlations',
-        'c_asa_deg', 'c_asd_deg', 'c_zsa_deg',
-        'per_cluster_shadowing_std_db',
-    })
-    _KNOWN_LSP_PREFIXES = ('mu_log10_', 'sigma_log10_')
+    # mu/sigma 按 LSP 名枚举而非前缀匹配 (Codex PR#30 P2: 前缀会放过
+    # mu_log10_DSS 这类拼写错误)。注: 类体内推导式不可引用类属性,
+    # LSP 名元组直接内联。
+    _KNOWN_LSP_KEYS = frozenset(
+        {'correlations',
+         'c_asa_deg', 'c_asd_deg', 'c_zsa_deg',
+         'per_cluster_shadowing_std_db'}
+        | {f'{p}{n}' for p in ('mu_log10_', 'sigma_log10_')
+           for n in ('DS', 'ASD', 'ASA', 'ZSA', 'SF', 'K', 'ZSD')}
+    )
     _KNOWN_PATHLOSS_KEYS = frozenset({'formula', 'formula_1', 'formula_2'})
 
     @classmethod
@@ -76,9 +80,7 @@ class ParameterLoader:
                 )
             for lsp_set in ('lsp_parameters_los', 'lsp_parameters_nlos'):
                 lsp = params.get(lsp_set) or {}
-                unknown = [k for k in lsp
-                           if k not in cls._KNOWN_LSP_KEYS
-                           and not k.startswith(cls._KNOWN_LSP_PREFIXES)]
+                unknown = [k for k in lsp if k not in cls._KNOWN_LSP_KEYS]
                 if unknown:
                     warnings.warn(
                         f"参数文件 '{scenario}/{lsp_set}' 含引擎不消费的 key "
