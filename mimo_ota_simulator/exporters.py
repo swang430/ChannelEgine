@@ -24,6 +24,9 @@ class PropsimASCIIExporter:
     def __init__(self, export_config: PropsimExportConfig, calibration_config: Optional[CalibrationConfig] = None):
         self.config = export_config
         self.calibration = calibration_config
+        # Mode A 链路预算 (scale / digital_boost / required_attenuation_db),
+        # 由 _calculate_scaling_factor 填充, 供调用方读取 (audit batch 2, A6)
+        self.last_mode_a_info: Optional[Dict] = None
 
     def export(self, sim_result: Dict, output_path: str = None, direction: str = "dl") -> str:
         """
@@ -344,6 +347,20 @@ class PropsimASCIIExporter:
         return full_tensor, delays
 
     def _calculate_scaling_factor(self, sim_result, sorted_taps):
+        """Mode B: 数字域施加 pathloss; Mode A: 归一化到峰值, 绝对电平交给
+        模拟链路。
+
+        Mode A 链路预算 (audit batch 2, A6 — target_output_power_dbm 此前
+        被接受但从未读取): 导出波形峰值归一 (数字增益 digital_boost dB),
+        F64 口以 config.target_output_power_dbm 播放。以 0 dBm 等效发射参考,
+        DUT 端复现绝对信道所需外部衰减:
+
+            req_att = target_output_power_dbm + pathloss_db + digital_boost
+
+        (target_output_power_dbm=0 时退化为旧公式 pathloss+boost, 旧公式即
+        隐含假设 F64 输出 0 dBm。) 结果存入 self.last_mode_a_info 供调用方/
+        UI 读取, 不再只打 stdout。
+        """
         target_path_loss_db = sim_result.get('pathloss_db', 100.0)
         if self.config.mode == 'B':
             return 10**(-target_path_loss_db / 20.0)
@@ -353,13 +370,21 @@ class PropsimASCIIExporter:
             max_val = 0.0
             for tap in sorted_taps:
                 max_val = max(max_val, np.max(np.abs(tap['coeff'])))
-            
+
             if max_val > 1e-9:
                 scale = 1.0 / max_val
-                # Log info...
                 digital_boost = 20 * np.log10(scale)
-                req_att = target_path_loss_db + digital_boost
-                print(f"[Mode A] Scale: {scale:.2f}, Req ATT: {req_att:.2f} dB")
+                f64_out_dbm = self.config.target_output_power_dbm
+                req_att = f64_out_dbm + target_path_loss_db + digital_boost
+                self.last_mode_a_info = {
+                    'scale': scale,
+                    'digital_boost_db': digital_boost,
+                    'f64_output_power_dbm': f64_out_dbm,
+                    'pathloss_db': target_path_loss_db,
+                    'required_attenuation_db': req_att,
+                }
+                print(f"[Mode A] Scale: {scale:.2f}, F64 out: {f64_out_dbm:.1f} dBm, "
+                      f"Req ATT: {req_att:.2f} dB (ref 0 dBm Tx)")
                 return scale
         return 1.0
 
