@@ -107,9 +107,11 @@ class TestZenithFolding:
             departure_zenith_spread_deg=40.0, arrival_zenith_spread_deg=40.0,
             k_factor_linear=0.0, shadow_fade_db=0.0)
         P_n = np.array([1.0, 1e-6, 1e-12])  # -log 比值高达 27.6 → 偏移远超 90°
+        from channel_model_38901.simulator import ChannelSimulator
+        gen = ChannelSimulator('UMa', 3.5e9).generator
+        scenario_params = gen.params.get_scenario_params('UMa')
         np.random.seed(5)
-        angles = ChannelGenerator._generate_angles(
-            ChannelGenerator.__new__(ChannelGenerator), P_n, lsps, len(P_n))
+        angles = gen._generate_angles(P_n, lsps, len(P_n), False, scenario_params)
         for key in ('zoa_theta', 'zod_theta'):
             assert np.all(angles[key] >= 0.0), angles[key]
             assert np.all(angles[key] <= 180.0), angles[key]
