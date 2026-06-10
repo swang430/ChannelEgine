@@ -849,23 +849,36 @@ class ChannelGenerator:
 
         # --- 3. Iterate Clusters & Rays ---
         for cluster_idx, cluster in enumerate(clusters):
-            
+
+            # §7.5 step 8 (audit batch 2, F8): ray 随机配对 — AOD/ZOA/ZOD 的
+            # 簇内偏移相对 AOA 独立随机置换 (此前四个维度按同一索引 m 对齐,
+            # 完全未实现 random coupling)。
+            perm_aod = np.random.permutation(20)
+            perm_zoa = np.random.permutation(20)
+            perm_zod = np.random.permutation(20)
+
+            # §7.5 step 10 (audit batch 2, F9/F12): per-ray 相位 = 簇级
+            # initial_phases[0] (Θθθ, 与 OTA ray 路径的 base_phase 同语义)
+            # + per-ray 均匀随机 — 此前完全无视 cluster.initial_phases 另抽。
+            base_phase = (float(cluster.initial_phases[0])
+                          if cluster.initial_phases is not None else 0.0)
+
             # 20 Rays per cluster
             for m in range(20):
                 alpha = ray_offsets[m]
-                
-                # A. Apply Angle Offsets
+
+                # A. Apply Angle Offsets (step 8 配对后各维度用各自置换的偏移)
                 # Note: ASA/ASD/ZSA/ZSD are in degrees.
                 # Angles in cluster object are in degrees.
-                
+
                 # AoA
                 aoa_ray = cluster.aoa_phi + c_scale * alpha * cluster.as_aoa
                 # AoD
-                aod_ray = cluster.aod_phi + c_scale * alpha * cluster.as_aod
+                aod_ray = cluster.aod_phi + c_scale * ray_offsets[perm_aod[m]] * cluster.as_aod
                 # ZoA
-                zoa_ray = cluster.zoa_theta + c_scale * alpha * cluster.as_zoa
+                zoa_ray = cluster.zoa_theta + c_scale * ray_offsets[perm_zoa[m]] * cluster.as_zoa
                 # ZoD
-                zod_ray = cluster.zod_theta + c_scale * alpha * cluster.as_zod
+                zod_ray = cluster.zod_theta + c_scale * ray_offsets[perm_zod[m]] * cluster.as_zod
 
                 # A'. Element radiation pattern (TR 38.901 Table 7.3-1), evaluated
                 # per-ray at this ray's own Tx/Rx direction (more accurate than the
@@ -903,7 +916,7 @@ class ChannelGenerator:
                 # In standard, this is Phi_n_m. 
                 # For deterministic reproducibility, we should hash the seed or use a stable RNG.
                 # Here we just draw from uniform since seed is set at start.
-                phase_init = np.random.uniform(-np.pi, np.pi)
+                phase_init = base_phase + np.random.uniform(-np.pi, np.pi)
                 
                 # Tx Steering Vector (Array Response)
                 # We need the positions of elements relative to (0,0,0) or array center.
