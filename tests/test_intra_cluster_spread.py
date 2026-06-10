@@ -42,11 +42,25 @@ class TestClusterSpreadUsesTableConstants:
             assert cl.as_aod == c['c_asd_deg']
             assert cl.as_zoa == c['c_zsa_deg']
 
-    def test_as_zod_is_three_eighths_zsd(self):
+    def test_as_zod_is_three_eighths_mean_zsd(self):
+        """c_ZSD = (3/8)·10^μ_lgZSD — 表均值, 非采样值 (Codex PR#24 P2)。"""
+        from channel_model_38901.common.expression_eval import safe_eval
+
         results = _run('UMa')
-        zsd = results['lsps'].departure_zenith_spread_deg
+        lsp_set = 'lsp_parameters_los' if results['is_los'] else 'lsp_parameters_nlos'
+        mu_expr = SCENARIOS['UMa'][lsp_set]['mu_log10_ZSD']
+        # 与 ChannelSimulator 默认几何一致: BS (0,0,25), UE (100,0,1.5)
+        mu = safe_eval(mu_expr, {'fc_ghz': 3.5, 'h_ut': 1.5, 'h_bs': 25.0,
+                                 'd_2d': 100.0})
+        expected = 0.375 * 10.0 ** mu
         for cl in results['clusters']:
-            assert cl.as_zod == pytest.approx(0.375 * zsd)
+            assert cl.as_zod == pytest.approx(expected)
+
+    def test_as_zod_deterministic_across_realizations(self):
+        # 采样 ZSD 每次实现都抖, 表均值不抖 — as_zod 必须跨实现恒定
+        a = _run('UMa', seed=1)['clusters'][0].as_zod
+        b = _run('UMa', seed=2)['clusters'][0].as_zod
+        assert a == pytest.approx(b)
 
     def test_spread_no_longer_total_lsp(self):
         """簇内扩展不得再等于 LSP 总 ASA (修复前恒等, 必失败)。"""

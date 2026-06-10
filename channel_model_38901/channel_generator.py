@@ -437,8 +437,8 @@ class ChannelGenerator:
         # Audit batch 2 / F5: 簇内 ray spread 用 Table 7.5-6 的 per-cluster
         # 常数 c_ASA/c_ASD/c_ZSA (JSON lsp_parameters 一直有但从未被读取),
         # 而不是把 LSP 总扩展 (大一个量级) 当簇内扩展 — 历史 bug 让 SoS/ray
-        # 导出的射线偏移被系统性放大。c_ZSD 按 spec 注释为 (3/8)·10^μ_lgZSD,
-        # 此处用采样 ZSD 近似 10^μ (单实现内无均值可用)。
+        # 导出的射线偏移被系统性放大。c_ZSD 按 spec 为 (3/8)·10^μ_lgZSD —
+        # 用表均值表达式求值 (Codex PR#24 P2), 表达式缺失时才回退采样 ZSD。
         lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
         lsp_params = scenario_params.get(lsp_set, {})
         c_asa = lsp_params.get('c_asa_deg')
@@ -455,7 +455,7 @@ class ChannelGenerator:
         as_aoa = c_asa if c_asa is not None else lsps.arrival_azimuth_spread_deg
         as_aod = c_asd if c_asd is not None else lsps.departure_azimuth_spread_deg
         as_zoa = c_zsa if c_zsa is not None else lsps.arrival_zenith_spread_deg
-        as_zod = 0.375 * lsps.departure_zenith_spread_deg
+        as_zod = 0.375 * self._mean_zsd_deg(lsp_params, lsps)
 
         clusters = []
         for i in range(num_clusters):
@@ -472,6 +472,23 @@ class ChannelGenerator:
                 initial_phases=initial_phases[i],
             ))
         return clusters
+
+    def _mean_zsd_deg(self, lsp_params: dict, lsps: LargeScaleParameters) -> float:
+        """10^μ_lgZSD — c_ZSD=(3/8)·10^μ 用的表均值 (Codex PR#24 P2:
+        不能用采样 ZSD, 否则簇内 ZoD 扩展随实现抖动)。表达式缺失/N/A 时
+        回退采样 ZSD (旧参数文件兼容)。"""
+        from .common.expression_eval import safe_eval
+        mu_expr = lsp_params.get('mu_log10_ZSD')
+        if not mu_expr or mu_expr == 'N/A':
+            return lsps.departure_zenith_spread_deg
+        cfg = self.config
+        local_scope = {
+            'fc_ghz': cfg.center_frequency_hz / 1e9,
+            'h_ut': cfg.ue_positions[0, 2],
+            'h_bs': cfg.bs_positions[0, 2],
+            'd_2d': float(np.linalg.norm(cfg.bs_positions[0, :2] - cfg.ue_positions[0, :2])),
+        }
+        return 10.0 ** safe_eval(mu_expr, local_scope)
 
     def _generate_cluster_delays(self, lsps, num_clusters, is_los, scenario_params):
         """生成簇时延。参考 TR 38.901, 步骤 4。"""
