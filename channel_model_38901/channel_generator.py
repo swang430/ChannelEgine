@@ -522,7 +522,11 @@ class ChannelGenerator:
         共用的 delay_scaling_factor (当前 JSON 仅有共用值, 分列值随
         V19.2.0 参数升级补)。"""
         key = 'delay_scaling_factor_los' if is_los else 'delay_scaling_factor_nlos'
-        return scenario_params.get(key, scenario_params['delay_scaling_factor'])
+        # 惰性回退 (Codex PR#26 P2 r2): dict.get 的默认参数会被急切求值,
+        # 只有分列 key 的升级参数文件会在这里 KeyError
+        if key in scenario_params:
+            return scenario_params[key]
+        return scenario_params['delay_scaling_factor']
 
     @staticmethod
     def _prune_weak_clusters(tau_n, P_n, threshold_db: float = -25.0,

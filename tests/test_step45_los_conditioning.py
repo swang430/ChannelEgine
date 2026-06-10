@@ -153,6 +153,14 @@ class TestRTauSplit:
         assert gen._r_tau(params, True) == 5.0
         assert gen._r_tau(params, False) == params['delay_scaling_factor']
 
+    def test_split_only_table_without_legacy_key(self):
+        """只有分列 key、无 legacy delay_scaling_factor 的参数文件不得
+        KeyError (Codex PR#26 P2 r2)。"""
+        params = {'delay_scaling_factor_los': 2.5,
+                  'delay_scaling_factor_nlos': 2.3}
+        assert ChannelGenerator._r_tau(params, True) == 2.5
+        assert ChannelGenerator._r_tau(params, False) == 2.3
+
     def test_changing_split_value_changes_delays(self):
         sim = ChannelSimulator('UMa', 3.5e9)
         gen = sim.generator
