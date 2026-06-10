@@ -53,6 +53,11 @@ def _signature(chamber, channel, jitter=False):
     if r.get('ray_components'):
         parts.append(np.array([rc['doppler_hz'] for rc in r['ray_components']],
                               dtype=complex))
+    if r.get('channel_impulse_response'):
+        # tap 延迟: c_ds_ns 等只改时延结构的参数经此体现 (Codex PR#29 P2 r2
+        # 的隔离比较暴露了 A/Doppler 签名对纯延迟参数不敏感)
+        parts.append(np.array([t['delay'] for t in r['channel_impulse_response']],
+                              dtype=complex))
     return np.concatenate([p.astype(complex) for p in parts])
 
 
