@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from typing import Optional, Callable, List
 from .common.data_models import ScenarioConfig, LargeScaleParameters, EngineCluster
@@ -312,6 +314,26 @@ class ChannelGenerator:
         # compat); `xpr_linear` is the canonical Phase 6+ field consumed
         # by the dual-pol synthesizer.
         xpr_lin = 10 ** (model_params.get('xpr_db', 11) / 10)
+
+        # TR 38.901 Table 7.7.1-1..5: 每个 CDL 模型定义簇内 ray spread
+        # (c_ASD/c_ASA/c_ZSD/c_ZSA)。历史 bug (audit batch 2, A3): JSON 缺
+        # 该字段且 .get(..., 0.0) 静默回退 → SoS/ray 导出 20 条射线全部
+        # 塌缩到簇均值角。模型级字段作默认值, 簇级 as_*_deg 仍可覆盖;
+        # 两级都缺时必须告警而不是无声给 0。
+        ray_spread = model_params.get('ray_spread_deg', {})
+        if not ray_spread:
+            warnings.warn(
+                f"确定性模型 '{model_name}' 未定义 ray_spread_deg (c_ASD/c_ASA/"
+                f"c_ZSD/c_ZSA), 且簇级未覆盖时簇内角度扩展为 0 — ray 级导出"
+                f"(SoS/OTA) 的射线将塌缩到簇均值角",
+                UserWarning,
+            )
+        default_as = {
+            'as_aod_deg': ray_spread.get('c_asd_deg', 0.0),
+            'as_aoa_deg': ray_spread.get('c_asa_deg', 0.0),
+            'as_zod_deg': ray_spread.get('c_zsd_deg', 0.0),
+            'as_zoa_deg': ray_spread.get('c_zsa_deg', 0.0),
+        }
         clusters = []
         for i in range(len(raw)):
             clusters.append(EngineCluster(
@@ -319,10 +341,10 @@ class ChannelGenerator:
                 power=float(normalized_powers[i]),
                 aod_phi=float(aod[i]), aoa_phi=float(aoa[i]),
                 zod_theta=float(zod[i]), zoa_theta=float(zoa[i]),
-                as_aod=raw[i].get('as_aod_deg', 0.0),
-                as_aoa=raw[i].get('as_aoa_deg', 0.0),
-                as_zod=raw[i].get('as_zod_deg', 0.0),
-                as_zoa=raw[i].get('as_zoa_deg', 0.0),
+                as_aod=raw[i].get('as_aod_deg', default_as['as_aod_deg']),
+                as_aoa=raw[i].get('as_aoa_deg', default_as['as_aoa_deg']),
+                as_zod=raw[i].get('as_zod_deg', default_as['as_zod_deg']),
+                as_zoa=raw[i].get('as_zoa_deg', default_as['as_zoa_deg']),
                 k_n=xpr_lin,            # legacy field (was sole XPR storage)
                 xpr_linear=xpr_lin,     # canonical Phase 6+ field
             ))

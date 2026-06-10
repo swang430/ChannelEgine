@@ -597,6 +597,7 @@
   "cdl_models": {
     "CDL-A": {
   "name": "CDL-A",
+  "ray_spread_deg": {"c_asd_deg": 5.0, "c_asa_deg": 11.0, "c_zsd_deg": 3.0, "c_zsa_deg": 3.0},
   "condition": "NLOS",
   "num_tx_antennas": 2,
   "num_rx_antennas": 2,
@@ -629,6 +630,7 @@
 },
     "CDL-B": {
   "name": "CDL-B",
+  "ray_spread_deg": {"c_asd_deg": 10.0, "c_asa_deg": 22.0, "c_zsd_deg": 3.0, "c_zsa_deg": 7.0},
   "condition": "NLOS",
   "num_tx_antennas": 2,
   "num_rx_antennas": 2,
@@ -661,6 +663,7 @@
 },
     "CDL-C": {
   "name": "CDL-C",
+  "ray_spread_deg": {"c_asd_deg": 2.0, "c_asa_deg": 15.0, "c_zsd_deg": 3.0, "c_zsa_deg": 7.0},
   "condition": "NLOS",
   "num_tx_antennas": 2,
   "num_rx_antennas": 2,
@@ -694,6 +697,7 @@
 },
     "CDL-D": {
   "name": "CDL-D",
+  "ray_spread_deg": {"c_asd_deg": 5.0, "c_asa_deg": 8.0, "c_zsd_deg": 3.0, "c_zsa_deg": 3.0},
   "condition": "LOS",
   "num_tx_antennas": 2,
   "num_rx_antennas": 2,
@@ -717,6 +721,7 @@
 },
     "CDL-E": {
   "name": "CDL-E",
+  "ray_spread_deg": {"c_asd_deg": 5.0, "c_asa_deg": 11.0, "c_zsd_deg": 3.0, "c_zsa_deg": 7.0},
   "condition": "LOS",
   "num_tx_antennas": 2,
   "num_rx_antennas": 2,
