@@ -14,7 +14,7 @@ from mimo_ota_simulator.data_models import (
 from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
 
 
-def _run(enable_ofdm, n_fft=None):
+def _run(enable_ofdm, n_fft=None, n_tx=1, n_rx=1):
     chamber = ChamberConfig(
         num_probes=4, distribution='ring', radius_m=1.5, dual_polarized=False,
         probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'},
@@ -23,8 +23,8 @@ def _run(enable_ofdm, n_fft=None):
         standard='wifi', model_name='Model-B',
         center_frequency_hz=2.4e9, bandwidth_hz=20e6,
         enable_ofdm=enable_ofdm, n_fft=n_fft, random_seed=42,
-        tx_antenna=AntennaArrayConfig(num_cols=1),
-        rx_antenna=AntennaArrayConfig(num_cols=1),
+        tx_antenna=AntennaArrayConfig(num_cols=n_tx),
+        rx_antenna=AntennaArrayConfig(num_cols=n_rx),
     )
     return MIMO_OTA_Simulator().run(chamber, channel, synthesis_method='ray')
 
@@ -53,3 +53,12 @@ class TestOfdmPassthrough:
         h = result['h_subcarriers'][:, 0, 0]
         assert np.all(np.isfinite(h))
         assert np.any(np.abs(h) > 0)
+
+    def test_multi_antenna_shape_and_center_subcarrier(self):
+        """多天线时形状须为 (n_fft, N_rx, N_tx) (Codex PR#28 P2: WiFi 引擎
+        版本是标量 (n_fft,1,1)), 且中心子载波 (f=0) 等于 target_H_matrix。"""
+        result = _run(enable_ofdm=True, n_fft=64, n_tx=2, n_rx=2)
+        h = result['h_subcarriers']
+        assert h.shape == (64, 2, 2)
+        np.testing.assert_allclose(
+            h[32], result['target_H_matrix'], rtol=1e-9, atol=1e-12)

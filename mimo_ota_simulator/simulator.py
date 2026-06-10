@@ -577,8 +577,23 @@ class MIMO_OTA_Simulator:
         )
         result = self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter, B_matrix, target_H_matrix=target_H_matrix)
         # Audit batch 2 / P2-5: enable_ofdm/n_fft 此前算了 h_subcarriers 但
-        # 不进结果 dict — UI 控件勾了等于没勾。透传给调用方/UI。
-        result['h_subcarriers'] = wifi_result.h_subcarriers
+        # 不进结果 dict — UI 控件勾了等于没勾。
+        # WiFi 引擎的版本是标量 (n_fft,1,1) (Codex PR#28 P2): 这里用空间化
+        # 簇系数重建 per-antenna (n_fft, N_rx, N_tx) — H(f) = Σ_c √P_c ·
+        # h_c · e^{-j2πfτ_c}, 中心子载波 (f=0) 即 target_H_matrix。
+        h_subcarriers = None
+        if wifi_result.h_subcarriers is not None and physical_clusters:
+            n_fft = wifi_result.h_subcarriers.shape[0]
+            spacing_hz = channel_config.bandwidth_hz / n_fft
+            freq_offsets = (np.arange(n_fft) - n_fft / 2) * spacing_hz
+            n_rx, n_tx = target_H_matrix.shape
+            h_subcarriers = np.zeros((n_fft, n_rx, n_tx), dtype=complex)
+            for c in physical_clusters:
+                phase = np.exp(-1j * 2 * np.pi * freq_offsets * c.delay)
+                h_subcarriers += (np.sqrt(c.power)
+                                  * c.h_matrix[None, :, :]
+                                  * phase[:, None, None])
+        result['h_subcarriers'] = h_subcarriers
         return result
 
     def synthesize_ota(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig,
