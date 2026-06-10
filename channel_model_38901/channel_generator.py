@@ -430,7 +430,7 @@ class ChannelGenerator:
         num_clusters = scenario_params['num_clusters_los'] if is_los else scenario_params['num_clusters_nlos']
         tau_n = self._generate_cluster_delays(lsps, num_clusters, is_los, scenario_params)
         P_n = self._generate_cluster_powers(tau_n, lsps, is_los, scenario_params)
-        angles = self._generate_angles(P_n, lsps, num_clusters)
+        angles = self._generate_angles(P_n, lsps, num_clusters, is_los, scenario_params)
         k_n = self._generate_xpr(scenario_params, is_los, num_clusters)
         initial_phases = self._generate_initial_phases(num_clusters)
 
@@ -503,21 +503,101 @@ class ChannelGenerator:
         P_prime = np.exp(-tau_n * (r_tau - 1) / (r_tau * lsps.delay_spread_s)) * 10**(-np.random.randn(len(tau_n)) / 10)
         return P_prime / np.sum(P_prime)
 
-    def _generate_angles(self, P_n, lsps, num_clusters):
-        """生成簇的离开角和到达角。参考 TR 38.901, 步骤 6 & 7。"""
-        aoa_unscaled = np.sqrt(-np.log(P_n / np.max(P_n))) * (lsps.arrival_azimuth_spread_deg / 1.4)
-        aod_unscaled = np.sqrt(-np.log(P_n / np.max(P_n))) * (lsps.departure_azimuth_spread_deg / 1.4)
-        zoa_unscaled = -lsps.arrival_zenith_spread_deg * np.log(P_n / np.max(P_n))
-        zod_unscaled = -lsps.departure_zenith_spread_deg * np.log(P_n / np.max(P_n))
-        X_n_signs = np.random.choice([-1, 1], size=(num_clusters, 4))
-        Y_n_offsets = np.random.randn(num_clusters, 4)
-        # zenith 角以 90° (水平) 为中心, 符合 zenith 约定 (θ 从 +z 量起)。
-        # 几何 LOS 方向中心化 (§7.5 step 7 的 θ_LOS,ZOA 项) 属 PR10 范围。
-        zoa = 90.0 + X_n_signs[:, 2] * zoa_unscaled + Y_n_offsets[:, 2] * (lsps.arrival_zenith_spread_deg / 7.0)
-        zod = 90.0 + X_n_signs[:, 3] * zod_unscaled + Y_n_offsets[:, 3] * (lsps.departure_zenith_spread_deg / 7.0)
+    def _scaling_factor(self, table: dict, num_clusters: int, name: str) -> float:
+        """按簇数 N 查 §7.5 step 7 的 C_φ/C_θ 表 (JSON scaling_factors_*,
+        audit batch 2 前是 dead config)。N 不在表中时取最近档位并告警。"""
+        if not table:
+            warnings.warn(
+                f"场景 '{self.config.scenario_name}' 缺 {name} 缩放表, 用 C=1.0",
+                UserWarning,
+            )
+            return 1.0
+        key = str(num_clusters)
+        if key in table:
+            return float(table[key])
+        nearest = min(table.keys(), key=lambda k: abs(int(k) - num_clusters))
+        warnings.warn(
+            f"{name} 表无 N={num_clusters} 档位, 取最近档 N={nearest}",
+            UserWarning,
+        )
+        return float(table[nearest])
+
+    def _los_direction_angles(self) -> dict:
+        """BS→UE 几何 LOS 方向 (GCS, zenith 约定)。"""
+        bs = self.config.bs_positions[0]
+        ue = self.config.ue_positions[0]
+        d_vec = ue - bs
+        d3 = float(np.linalg.norm(d_vec))
+        if d3 < 1e-9:
+            return {'aod': 0.0, 'aoa': 180.0, 'zod': 90.0, 'zoa': 90.0}
+        dx, dy, dz = d_vec
         return {
-            'aoa_phi': X_n_signs[:, 0] * aoa_unscaled + Y_n_offsets[:, 0] * (lsps.arrival_azimuth_spread_deg / 7.0),
-            'aod_phi': X_n_signs[:, 1] * aod_unscaled + Y_n_offsets[:, 1] * (lsps.departure_azimuth_spread_deg / 7.0),
+            'aod': float(np.rad2deg(np.arctan2(dy, dx))),
+            'aoa': float(np.rad2deg(np.arctan2(-dy, -dx))),
+            'zod': float(np.rad2deg(np.arccos(np.clip(dz / d3, -1.0, 1.0)))),
+            'zoa': float(np.rad2deg(np.arccos(np.clip(-dz / d3, -1.0, 1.0)))),
+        }
+
+    def _generate_angles(self, P_n, lsps, num_clusters, is_los, scenario_params):
+        """生成簇的离开角和到达角。TR 38.901 §7.5 step 7 (eq 7.5-9..7.5-16)。
+
+        Audit batch 2 / F4 修复: (a) 使用 JSON scaling_factors_aoa_aod /
+        scaling_factors_zoa_zod 的 C_φ(N)/C_θ(N) 表 (此前 dead config,
+        代码硬编码 /1.4 且漏掉系数 2 与 1/C); (b) LOS 时按 K-factor 修正
+        C_φ/C_θ; (c) 角度围绕几何 LOS 方向中心化 (此前围绕 0°/90°), LOS
+        条件下第一簇精确对齐 LOS 方向 (eq 7.5-12 的减首簇项)。
+
+        已知遗留 (V19.2.0 参数升级时处理): NLOS 的 μ_offset,ZOD
+        (Table 7.5-7 系列) 参数文件没有该字段, 此处取 0。
+        """
+        ratio = -np.log(P_n / np.max(P_n))
+
+        c_phi = self._scaling_factor(
+            scenario_params.get('scaling_factors_aoa_aod'), num_clusters,
+            'scaling_factors_aoa_aod')
+        c_theta = self._scaling_factor(
+            scenario_params.get('scaling_factors_zoa_zod'), num_clusters,
+            'scaling_factors_zoa_zod')
+        if is_los and lsps.k_factor_linear > 0:
+            # eq 7.5-10 / 7.5-15 的 LOS K 修正多项式 (K 为 dB)
+            k = 10.0 * np.log10(lsps.k_factor_linear)
+            c_phi *= 1.1035 - 0.028 * k - 0.002 * k**2 + 0.0001 * k**3
+            c_theta *= 1.3086 + 0.0339 * k - 0.0077 * k**2 + 0.0002 * k**3
+
+        # eq 7.5-9: φ' = 2·(AS/1.4)·sqrt(-ln(P/Pmax)) / C_φ
+        aoa_prime = 2.0 * (lsps.arrival_azimuth_spread_deg / 1.4) * np.sqrt(ratio) / c_phi
+        aod_prime = 2.0 * (lsps.departure_azimuth_spread_deg / 1.4) * np.sqrt(ratio) / c_phi
+        # eq 7.5-14: θ' = -ZS·ln(P/Pmax)/C_θ; ratio = -ln(·) ≥ 0 故 θ' ≥ 0
+        zoa_prime = lsps.arrival_zenith_spread_deg * ratio / c_theta
+        zod_prime = lsps.departure_zenith_spread_deg * ratio / c_theta
+
+        X = np.random.choice([-1, 1], size=(num_clusters, 4))
+        Y = np.random.randn(num_clusters, 4)
+        y_aoa = Y[:, 0] * (lsps.arrival_azimuth_spread_deg / 7.0)
+        y_aod = Y[:, 1] * (lsps.departure_azimuth_spread_deg / 7.0)
+        y_zoa = Y[:, 2] * (lsps.arrival_zenith_spread_deg / 7.0)
+        y_zod = Y[:, 3] * (lsps.departure_zenith_spread_deg / 7.0)
+
+        los = self._los_direction_angles()
+        aoa = X[:, 0] * aoa_prime + y_aoa
+        aod = X[:, 1] * aod_prime + y_aod
+        zoa = X[:, 2] * zoa_prime + y_zoa
+        zod = X[:, 3] * zod_prime + y_zod
+        if is_los:
+            # eq 7.5-12: 减首簇项, 使 cluster 1 精确对齐几何 LOS 方向
+            aoa = aoa - aoa[0]
+            aod = aod - aod[0]
+            zoa = zoa - zoa[0]
+            zod = zod - zod[0]
+        aoa = aoa + los['aoa']
+        aod = aod + los['aod']
+        zoa = zoa + los['zoa']
+        zod = zod + los['zod']  # + μ_offset,ZOD (=0, 见 docstring)
+
+        wrap = lambda a: (a + 180.0) % 360.0 - 180.0
+        return {
+            'aoa_phi': wrap(aoa),
+            'aod_phi': wrap(aod),
             'zoa_theta': self._fold_zenith(zoa),
             'zod_theta': self._fold_zenith(zod)
         }
