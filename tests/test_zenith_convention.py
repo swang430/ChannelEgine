@@ -88,6 +88,33 @@ class TestStochasticZenithCentering:
         assert abs(np.mean(zoas)) > 30.0
 
 
+class TestZenithFolding:
+    def test_fold_keeps_valid_range(self):
+        theta = np.array([-30.0, 0.0, 90.0, 180.0, 210.0, 365.0, -200.0])
+        folded = ChannelGenerator._fold_zenith(theta)
+        assert np.all(folded >= 0.0) and np.all(folded <= 180.0)
+        # §7.5 step 7 镜像语义: 210° → 150°; -30° → 30°
+        np.testing.assert_allclose(
+            folded, [30.0, 0.0, 90.0, 180.0, 150.0, 5.0, 160.0])
+
+    def test_weak_clusters_stay_in_range(self):
+        """弱簇 -ZS·log(P/Pmax) 超 90° 时 zenith 不得越界 (Codex PR#17 P2)。"""
+        from channel_model_38901.common.data_models import LargeScaleParameters
+
+        lsps = LargeScaleParameters(
+            delay_spread_s=1e-7,
+            departure_azimuth_spread_deg=10.0, arrival_azimuth_spread_deg=20.0,
+            departure_zenith_spread_deg=40.0, arrival_zenith_spread_deg=40.0,
+            k_factor_linear=0.0, shadow_fade_db=0.0)
+        P_n = np.array([1.0, 1e-6, 1e-12])  # -log 比值高达 27.6 → 偏移远超 90°
+        np.random.seed(5)
+        angles = ChannelGenerator._generate_angles(
+            ChannelGenerator.__new__(ChannelGenerator), P_n, lsps, len(P_n))
+        for key in ('zoa_theta', 'zod_theta'):
+            assert np.all(angles[key] >= 0.0), angles[key]
+            assert np.all(angles[key] <= 180.0), angles[key]
+
+
 class TestUraVerticalCorrelation:
     def test_no_vertical_phase_at_horizontal_propagation(self):
         # zenith=90° (水平传播) 时垂直阵元间无相位差 → R 全实数非负

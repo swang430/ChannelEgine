@@ -404,12 +404,22 @@ class ChannelGenerator:
         Y_n_offsets = np.random.randn(num_clusters, 4)
         # zenith 角以 90° (水平) 为中心, 符合 zenith 约定 (θ 从 +z 量起)。
         # 几何 LOS 方向中心化 (§7.5 step 7 的 θ_LOS,ZOA 项) 属 PR10 范围。
+        zoa = 90.0 + X_n_signs[:, 2] * zoa_unscaled + Y_n_offsets[:, 2] * (lsps.arrival_zenith_spread_deg / 7.0)
+        zod = 90.0 + X_n_signs[:, 3] * zod_unscaled + Y_n_offsets[:, 3] * (lsps.departure_zenith_spread_deg / 7.0)
         return {
             'aoa_phi': X_n_signs[:, 0] * aoa_unscaled + Y_n_offsets[:, 0] * (lsps.arrival_azimuth_spread_deg / 7.0),
             'aod_phi': X_n_signs[:, 1] * aod_unscaled + Y_n_offsets[:, 1] * (lsps.departure_azimuth_spread_deg / 7.0),
-            'zoa_theta': 90.0 + X_n_signs[:, 2] * zoa_unscaled + Y_n_offsets[:, 2] * (lsps.arrival_zenith_spread_deg / 7.0),
-            'zod_theta': 90.0 + X_n_signs[:, 3] * zod_unscaled + Y_n_offsets[:, 3] * (lsps.departure_zenith_spread_deg / 7.0)
+            'zoa_theta': self._fold_zenith(zoa),
+            'zod_theta': self._fold_zenith(zod)
         }
+
+    @staticmethod
+    def _fold_zenith(theta_deg: np.ndarray) -> np.ndarray:
+        """把 zenith 角镜像折叠回 [0, 180]° (TR 38.901 §7.5 step 7:
+        θ∈[180°,360°] 时取 360°-θ)。弱簇的 -ZS·log(P/Pmax) 项可超 90°,
+        加 90° 偏移后可能越界 (Codex PR#17 P2)。"""
+        theta = np.abs(np.asarray(theta_deg, dtype=float)) % 360.0
+        return np.where(theta > 180.0, 360.0 - theta, theta)
 
     def _generate_xpr(self, scenario_params, is_los, num_clusters):
         """生成交叉极化功率比 (XPR)。"""
