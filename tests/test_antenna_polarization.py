@@ -42,10 +42,16 @@ class TestAntennaPolarizationField(unittest.TestCase):
         with self.assertRaises(ValidationError):
             AntennaArrayConfig(polarization='X')
 
-    def test_slant_45_rejected_phase6(self):
-        """+45 / -45 / slant are Phase 7 (deferred); rejected in Phase 6."""
-        for invalid in ['+45', '-45', 'slant', 'circular', 'V/H']:
-            with self.assertRaises(ValidationError, msg=f"polarization={invalid!r} should be rejected in Phase 6"):
+    def test_slant_45_accepted(self):
+        """±45° slant cross-pol is now supported."""
+        for valid in ['+45', '-45']:
+            cfg = AntennaArrayConfig(polarization=valid)
+            self.assertEqual(cfg.polarization, valid)
+
+    def test_unsupported_polarization_labels_rejected(self):
+        """Free-form / unsupported pol labels are still rejected."""
+        for invalid in ['slant', 'circular', 'V/H', 'X']:
+            with self.assertRaises(ValidationError, msg=f"polarization={invalid!r} should be rejected"):
                 AntennaArrayConfig(polarization=invalid)
 
 
@@ -96,6 +102,34 @@ class TestBMatrixDualPol(unittest.TestCase):
         h_ports = B[:, 1::2]
         self.assertTrue(np.all(np.abs(v_ports) == 0), "V ports should be zero for H-pol DUT")
         self.assertTrue(np.all(np.abs(h_ports) > 0), "H ports should carry signal for H-pol DUT")
+
+    def test_dual_pol_slant_45_couples_both_ports(self):
+        """dual_polarized=True + DUT +45 → both ports carry cos45° of the channel."""
+        import numpy as np
+        B45 = self._build(dual_polarized=True, rx_pol='+45')
+        Bv = self._build(dual_polarized=True, rx_pol='V')
+        self.assertEqual(B45.shape, (1, 8))
+        v_ports = B45[:, 0::2]
+        h_ports = B45[:, 1::2]
+        self.assertTrue(np.all(np.abs(v_ports) > 0), "+45 DUT should drive V ports")
+        self.assertTrue(np.all(np.abs(h_ports) > 0), "+45 DUT should drive H ports")
+        # Each port carries 1/sqrt(2) of the V-pol channel response.
+        np.testing.assert_allclose(v_ports, Bv[:, 0::2] / np.sqrt(2.0), atol=1e-12)
+        np.testing.assert_allclose(h_ports, Bv[:, 0::2] / np.sqrt(2.0), atol=1e-12)
+
+    def test_dual_pol_minus_45_h_port_sign_flips(self):
+        """-45 DUT differs from +45 only by the sign of the H-port coupling."""
+        import numpy as np
+        Bp = self._build(dual_polarized=True, rx_pol='+45')
+        Bm = self._build(dual_polarized=True, rx_pol='-45')
+        np.testing.assert_allclose(Bp[:, 0::2], Bm[:, 0::2], atol=1e-12)
+        np.testing.assert_allclose(Bp[:, 1::2], -Bm[:, 1::2], atol=1e-12)
+
+    def test_single_pol_slant_raises(self):
+        """dual_polarized=False + DUT ±45 → raise (slant needs dual-pol chamber)."""
+        for pol in ('+45', '-45'):
+            with self.assertRaises(ValueError):
+                self._build(dual_polarized=False, rx_pol=pol)
 
     def test_single_pol_v_dut_unchanged(self):
         """dual_polarized=False + DUT V (default) → behavior unchanged (regression baseline)."""
@@ -220,9 +254,16 @@ class TestPolarizationMatrixHelper(unittest.TestCase):
         np.testing.assert_array_equal(sim._pol_vec('V'), [1.0, 0.0])
         np.testing.assert_array_equal(sim._pol_vec('H'), [0.0, 1.0])
 
+    def test_pol_vec_slant_45(self):
+        import numpy as np
+        sim = self._sim()
+        inv_sqrt2 = 1.0 / np.sqrt(2.0)
+        np.testing.assert_allclose(sim._pol_vec('+45'), [inv_sqrt2, inv_sqrt2], atol=1e-12)
+        np.testing.assert_allclose(sim._pol_vec('-45'), [inv_sqrt2, -inv_sqrt2], atol=1e-12)
+
     def test_pol_vec_invalid_raises(self):
         with self.assertRaises(ValueError):
-            self._sim()._pol_vec('+45')
+            self._sim()._pol_vec('circular')
 
 
 class TestDualPolCrossCorrelationContract(unittest.TestCase):

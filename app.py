@@ -84,28 +84,37 @@ def antenna_panel(antenna_type: str):
 
     array_type = st.selectbox('阵列类型', ('ULA', 'URA'), key=f'{key_prefix}_type')
     element_pattern = st.selectbox('单元方向图', ('Isotropic', 'TR38.901'), key=f'{key_prefix}_pattern')
-    # Phase 6 T6.1: polarization V/H per antenna array. Default 'V' preserves
-    # single-pol callers; matters only when chamber.dual_polarized=True.
+    # Polarization per antenna array. Default 'V' preserves single-pol callers;
+    # any non-V value (H / ±45° slant) requires chamber.dual_polarized=True.
     polarization = st.selectbox(
-        '极化 (Polarization)', ('V', 'H'),
+        '极化 (Polarization)', ('V', 'H', '+45', '-45'),
         key=f'{key_prefix}_pol',
         help=(
-            "V (vertical, θ-pol) 或 H (horizontal, φ-pol). 默认 V. "
-            "仅当 chamber.dual_polarized=True 时影响 OTA 合成数学; "
-            "slant ±45° / 任意角是 Phase 7 (deferred)."
+            "V (vertical, θ-pol)、H (horizontal, φ-pol) 或 ±45° 交叉极化. 默认 V. "
+            "非 V 极化 (H / ±45°) 需要勾选暗室的「双极化探头」(dual_polarized=True)."
         ),
     )
+
+    # Array orientation in the GCS (TR 38.901 Sec 7.1.3). All 0 => identity. Only
+    # meaningful for dynamic (non-rotating) OTA where the DUT's fixed starting
+    # orientation shapes chamber geometry; the 360° turntable test averages it out.
+    with st.expander('阵列朝向 (Sec 7.1.3, 默认 0)', expanded=False):
+        bearing_deg = st.number_input('Bearing α (deg)', -180.0, 180.0, 0.0, 1.0, key=f'{key_prefix}_bearing')
+        downtilt_deg = st.number_input('Downtilt β (deg)', -180.0, 180.0, 0.0, 1.0, key=f'{key_prefix}_downtilt')
+        slant_deg = st.number_input('Slant γ (deg)', -180.0, 180.0, 0.0, 1.0, key=f'{key_prefix}_slant')
 
     if array_type == 'ULA':
         num_cols = st.number_input('单元数量 (Elements)', 1, 16, 2, key=f'{key_prefix}_ula_cols')
         spacing_h = st.number_input('单元间距 (λ)', 0.1, 4.0, 0.5, 0.1, key=f'{key_prefix}_ula_spacing')
-        return AntennaArrayConfig(array_type='ULA', element_pattern=element_pattern, num_rows=1, num_cols=num_cols, spacing_h=spacing_h, polarization=polarization)
+        return AntennaArrayConfig(array_type='ULA', element_pattern=element_pattern, num_rows=1, num_cols=num_cols, spacing_h=spacing_h, polarization=polarization,
+                                  bearing_deg=bearing_deg, downtilt_deg=downtilt_deg, slant_deg=slant_deg)
     else: # URA
         num_rows = st.number_input('行数 (Rows)', 1, 8, 2, key=f'{key_prefix}_ura_rows')
         num_cols = st.number_input('列数 (Columns)', 1, 8, 2, key=f'{key_prefix}_ura_cols')
         spacing_h = st.number_input('水平间距 (λ)', 0.1, 4.0, 0.5, 0.1, key=f'{key_prefix}_ura_spacing_h')
         spacing_v = st.number_input('垂直间距 (λ)', 0.1, 4.0, 0.5, 0.1, key=f'{key_prefix}_ura_spacing_v')
-        return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v, polarization=polarization)
+        return AntennaArrayConfig(array_type='URA', element_pattern=element_pattern, num_rows=num_rows, num_cols=num_cols, spacing_h=spacing_h, spacing_v=spacing_v, polarization=polarization,
+                                  bearing_deg=bearing_deg, downtilt_deg=downtilt_deg, slant_deg=slant_deg)
 
 # --- UI Layout ---
 st.title("MIMO OTA 仿真器 V4.4")
@@ -121,7 +130,12 @@ with st.sidebar:
     with st.expander("1. 场景与几何 (Scenario)", expanded=False):
         input_mode_label = st.radio("信道定义方式", ('标准 3GPP/WiFi 模型', '自定义 JSON (Custom Profile)'))
         input_mode = 'standard' if input_mode_label == '标准 3GPP/WiFi 模型' else 'custom'
-        
+
+        # TR 38.901 CDL 合规选项默认值（仅 3GPP CDL 模型下渲染控件覆盖）。
+        scale_to_scenario = False
+        split_subclusters = False
+        c_ds_ns = 3.91
+
         custom_profile_path = None
         custom_profile_obj = None
         if input_mode == 'custom':
@@ -163,6 +177,21 @@ with st.sidebar:
             if standard == '3GPP':
                 model_name = st.selectbox('大尺度环境', ('UMa', 'UMi-StreetCanyon', 'UMi-OpenArea', 'RMa', 'InH-Office', 'SMa', 'InF'), key='model_name')
                 cluster_model_name = st.selectbox('小尺度簇模型', ('Stochastic', 'CDL-A', 'CDL-B', 'CDL-C', 'CDL-D', 'CDL-E', 'SCME'), key='cluster_model_name')
+                if cluster_model_name and cluster_model_name.startswith('CDL-'):
+                    st.caption("TR 38.901 CDL 合规选项 (默认关，开启会改变信道统计)")
+                    scale_to_scenario = st.checkbox(
+                        '场景 LSP 重缩放 (Sec 7.7.5.1)', value=False, key='scale_to_scenario',
+                        help="把 CDL 表格的时延/角度重缩放到所选场景的大尺度参数 (DS / ASA / ASD / ZSA / ZSD)。关闭时使用 CDL 表面原始值。"
+                    )
+                    split_subclusters = st.checkbox(
+                        '子簇分裂 (Sec 7.7.1)', value=False, key='split_subclusters',
+                        help="把两个最强簇各分裂为 3 个子簇 (延迟偏移 {0,1.28,2.56}·c_DS，功率比 {0.5,0.3,0.2})。"
+                    )
+                    if split_subclusters:
+                        c_ds_ns = st.number_input(
+                            'c_DS (ns)', 0.1, 50.0, 3.91, 0.01, key='c_ds_ns',
+                            help="子簇延迟扩展常数，默认 3.91 ns。"
+                        )
             else:
                 model_name = st.selectbox('WiFi 模型', ('TGax-A', 'TGax-B', 'TGax-C', 'TGax-D', 'TGax-E', 'TGax-F'), key='wifi_model_name')
                 cluster_model_name = None
@@ -406,7 +435,10 @@ with st.sidebar:
             "rx_antenna": rx_antenna_config.model_dump(),
             "force_condition": (None if force_condition == '默认 (Default)' else force_condition.split(' ')[-1]),
             "random_seed": random_seed,
-            "use_median_lsps": use_median_lsps
+            "use_median_lsps": use_median_lsps,
+            "scale_to_scenario": scale_to_scenario,
+            "split_subclusters": split_subclusters,
+            "c_ds_ns": c_ds_ns
         }
         
         target_config = TargetChannelConfig.parse_obj(target_config_params)

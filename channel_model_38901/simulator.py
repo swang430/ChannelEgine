@@ -11,7 +11,7 @@ class ChannelSimulator:
     外观类（Facade Class），为运行信道仿真提供一个简洁的顶层API。
     这是用户与信道模型库交互的主要入口点。
     """
-    def __init__(self, scenario_name: str, center_frequency_hz: float, cluster_model_name: Optional[str] = None, use_median_lsps: bool = False):
+    def __init__(self, scenario_name: str, center_frequency_hz: float, cluster_model_name: Optional[str] = None, use_median_lsps: bool = False, scale_to_scenario: bool = False, split_subclusters: bool = False, c_ds_ns: float = 3.91):
         """
         初始化信道仿真器。
 
@@ -36,9 +36,23 @@ class ChannelSimulator:
             ue_velocities=np.array([[0, 0, 0]])
         )
         
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=use_median_lsps)
+        self.scale_to_scenario = scale_to_scenario
+        self.split_subclusters = split_subclusters
+        self.c_ds_ns = c_ds_ns
+        self._use_median_lsps = use_median_lsps
+        self.generator = self._build_generator()
         self._last_results = None
         self._last_lsps = None
+
+    def _build_generator(self) -> ChannelGenerator:
+        """Construct a ChannelGenerator carrying the current option flags."""
+        return ChannelGenerator(
+            self.config, self.params, self.config.cluster_model_name,
+            use_median_lsps=self._use_median_lsps,
+            scale_to_scenario=self.scale_to_scenario,
+            split_subclusters=self.split_subclusters,
+            c_ds_ns=self.c_ds_ns,
+        )
 
     def _invalidate_cache(self):
         self._last_results = None
@@ -87,30 +101,46 @@ class ChannelSimulator:
         """更新基站 (BS) 和用户设备 (UE) 的位置。"""
         self.config.bs_positions = bs_positions
         self.config.ue_positions = ue_positions
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self.generator = self._build_generator()
         self._invalidate_cache()
 
     def set_velocities(self, ue_velocities: np.ndarray):
         """更新用户设备 (UE) 的速度。"""
         self.config.ue_velocities = ue_velocities
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self.generator = self._build_generator()
         self._invalidate_cache()
 
-    def set_antenna_config(self, num_tx_rows, num_tx_cols, num_rx_rows, num_rx_cols, 
-                           tx_spacing_h=0.5, tx_spacing_v=0.5, rx_spacing_h=0.5, rx_spacing_v=0.5, 
-                           tx_array_type='ULA', rx_array_type='ULA'):
-        """更新天线阵列配置。"""
-        self.config.antenna_config.num_tx_rows = num_tx_rows
-        self.config.antenna_config.num_tx_cols = num_tx_cols
-        self.config.antenna_config.num_rx_rows = num_rx_rows
-        self.config.antenna_config.num_rx_cols = num_rx_cols
-        self.config.antenna_config.tx_spacing_h = tx_spacing_h
-        self.config.antenna_config.tx_spacing_v = tx_spacing_v
-        self.config.antenna_config.rx_spacing_h = rx_spacing_h
-        self.config.antenna_config.rx_spacing_v = rx_spacing_v
-        self.config.antenna_config.tx_array_type = tx_array_type
-        self.config.antenna_config.rx_array_type = rx_array_type
-        
+    def set_antenna_config(self, num_tx_rows, num_tx_cols, num_rx_rows, num_rx_cols,
+                           tx_spacing_h=0.5, tx_spacing_v=0.5, rx_spacing_h=0.5, rx_spacing_v=0.5,
+                           tx_array_type='ULA', rx_array_type='ULA',
+                           tx_element_pattern=None, rx_element_pattern=None,
+                           tx_bearing_deg=None, tx_downtilt_deg=None, tx_slant_deg=None,
+                           rx_bearing_deg=None, rx_downtilt_deg=None, rx_slant_deg=None):
+        """更新天线阵列配置。
+
+        element_pattern / orientation 参数为 None 时保留 antenna_config 现有值
+        （默认 Isotropic / 0°），从而对既有调用方保持向后兼容。
+        """
+        ac = self.config.antenna_config
+        ac.num_tx_rows = num_tx_rows
+        ac.num_tx_cols = num_tx_cols
+        ac.num_rx_rows = num_rx_rows
+        ac.num_rx_cols = num_rx_cols
+        ac.tx_spacing_h = tx_spacing_h
+        ac.tx_spacing_v = tx_spacing_v
+        ac.rx_spacing_h = rx_spacing_h
+        ac.rx_spacing_v = rx_spacing_v
+        ac.tx_array_type = tx_array_type
+        ac.rx_array_type = rx_array_type
+        if tx_element_pattern is not None: ac.tx_element_pattern = tx_element_pattern
+        if rx_element_pattern is not None: ac.rx_element_pattern = rx_element_pattern
+        if tx_bearing_deg is not None: ac.tx_bearing_deg = tx_bearing_deg
+        if tx_downtilt_deg is not None: ac.tx_downtilt_deg = tx_downtilt_deg
+        if tx_slant_deg is not None: ac.tx_slant_deg = tx_slant_deg
+        if rx_bearing_deg is not None: ac.rx_bearing_deg = rx_bearing_deg
+        if rx_downtilt_deg is not None: ac.rx_downtilt_deg = rx_downtilt_deg
+        if rx_slant_deg is not None: ac.rx_slant_deg = rx_slant_deg
+
         # Calculate positions
         c = 3e8
         lam = c / self.config.center_frequency_hz
@@ -120,30 +150,37 @@ class ChannelSimulator:
             self.config.antenna_config.tx_array_type,
             num_tx_rows, num_tx_cols,
             self.config.antenna_config.tx_spacing_h * lam,
-            self.config.antenna_config.tx_spacing_v * lam
+            self.config.antenna_config.tx_spacing_v * lam,
+            self.config.antenna_config.tx_bearing_deg,
+            self.config.antenna_config.tx_downtilt_deg,
+            self.config.antenna_config.tx_slant_deg
         )
-        
+
         # Rx
         self.config.antenna_config.rx_positions = get_antenna_positions(
             self.config.antenna_config.rx_array_type,
             num_rx_rows, num_rx_cols,
             self.config.antenna_config.rx_spacing_h * lam,
-            self.config.antenna_config.rx_spacing_v * lam
+            self.config.antenna_config.rx_spacing_v * lam,
+            self.config.antenna_config.rx_bearing_deg,
+            self.config.antenna_config.rx_downtilt_deg,
+            self.config.antenna_config.rx_slant_deg
         )
         
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self.generator = self._build_generator()
         self._invalidate_cache()
 
     def set_scenario(self, scenario_name: str, cluster_model_name: Optional[str] = None):
         """更新仿真场景和簇模型。"""
         self.config.scenario_name = scenario_name
         self.config.cluster_model_name = cluster_model_name
-        self.generator = ChannelGenerator(self.config, self.params, self.config.cluster_model_name, use_median_lsps=self.generator.use_median_lsps)
+        self.generator = self._build_generator()
         self._invalidate_cache()
         
     def set_median_lsp_usage(self, use_median_lsps: bool):
         """设置是否使用LSP中位值。"""
-        self.generator.use_median_lsps = use_median_lsps
+        self._use_median_lsps = use_median_lsps
+        self.generator = self._build_generator()
         self._invalidate_cache()
 
     def get_config(self) -> ScenarioConfig:
