@@ -241,3 +241,61 @@ class TestOtaDutOrientation:
         B0 = b({})
         B_rot = b({'downtilt_deg': 30.0})
         assert not np.allclose(B0, B_rot)
+
+
+# --- OTA production ray path honors the element pattern (Codex PR#14 P2) ------
+
+class TestOtaRayElementPattern:
+    """element_pattern='TR38.901' must actually shape the default production
+    synthesis (ray / strict_pfs). Previously the pattern was forwarded into the
+    channel model but the OTA ray path rebuilt weights from angles only, so the
+    control was silently isotropic. Isotropic stays a bit-identical no-op."""
+
+    def _A(self, tx_pattern, rx_pattern, seed=7, method='ray'):
+        import warnings as _w
+        from mimo_ota_simulator.cdl_schema import CustomCDLProfile
+        from mimo_ota_simulator.data_models import (
+            AntennaArrayConfig, ChamberConfig, TargetChannelConfig,
+        )
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+
+        chamber = ChamberConfig(num_probes=8, distribution='ring', radius_m=1.5,
+                                dual_polarized=False,
+                                probe_antenna={'gain_dBi': 0.0, 'pattern': 'Isotropic'})
+        profile = CustomCDLProfile.from_dict({
+            'center_frequency_hz': 2.6e9, 'pathloss_db': 85.0,
+            'ue_velocity_mps': [0.0, 0.0, 0.0], 'is_los': False,
+            'clusters': [
+                {'delay_s': 0.0, 'power_linear': 1.0, 'aoa_deg': 75, 'aod_deg': 60,
+                 'as_aoa_deg': 5.0, 'as_aod_deg': 2.0},
+                {'delay_s': 1e-7, 'power_linear': 0.5, 'aoa_deg': -40, 'aod_deg': 20,
+                 'as_aoa_deg': 5.0, 'as_aod_deg': 2.0},
+            ],
+        })
+        config = TargetChannelConfig(
+            input_mode='custom', custom_profile=profile,
+            tx_antenna=AntennaArrayConfig(num_cols=2, element_pattern=tx_pattern),
+            rx_antenna=AntennaArrayConfig(num_cols=2, element_pattern=rx_pattern),
+        )
+        np.random.seed(seed)
+        with _w.catch_warnings():
+            _w.simplefilter('ignore')
+            res = MIMO_OTA_Simulator().run(chamber, config, synthesis_method=method)
+        return res['transmit_mapping_matrix_A']
+
+    def test_isotropic_is_noop_default(self):
+        # Explicit Isotropic == default; the pattern control adds nothing at 1.0.
+        np.testing.assert_array_equal(self._A('Isotropic', 'Isotropic'),
+                                      self._A('Isotropic', 'Isotropic'))
+
+    def test_tr38901_pattern_changes_ray_A(self):
+        A_iso = self._A('Isotropic', 'Isotropic')
+        A_pat = self._A('TR38.901', 'TR38.901')
+        # Same seed => identical phases; only the element gain differs, so the
+        # production ray A-matrix must change (no longer silently isotropic).
+        assert not np.allclose(A_iso, A_pat)
+
+    def test_tr38901_pattern_changes_strict_pfs_A(self):
+        A_iso = self._A('Isotropic', 'Isotropic', method='strict_pfs')
+        A_pat = self._A('TR38.901', 'TR38.901', method='strict_pfs')
+        assert not np.allclose(A_iso, A_pat)

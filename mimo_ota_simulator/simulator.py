@@ -6,9 +6,26 @@ from .data_models import ChamberConfig, TargetChannelConfig, UniversalChannelPro
 from .channel_builders import create_builder
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.common.data_models import EngineCluster
-from channel_model_38901.common.geometry import apply_orientation
+from channel_model_38901.common.geometry import apply_orientation, gcs_to_lcs_angles
+from channel_model_38901.models.antenna_pattern import calculate_element_gain
 from wifi_channel_model.simulator import WiFiChannelSimulator
 from wifi_channel_model.common.data_models import WiFiScenarioConfig
+
+
+def _element_field_amplitude(pattern: str, zenith_deg: float, azimuth_deg: float,
+                             bearing_deg: float, downtilt_deg: float, slant_deg: float) -> float:
+    """Linear field-amplitude factor for one antenna element in a GCS direction.
+
+    Mirrors ChannelGenerator._element_field_amplitude so the OTA synthesis applies
+    the same TR 38.901 Table 7.3-1 element pattern as the channel model. The GCS
+    angle is rotated into the array LCS by the orientation; 'Isotropic' => 1.0.
+    """
+    if pattern != 'TR38.901':
+        return 1.0
+    theta_l, phi_l = gcs_to_lcs_angles(zenith_deg, azimuth_deg,
+                                       bearing_deg, downtilt_deg, slant_deg)
+    return 10.0 ** (calculate_element_gain(phi_l, theta_l) / 20.0)
+
 
 class MIMO_OTA_Simulator:
     def _calculate_probe_positions(self, chamber_config: ChamberConfig) -> np.ndarray:
@@ -130,7 +147,11 @@ class MIMO_OTA_Simulator:
 
                 # Incorporate probe antenna gain
                 probe_gain_linear = 10**(chamber_config.probe_antenna.gain_dBi / 20.0)
-                rx_gain_linear = 1.0 # Assume isotropic DUT antenna for now
+                # DUT element gain is applied per-ray at the ray AoA in the ray/
+                # strict_pfs A-matrix (to match the target channel convention), and
+                # via cluster.h_matrix for cluster/pinv — so B stays element-isotropic
+                # here to avoid double counting.
+                rx_gain_linear = 1.0
 
                 polarization_factor = 1.0
 
@@ -667,6 +688,15 @@ class MIMO_OTA_Simulator:
             if use_dual_pol:
                 tx_pol_vec = self._pol_vec(channel_config.tx_antenna.polarization)
 
+            # Element patterns applied per ray to the A-matrix (Table 7.3-1): Tx at
+            # the ray departure direction, Rx/DUT at the ray arrival direction. This
+            # matches the channel model's ray-level convention and reproduces the
+            # target channel's element gain. Isotropic => 1.0 (bit-identical).
+            tx_ant = channel_config.tx_antenna
+            tx_pattern = tx_ant.element_pattern
+            rx_ant = channel_config.rx_antenna
+            rx_pattern = rx_ant.element_pattern
+
             # 1. Get Ray Offsets
             default_ray_offsets = np.array([
                 0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715,
@@ -768,11 +798,24 @@ class MIMO_OTA_Simulator:
                     # Power per ray
                     p_ray = cluster.power / 20.0
 
+                    # Per-ray element field amplitude (Table 7.3-1), Tx at the ray
+                    # departure direction and Rx/DUT at the ray arrival direction —
+                    # same convention as the channel model's ray-level path. Isotropic
+                    # => 1.0, so default/legacy runs stay bit-identical.
+                    g_elem = (
+                        _element_field_amplitude(
+                            tx_pattern, zod_ray, aod_ray,
+                            tx_ant.bearing_deg, tx_ant.downtilt_deg, tx_ant.slant_deg)
+                        * _element_field_amplitude(
+                            rx_pattern, zoa_ray, aoa_ray,
+                            rx_ant.bearing_deg, rx_ant.downtilt_deg, rx_ant.slant_deg)
+                    )
+
                     # Base Weight (without random phase, for later reconstruction).
-                    # W_base[p_eff, t] = pol_factor[p_eff] * sqrt(P) * w_map[p_eff] * g_tx[t]
+                    # W_base[p_eff, t] = pol_factor[p_eff] * sqrt(P) * g_elem * w_map[p_eff] * g_tx[t]
                     # In dual-pol: V probe ports (even) get pol_factor=m_col[0],
                     # H probe ports (odd) get m_col[1]. Single-pol: pol_factor=1.
-                    W_base = pol_factor_col * np.sqrt(p_ray) * (w_map_ray @ g_tx_ray)
+                    W_base = pol_factor_col * np.sqrt(p_ray) * g_elem * (w_map_ray @ g_tx_ray)
 
                     # Apply random phase for current snapshot.
                     # ray:        W_base (P, Tx) * scalar      -> (P, Tx)
