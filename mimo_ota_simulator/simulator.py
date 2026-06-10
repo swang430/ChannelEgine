@@ -27,6 +27,31 @@ def _element_field_amplitude(pattern: str, zenith_deg: float, azimuth_deg: float
     return 10.0 ** (calculate_element_gain(phi_l, theta_l) / 20.0)
 
 
+def _probe_pattern_field_amplitude(probe_pos: np.ndarray, direction_vec: np.ndarray) -> float:
+    """探头 TR 38.901 方向图的线性场幅形状因子 (峰值 0 dB)。
+
+    探头 boresight 指向暗室中心 (TR 37.977 多探头暗室惯例)。形状因子用
+    g_h_max_db=0 — ProbeAntennaConfig.gain_dBi 是峰值增益的唯一来源,
+    避免与 Table 7.3-1 的 8 dBi 峰值双计 (audit batch 2, A4/P1-1)。
+
+    Args:
+        probe_pos: 探头 GCS 位置 (3,)。
+        direction_vec: 探头 → DUT 阵元的 GCS 方向向量 (3,), 无需归一。
+    """
+    r = np.linalg.norm(probe_pos)
+    d = np.linalg.norm(direction_vec)
+    if r < 1e-9 or d < 1e-9:
+        return 1.0  # 探头在原点 boresight 无定义 / 重合点: 视作 isotropic
+    boresight = -probe_pos / r
+    bearing_deg = np.rad2deg(np.arctan2(boresight[1], boresight[0]))
+    downtilt_deg = -np.rad2deg(np.arcsin(np.clip(boresight[2], -1.0, 1.0)))
+    zenith_deg = np.rad2deg(np.arccos(np.clip(direction_vec[2] / d, -1.0, 1.0)))
+    azimuth_deg = np.rad2deg(np.arctan2(direction_vec[1], direction_vec[0]))
+    theta_l, phi_l = gcs_to_lcs_angles(zenith_deg, azimuth_deg,
+                                       bearing_deg, downtilt_deg, 0.0)
+    return 10.0 ** (calculate_element_gain(phi_l, theta_l, g_h_max_db=0.0) / 20.0)
+
+
 class MIMO_OTA_Simulator:
     def _calculate_probe_positions(self, chamber_config: ChamberConfig) -> np.ndarray:
         """Calculates the 3D Cartesian coordinates of each physical probe.
@@ -145,8 +170,13 @@ class MIMO_OTA_Simulator:
                 )
                 path_gain_linear = 10**(-path_loss_db / 20.0)
 
-                # Incorporate probe antenna gain
+                # Incorporate probe antenna gain. pattern='TR38.901' 时再乘
+                # Table 7.3-1 形状因子 (峰值 0 dB, boresight 指向暗室中心);
+                # 'Isotropic' 因子恒 1, 行为不变 (audit batch 2, A4)。
                 probe_gain_linear = 10**(chamber_config.probe_antenna.gain_dBi / 20.0)
+                if chamber_config.probe_antenna.pattern == 'TR38.901':
+                    probe_gain_linear *= _probe_pattern_field_amplitude(
+                        probe_pos, -distance_vec)
                 # DUT element gain is applied per-ray at the ray AoA in the ray/
                 # strict_pfs A-matrix (to match the target channel convention), and
                 # via cluster.h_matrix for cluster/pinv — so B stays element-isotropic

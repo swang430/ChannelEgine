@@ -161,7 +161,13 @@ class PropsimExportConfig(BaseModel):
 class ProbeAntennaConfig(BaseModel):
     """Configuration for the antenna of a single physical probe."""
     gain_dBi: float = Field(0.0, description="The gain of the probe antenna in dBi.")
-    pattern: Literal['Isotropic', 'TR38.901'] = Field('Isotropic', description="The radiation pattern of the probe antenna.")
+    pattern: Literal['Isotropic', 'TR38.901'] = Field(
+        'Isotropic',
+        description=(
+            "探头辐射方向图。'TR38.901' 在 B 矩阵中按 Table 7.3-1 形状因子"
+            "(峰值 0 dB, boresight 指向暗室中心)衰减离轴方向; 峰值增益"
+            "仍由 gain_dBi 单独给出, 两者不叠加 8 dBi。'Isotropic' 因子恒 1。"
+        ))
 
 
 class ProbePosition(BaseModel):
