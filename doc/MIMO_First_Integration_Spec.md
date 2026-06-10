@@ -112,9 +112,9 @@ PropsimASCIIExporter(cfg).export(result, direction='dl')
 | `power_linear` | float (>0) | ✅ | Consumed (normalized to sum 1) |
 | `aoa_deg` | float | ✅ | Consumed |
 | `aod_deg` | float | ✅ | Consumed |
-| `zoa_deg` | float (default 90) | ❌ | Consumed |
-| `zod_deg` | float (default 90) | ❌ | Consumed |
-| `as_aoa_deg`/`as_aod_deg`/`as_zoa_deg`/`as_zod_deg` | float (≥0, default 0) | ❌ | Consumed |
+| `zoa_deg` | float (default 90) | ❌ | Consumed —— Tx/Rx steering、Doppler、TR38.901 element gain、**probe 权重映射 (az,el) 各向异性高斯**(2026-06-10 起;此前权重 azimuth-only) |
+| `zod_deg` | float (default 90) | ❌ | Consumed —— Tx steering / element gain(probe 映射只看到达侧 `zoa`) |
+| `as_aoa_deg`/`as_aod_deg`/`as_zoa_deg`/`as_zod_deg` | float (≥0, default 0) | ❌ | Consumed —— ray 角度扇出;`as_aoa`/`as_zoa` 另作 probe 权重高斯的 az/el 宽度 |
 | `xpr_db` | Optional[float] | ❌ | **Phase 6: 真用** —— 进 dual-pol pol_matrix off-diag sqrt(1/κ) (TR 38.901 §7.3.2). 仅 chamber.dual_polarized=True 时生效；single-pol 路径忽略此字段。Caller 没设值时默认 7 dB + warning |
 | `initial_phases_rad` | Optional[List[float, len=4]] | ❌ | **Phase 6: 全 4 个都真用**: 索引 0 (Θθθ) per-cluster base phase 进 strict_pfs，索引 1-3 (Θθφ, Θφθ, Θφφ) 进 dual-pol pol_matrix |
 | `num_rays` | int (>0, default 20) | ❌ | 当前 strict_pfs/ray 实现忽略此字段固定 20；Phase 7+ 可配 |

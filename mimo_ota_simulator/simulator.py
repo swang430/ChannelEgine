@@ -442,8 +442,11 @@ class MIMO_OTA_Simulator:
         for the "ring-only silent constraint" flagged in MIMO-First
         docs/architecture/channel-engine-data-flow.md (2026-05-19).
 
-        Note: weights are still azimuth-only; elevation is not consumed by the
-        Gaussian here. ZoA-aware weighting is a potential P3 extension.
+        Elevation-aware (audit batch 2, P8): 权重是 (az, el) 各向异性高斯 —
+        方位差用 as_aoa, 仰角差用 as_zoa (各自带 spacing 自适应展宽下限)。
+        ring 布局 (探头 el=0) + 水平簇 (zoa=90°) 时仰角项恒 1, 与历史
+        azimuth-only 公式 bit-identical; 立体 custom 布局 (P2-7 dual-ring)
+        或 zoa≠90° 簇才产生仰角选择性。
         """
         num_physical_probes = chamber_config.num_probes
         num_effective_probes = num_physical_probes * 2 if chamber_config.dual_polarized else num_physical_probes
@@ -453,11 +456,18 @@ class MIMO_OTA_Simulator:
             probe_angles_rad = np.deg2rad(
                 np.array([p.azimuth_deg for p in chamber_config.probe_positions])
             )
+            probe_elev_rad = np.deg2rad(
+                np.array([p.elevation_deg for p in chamber_config.probe_positions])
+            )
         else:
             probe_angles_rad = np.linspace(0, 2 * np.pi, num_physical_probes, endpoint=False)
+            probe_elev_rad = np.zeros(num_physical_probes)
 
         target_angle_rad = np.deg2rad(cluster.aoa_phi)
         target_as_rad = np.deg2rad(cluster.as_aoa)
+        # 簇仰角 = 90° − zenith (zoa_theta 是 zenith 约定, 90°=水平)
+        target_elev_rad = np.deg2rad(90.0 - cluster.zoa_theta)
+        target_zs_rad = np.deg2rad(cluster.as_zoa)
 
         # --- ADAPTIVE BROADENING FIX ---
         # Ensure the Gaussian width is at least a fraction of the probe spacing.
@@ -468,20 +478,22 @@ class MIMO_OTA_Simulator:
         min_as_rad = probe_spacing_rad / 1.5  # Sigma approx 2/3 of spacing ensures overlap
 
         effective_as_rad = max(target_as_rad, min_as_rad)
+        # 仰角 σ 同样下限展宽 (as_zoa=0 时避免除零, 且保证仰角邻近探头有重叠)
+        effective_zs_rad = max(target_zs_rad, min_as_rad)
         # -------------------------------
 
         angle_diffs = np.abs(probe_angles_rad - target_angle_rad)
         angle_diffs = np.minimum(angle_diffs, 2 * np.pi - angle_diffs)
-        candidate_indices = np.argsort(angle_diffs)[:num_candidate_probes]
+        elev_diffs = probe_elev_rad - target_elev_rad
+        # 候选按归一化 (az, el) 联合距离选取 (ring+水平簇时退化为方位距离排序)
+        norm_dist_sq = (angle_diffs / effective_as_rad) ** 2 + (elev_diffs / effective_zs_rad) ** 2
+        candidate_indices = np.argsort(norm_dist_sq)[:num_candidate_probes]
         weights = np.zeros(num_physical_probes)
-        
+
         for idx in candidate_indices:
-            delta_angle = np.abs(probe_angles_rad[idx] - target_angle_rad)
-            delta_angle = np.minimum(delta_angle, 2 * np.pi - delta_angle)
-            
-            # Use effective_as_rad for Gaussian
-            weights[idx] = np.exp(-np.power(delta_angle, 2) / (2 * np.power(effective_as_rad, 2)))
-            
+            # 各向异性高斯: exp(-Δaz²/2σ_az² - Δel²/2σ_el²)
+            weights[idx] = np.exp(-0.5 * norm_dist_sq[idx])
+
         total_weight = np.sum(weights)
         if total_weight > 1e-9:
             weights /= total_weight
@@ -811,7 +823,10 @@ class MIMO_OTA_Simulator:
                     # CRITICAL FIX: Do NOT use AS=0 (Nearest Neighbor). This causes phase quantization.
                     # Use a small AS (e.g., 2 deg) to enable Gaussian Interpolation between probes.
                     # This smooths the field and improves spatial accuracy.
-                    temp_ray_cluster = EngineCluster(aod_phi=aod_ray, aoa_phi=aoa_ray, power=0, delay=0, as_aod=0, as_aoa=2.0)
+                    temp_ray_cluster = EngineCluster(
+                        aod_phi=aod_ray, aoa_phi=aoa_ray,
+                        zoa_theta=zoa_ray,  # P8: ray 仰角参与探头权重 (此前丢失)
+                        power=0, delay=0, as_aod=0, as_aoa=2.0, as_zoa=2.0)
                     w_map_ray = self._calculate_weights_for_cluster(temp_ray_cluster, chamber_config) # Shape (N_probes, 1)
                     
                     # 3. Calculate Tx Steering Vector (g_tx for this ray)
