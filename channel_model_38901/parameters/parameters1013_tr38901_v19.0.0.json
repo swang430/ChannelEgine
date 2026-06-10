@@ -388,7 +388,7 @@
         "c_asa_deg": 8,
         "c_asd_deg": 5,
         "c_zsa_deg": 9,
-        "per_cluster_shadowing_std_db": 3.0,
+        "per_cluster_shadowing_std_db": 6.0,
         "mu_log10_ZSD": "-1.43*log10(1+fc_ghz) + 2.228",
         "sigma_log10_ZSD": "0.13*log10(1+fc_ghz) + 0.3"
         },
@@ -470,7 +470,7 @@
         "c_asa_deg": 5,
         "c_asd_deg": 2.08,
         "c_zsa_deg": 7,
-        "per_cluster_shadowing_std_db": 3.0,
+        "per_cluster_shadowing_std_db": 4.0,
         "mu_log10_ZSD": "0.14",
         "sigma_log10_ZSD": "0.16"
         },
@@ -550,7 +550,7 @@
         "c_asa_deg": 8,
         "c_asd_deg": 5,
         "c_zsa_deg": 9,
-        "per_cluster_shadowing_std_db": 3.0,
+        "per_cluster_shadowing_std_db": 4.0,
         "mu_log10_ZSD": "1.35",
         "sigma_log10_ZSD": "0.35"
         },
