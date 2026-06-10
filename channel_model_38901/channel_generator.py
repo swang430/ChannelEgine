@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from typing import Optional, Callable, List
 from .common.data_models import ScenarioConfig, LargeScaleParameters, EngineCluster
@@ -250,6 +252,24 @@ class ChannelGenerator:
         return float(np.sqrt(var))
 
     @classmethod
+    def _azimuth_spread_ratio(cls, angles_deg: np.ndarray, powers: np.ndarray, as_desired_deg: float) -> float:
+        """§7.7.5.1 缩放比 AS_desired/AS_model (退化情形返回 1.0)。"""
+        mean = cls._power_weighted_azimuth_mean(angles_deg, powers)
+        as_model = cls._rms_azimuth_spread(angles_deg, powers, mean)
+        if as_model < 1e-9 or as_desired_deg <= 0.0:
+            return 1.0
+        return as_desired_deg / as_model
+
+    @classmethod
+    def _zenith_spread_ratio(cls, angles_deg: np.ndarray, powers: np.ndarray, zs_desired_deg: float) -> float:
+        mean = float(np.sum(powers * angles_deg) / np.sum(powers))
+        var = np.sum(powers * (angles_deg - mean) ** 2) / np.sum(powers)
+        zs_model = float(np.sqrt(var))
+        if zs_model < 1e-9 or zs_desired_deg <= 0.0:
+            return 1.0
+        return zs_desired_deg / zs_model
+
+    @classmethod
     def _scale_azimuth(cls, angles_deg: np.ndarray, powers: np.ndarray, as_desired_deg: float) -> np.ndarray:
         """TR 38.901 Sec 7.7.5.1 azimuth scaling: rescale spread to scenario, preserve mean."""
         mean = cls._power_weighted_azimuth_mean(angles_deg, powers)
@@ -300,8 +320,15 @@ class ChannelGenerator:
             delays[i] = c['delay_ns'] * 1e-9
 
         # TR 38.901 Sec 7.7.3 / 7.7.5.1: 把表格化的 CDL 延迟与角度重缩放到场景 LSP。
+        # §7.7.5.1 缩放作用于 ray 角而非仅簇中心, 故簇内 ray spread (as_*) 也
+        # 要按同一比例缩放 (Codex PR#18 P2); 比例须在均值缩放前用原表角度计算。
+        spread_scale = {'asd': 1.0, 'asa': 1.0, 'zsd': 1.0, 'zsa': 1.0}
         if self.scale_to_scenario and lsps is not None:
             delays = delays * (lsps.delay_spread_s / self._CDL_DELAY_REF_S)
+            spread_scale['asd'] = self._azimuth_spread_ratio(aod, normalized_powers, lsps.departure_azimuth_spread_deg)
+            spread_scale['asa'] = self._azimuth_spread_ratio(aoa, normalized_powers, lsps.arrival_azimuth_spread_deg)
+            spread_scale['zsd'] = self._zenith_spread_ratio(zod, normalized_powers, lsps.departure_zenith_spread_deg)
+            spread_scale['zsa'] = self._zenith_spread_ratio(zoa, normalized_powers, lsps.arrival_zenith_spread_deg)
             aod = self._scale_azimuth(aod, normalized_powers, lsps.departure_azimuth_spread_deg)
             aoa = self._scale_azimuth(aoa, normalized_powers, lsps.arrival_azimuth_spread_deg)
             zod = self._scale_zenith(zod, normalized_powers, lsps.departure_zenith_spread_deg)
@@ -312,6 +339,39 @@ class ChannelGenerator:
         # compat); `xpr_linear` is the canonical Phase 6+ field consumed
         # by the dual-pol synthesizer.
         xpr_lin = 10 ** (model_params.get('xpr_db', 11) / 10)
+
+        # TR 38.901 Table 7.7.1-1..5: 每个 CDL 模型定义簇内 ray spread
+        # (c_ASD/c_ASA/c_ZSD/c_ZSA)。历史 bug (audit batch 2, A3): JSON 缺
+        # 该字段且 .get(..., 0.0) 静默回退 → SoS/ray 导出 20 条射线全部
+        # 塌缩到簇均值角。模型级字段作默认值, 簇级 as_*_deg 仍可覆盖;
+        # 两级都缺时必须告警而不是无声给 0。
+        ray_spread = model_params.get('ray_spread_deg', {})
+        _AS_TO_SPREAD = {
+            'as_aod_deg': 'c_asd_deg',
+            'as_aoa_deg': 'c_asa_deg',
+            'as_zod_deg': 'c_zsd_deg',
+            'as_zoa_deg': 'c_zsa_deg',
+        }
+        # 逐维告警: 某维度模型级 (ray_spread_deg 块缺或块内缺 key) 与簇级
+        # 都没提供时, 该维度簇内角度扩展塌缩为 0 (Codex PR#18 P3+P2 —
+        # 自带完整簇级 as_* 的 custom 模型不吵, 部分缺失的块也不漏报)。
+        missing_dims = [
+            as_key for as_key, c_key in _AS_TO_SPREAD.items()
+            if c_key not in ray_spread and any(as_key not in c for c in raw)
+        ]
+        if missing_dims:
+            warnings.warn(
+                f"确定性模型 '{model_name}' 的 ray_spread_deg 与簇级 as_* 均未"
+                f"覆盖维度 {missing_dims}, 这些维度簇内角度扩展为 0 — ray 级"
+                f"导出 (SoS/OTA) 的射线在该维度将塌缩到簇均值角",
+                UserWarning,
+            )
+        default_as = {
+            'as_aod_deg': ray_spread.get('c_asd_deg', 0.0),
+            'as_aoa_deg': ray_spread.get('c_asa_deg', 0.0),
+            'as_zod_deg': ray_spread.get('c_zsd_deg', 0.0),
+            'as_zoa_deg': ray_spread.get('c_zsa_deg', 0.0),
+        }
         clusters = []
         for i in range(len(raw)):
             clusters.append(EngineCluster(
@@ -319,10 +379,10 @@ class ChannelGenerator:
                 power=float(normalized_powers[i]),
                 aod_phi=float(aod[i]), aoa_phi=float(aoa[i]),
                 zod_theta=float(zod[i]), zoa_theta=float(zoa[i]),
-                as_aod=raw[i].get('as_aod_deg', 0.0),
-                as_aoa=raw[i].get('as_aoa_deg', 0.0),
-                as_zod=raw[i].get('as_zod_deg', 0.0),
-                as_zoa=raw[i].get('as_zoa_deg', 0.0),
+                as_aod=raw[i].get('as_aod_deg', default_as['as_aod_deg']) * spread_scale['asd'],
+                as_aoa=raw[i].get('as_aoa_deg', default_as['as_aoa_deg']) * spread_scale['asa'],
+                as_zod=raw[i].get('as_zod_deg', default_as['as_zod_deg']) * spread_scale['zsd'],
+                as_zoa=raw[i].get('as_zoa_deg', default_as['as_zoa_deg']) * spread_scale['zsa'],
                 k_n=xpr_lin,            # legacy field (was sole XPR storage)
                 xpr_linear=xpr_lin,     # canonical Phase 6+ field
             ))
