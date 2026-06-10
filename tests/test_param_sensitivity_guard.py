@@ -48,7 +48,8 @@ def _signature(chamber, channel, jitter=False):
     np.random.seed(42)
     r = MIMO_OTA_Simulator().run(chamber, channel, synthesis_method='ray',
                                  probe_phase_jitter=jitter)
-    parts = [r['transmit_mapping_matrix_A'].ravel(), r['B_matrix'].ravel()]
+    parts = [r['transmit_mapping_matrix_A'].ravel(), r['B_matrix'].ravel(),
+             np.array([r['pathloss_db']])]  # CDL 角度确定, 位置类参数经 pathloss 体现
     if r.get('ray_components'):
         parts.append(np.array([rc['doppler_hz'] for rc in r['ray_components']],
                               dtype=complex))
@@ -99,6 +100,32 @@ OTA_CASES = [
     ('run.probe_phase_jitter', {}, {}, dict(jitter=True)),
     ('tx_antenna.array_type_URA', {},
      dict(tx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2)), {}),
+    ('channel.bs_position', {}, dict(bs_position=(0.0, 0.0, 30.0)), {}),
+    ('channel.ue_position', {}, dict(ue_position=(200.0, 50.0, 1.5)), {}),
+    ('channel.ue_velocity', {}, dict(ue_velocity=(10.0, 0.0, 0.0)), {}),
+]
+
+# 需要非默认基线的成对比较 (Codex PR#29 P2: 字段只在特定配置下生效 —
+# spacing_v 要 URA, polarization 要双极化 chamber, slant 要 TR38.901 方向图)
+PAIR_CASES = [
+    ('tx_antenna.spacing_v',
+     (dict(), dict(tx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2, spacing_v=0.5))),
+     (dict(), dict(tx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2, spacing_v=0.9)))),
+    ('rx_antenna.spacing_v',
+     (dict(), dict(rx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2, spacing_v=0.5))),
+     (dict(), dict(rx_antenna=_antenna(array_type='URA', num_rows=2, num_cols=2, spacing_v=0.9)))),
+    ('rx_antenna.polarization',
+     (dict(dual_polarized=True), dict(rx_antenna=_antenna(polarization='V'))),
+     (dict(dual_polarized=True), dict(rx_antenna=_antenna(polarization='H')))),
+    ('tx_antenna.polarization',
+     (dict(dual_polarized=True), dict(tx_antenna=_antenna(polarization='V'))),
+     (dict(dual_polarized=True), dict(tx_antenna=_antenna(polarization='H')))),
+    ('tx_antenna.slant_deg',
+     (dict(), dict(tx_antenna=_antenna(element_pattern='TR38.901', slant_deg=0.0))),
+     (dict(), dict(tx_antenna=_antenna(element_pattern='TR38.901', slant_deg=30.0)))),
+    ('rx_antenna.slant_deg',
+     (dict(), dict(rx_antenna=_antenna(element_pattern='TR38.901', slant_deg=0.0))),
+     (dict(), dict(rx_antenna=_antenna(element_pattern='TR38.901', slant_deg=30.0)))),
 ]
 
 # 已知 metadata-only / 间接生效字段的豁免清单 (必须写明原因)
@@ -129,6 +156,16 @@ class TestOtaParamSensitivity:
                          **run_kw)
         assert _changed(baseline_signature, sig), \
             f'{name}: 改非默认值后输出未变化 — silent-ignore?'
+
+
+class TestOtaPairedSensitivity:
+    @pytest.mark.parametrize('name,cfg_a,cfg_b', PAIR_CASES,
+                             ids=[c[0] for c in PAIR_CASES])
+    def test_paired_values_differ(self, name, cfg_a, cfg_b):
+        sig_a = _signature(_chamber(**cfg_a[0]), _channel(**cfg_a[1]))
+        sig_b = _signature(_chamber(**cfg_b[0]), _channel(**cfg_b[1]))
+        assert _changed(sig_a, sig_b), \
+            f'{name}: 同基线下改该字段输出未变化 — silent-ignore?'
 
 
 # ---------- channel model 直连 ----------
