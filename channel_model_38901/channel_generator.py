@@ -433,7 +433,30 @@ class ChannelGenerator:
         angles = self._generate_angles(P_n, lsps, num_clusters)
         k_n = self._generate_xpr(scenario_params, is_los, num_clusters)
         initial_phases = self._generate_initial_phases(num_clusters)
-        
+
+        # Audit batch 2 / F5: 簇内 ray spread 用 Table 7.5-6 的 per-cluster
+        # 常数 c_ASA/c_ASD/c_ZSA (JSON lsp_parameters 一直有但从未被读取),
+        # 而不是把 LSP 总扩展 (大一个量级) 当簇内扩展 — 历史 bug 让 SoS/ray
+        # 导出的射线偏移被系统性放大。c_ZSD 按 spec 注释为 (3/8)·10^μ_lgZSD,
+        # 此处用采样 ZSD 近似 10^μ (单实现内无均值可用)。
+        lsp_set = 'lsp_parameters_los' if is_los else 'lsp_parameters_nlos'
+        lsp_params = scenario_params.get(lsp_set, {})
+        c_asa = lsp_params.get('c_asa_deg')
+        c_asd = lsp_params.get('c_asd_deg')
+        c_zsa = lsp_params.get('c_zsa_deg')
+        missing = [k for k, v in (('c_asa_deg', c_asa), ('c_asd_deg', c_asd),
+                                  ('c_zsa_deg', c_zsa)) if v is None]
+        if missing:
+            warnings.warn(
+                f"场景 '{self.config.scenario_name}'/{lsp_set} 缺 Table 7.5-6 "
+                f"簇内扩展常数 {missing}, 回退到 LSP 总扩展 (偏大) — 请补参数文件",
+                UserWarning,
+            )
+        as_aoa = c_asa if c_asa is not None else lsps.arrival_azimuth_spread_deg
+        as_aod = c_asd if c_asd is not None else lsps.departure_azimuth_spread_deg
+        as_zoa = c_zsa if c_zsa is not None else lsps.arrival_zenith_spread_deg
+        as_zod = 0.375 * lsps.departure_zenith_spread_deg
+
         clusters = []
         for i in range(num_clusters):
             # Phase 6 fix (PR #6 Codex P2): mirror per-cluster XPR into both
@@ -442,8 +465,8 @@ class ChannelGenerator:
                 delay=tau_n[i], power=P_n[i],
                 aod_phi=angles['aod_phi'][i], aoa_phi=angles['aoa_phi'][i],
                 zod_theta=angles['zod_theta'][i], zoa_theta=angles['zoa_theta'][i],
-                as_aod=lsps.departure_azimuth_spread_deg, as_aoa=lsps.arrival_azimuth_spread_deg,
-                as_zod=lsps.departure_zenith_spread_deg, as_zoa=lsps.arrival_zenith_spread_deg,
+                as_aod=as_aod, as_aoa=as_aoa,
+                as_zod=as_zod, as_zoa=as_zoa,
                 k_n=k_n[i],
                 xpr_linear=k_n[i],
                 initial_phases=initial_phases[i],
