@@ -1,6 +1,7 @@
 
 import numpy as np
 import os
+import warnings
 from typing import Dict, List, Optional
 import csv
 import zipfile
@@ -201,6 +202,10 @@ class PropsimASCIIExporter:
         # Apply Cal & Scaling
         scaling_factor = self._calculate_scaling_factor(sim_result, sorted_taps)
         cal_vector = self._get_calibration_vector(num_probes, apply_calibration=apply_calibration) # (P, 1)
+        # Audit batch 2 / A-jitter: probe_phase_jitter 此前只乘进 A 快照,
+        # 导出的 .asc 不含 jitter, 与 effective_H_matrix 静默不一致。
+        # jitter_vector 是 (P,1) 复相量, 折进 per-probe 因子。
+        cal_vector = self._apply_jitter_vector(cal_vector, sim_result, num_probes)
         
         for k, tap in enumerate(sorted_taps):
             # coeff is (P, T)
@@ -241,6 +246,8 @@ class PropsimASCIIExporter:
         # Pre-calc Scaling & Cal
         scaling_factor = self._calculate_scaling_factor(sim_result, sorted_taps)
         cal_vector = self._get_calibration_vector(num_probes, apply_calibration=apply_calibration)
+        # 与 static 路径一致: jitter 折进 per-probe 因子 (audit batch 2)
+        cal_vector = self._apply_jitter_vector(cal_vector, sim_result, num_probes)
         
         # Pre-compute Effective Rays per Tap
         tap_engines = []
@@ -387,6 +394,24 @@ class PropsimASCIIExporter:
                       f"Req ATT: {req_att:.2f} dB (ref 0 dBm Tx)")
                 return scale
         return 1.0
+
+    @staticmethod
+    def _apply_jitter_vector(cal_vector, sim_result, num_probes):
+        """把 sim_result['probe_phase_jitter_vector'] ((P,1) 复相量, 可为 None)
+        折进 per-probe 校正因子, 保证导出与 effective_H_matrix 一致
+        (audit batch 2: 此前 exporter 从不消费该向量)。"""
+        jv = sim_result.get('probe_phase_jitter_vector')
+        if jv is None:
+            return cal_vector
+        jv = np.asarray(jv).reshape(-1, 1)
+        if jv.shape[0] != num_probes:
+            warnings.warn(
+                f"probe_phase_jitter_vector 长度 {jv.shape[0]} 与导出 probe 数 "
+                f"{num_probes} 不符, 忽略 jitter — 导出将与 effective_H 不一致",
+                UserWarning,
+            )
+            return cal_vector
+        return cal_vector * jv
 
     def _get_calibration_vector(self, num_probes, apply_calibration: bool = True):
         cal = np.ones((num_probes, 1), dtype=complex)
