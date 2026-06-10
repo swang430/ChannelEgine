@@ -703,7 +703,12 @@
   "num_rx_antennas": 2,
   "xpr_db": 11,
   "clusters": [
-    {"id": 1, "delay_ns": 0.0, "power_db": -0.2, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 98.5, "zoa_deg": 81.5},
+    {"id": 1, "delay_ns": 0.0, "power_db": -0.2, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 98.5, "zoa_deg": 81.5,
+  "as_aod_deg": 0.0,
+  "as_aoa_deg": 0.0,
+  "as_zod_deg": 0.0,
+  "as_zoa_deg": 0.0
+ },
     {"id": 2, "delay_ns": 0.0, "power_db": -13.5, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 98.5, "zoa_deg": 81.5},
     {"id": 3, "delay_ns": 35.0, "power_db": -18.8, "aod_deg": 89.2, "aoa_deg": 89.2, "zod_deg": 85.5, "zoa_deg": 86.9},
     {"id": 4, "delay_ns": 612.0, "power_db": -21.0, "aod_deg": 89.2, "aoa_deg": 89.2, "zod_deg": 85.5, "zoa_deg": 86.9},
@@ -727,7 +732,12 @@
   "num_rx_antennas": 2,
   "xpr_db": 8,
   "clusters": [
-    {"id": 1, "delay_ns": 0.0, "power_db": -0.03, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 99.6, "zoa_deg": 80.4},
+    {"id": 1, "delay_ns": 0.0, "power_db": -0.03, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 99.6, "zoa_deg": 80.4,
+  "as_aod_deg": 0.0,
+  "as_aoa_deg": 0.0,
+  "as_zod_deg": 0.0,
+  "as_zoa_deg": 0.0
+ },
     {"id": 2, "delay_ns": 0.0, "power_db": -22.03, "aod_deg": 0.0, "aoa_deg": -180.0, "zod_deg": 99.6, "zoa_deg": 80.4},
     {"id": 3, "delay_ns": 513.3, "power_db": -15.8, "aod_deg": 57.5, "aoa_deg": 18.2, "zod_deg": 104.2, "zoa_deg": 80.4},
     {"id": 4, "delay_ns": 544.0, "power_db": -18.1, "aod_deg": 57.5, "aoa_deg": 18.2, "zod_deg": 104.2, "zoa_deg": 80.4},

@@ -48,11 +48,28 @@ class TestRaySpreadLoaded:
         gen = _generator(model)
         clusters = gen._load_deterministic_clusters(model)
         assert clusters
-        for c in clusters:
+        for i, c in enumerate(clusters):
+            raw = _DATA['cdl_models'][model]['clusters'][i]
+            if 'as_aoa_deg' in raw:
+                continue  # 簇级显式覆盖 (如 LOS 镜面行), 单独测试
             assert c.as_aod == spread['c_asd_deg']
             assert c.as_aoa == spread['c_asa_deg']
             assert c.as_zod == spread['c_zsd_deg']
             assert c.as_zoa == spread['c_zsa_deg']
+
+    @pytest.mark.parametrize('model', ['CDL-D', 'CDL-E'])
+    def test_los_specular_row_stays_unspread(self, model):
+        """LOS 模型首行是镜面分量 (Table 7.7.1-4/5 'Specular(LOS path)'),
+        是单条确定性射线, 不得继承模型级 Laplacian 扩展 (Codex PR#18 P1)。"""
+        gen = _generator(model)
+        clusters = gen._load_deterministic_clusters(model)
+        spec = clusters[0]
+        assert spec.as_aod == 0.0
+        assert spec.as_aoa == 0.0
+        assert spec.as_zod == 0.0
+        assert spec.as_zoa == 0.0
+        # 第二行 (Laplacian 子簇) 正常携带模型级扩展
+        assert clusters[1].as_aoa > 0.0
 
     def test_cluster_level_override_wins(self):
         gen = _generator('CDL-A')
