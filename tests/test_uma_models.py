@@ -17,7 +17,7 @@ class TestUMaModels(unittest.TestCase):
             project_root, 
             'channel_model_38901', 
             'parameters', 
-            'parameters_tr38901_v19.0.0.json'
+            'parameters1013_tr38901_v19.0.0.json'
         )
         cls.param_tables = ParameterLoader.load_parameters(json_path)
         cls.uma_condition = UMa_ChannelCondition()

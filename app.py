@@ -22,16 +22,6 @@ st.set_page_config(
 )
 
 # --- Backend Functions ---
-def run_simulation(target_config_dict, chamber_config_dict):
-    target_config = TargetChannelConfig.parse_obj(target_config_dict)
-    chamber_config = ChamberConfig.parse_obj(chamber_config_dict)
-    simulator = MIMO_OTA_Simulator()
-    try:
-        return simulator.run(chamber_config=chamber_config, channel_config=target_config, synthesis_method=st.session_state.synthesis_method)
-    except Exception as e:
-        st.error(f"仿真失败: {e}")
-        return None
-
 def parse_calibration_entries(cal_file):
     if cal_file is None:
         return []

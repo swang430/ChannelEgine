@@ -13,7 +13,7 @@ class TestParameterLoading(unittest.TestCase):
             self.project_root, 
             'channel_model_38901', 
             'parameters', 
-            'parameters_tr38901_v19.0.0.json'
+            'parameters1013_tr38901_v19.0.0.json'
         )
 
     def test_load_parameters(self):

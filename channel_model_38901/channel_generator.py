@@ -822,8 +822,13 @@ class ChannelGenerator:
         # Load from parameters (Algorithm-Data Decoupling)
         scenario_params = self.params.get_scenario_params(self.config.scenario_name)
         if 'ray_angle_offsets_deg' not in scenario_params:
-             # Fallback if not found (though it should be there)
-             ray_offsets = np.array([0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129, 
+             # 兜底 Table 7.5-3 (audit batch 2 / F18: silent fallback 改为告警)
+             warnings.warn(
+                 f"场景 '{self.config.scenario_name}' 缺 ray_angle_offsets_deg, "
+                 f"使用内置 Table 7.5-3 — 请升级参数文件",
+                 UserWarning,
+             )
+             ray_offsets = np.array([0.0447, -0.0447, 0.1413, -0.1413, 0.2492, -0.2492, 0.3715, -0.3715, 0.5129, -0.5129,
                                      0.6797, -0.6797, 0.8844, -0.8844, 1.1481, -1.1481, 1.5195, -1.5195, 2.1551, -2.1551])
         else:
              ray_offsets = np.array(scenario_params['ray_angle_offsets_deg'])
