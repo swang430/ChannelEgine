@@ -14,16 +14,25 @@ class AntennaArrayConfig(BaseModel):
     num_cols: int = Field(1, gt=0, description="Number of columns in the antenna array")
     spacing_h: float = Field(0.5, description="Horizontal spacing in multiples of wavelength")
     spacing_v: float = Field(0.5, description="Vertical spacing in multiples of wavelength (for URA)")
-    polarization: Literal['V', 'H'] = Field(
+    polarization: Literal['V', 'H', '+45', '-45'] = Field(
         'V',
         description=(
             "Antenna polarization, applied uniformly to every element of this array. "
-            "'V' = vertical (θ-polarized), 'H' = horizontal (φ-polarized). "
-            "Used by Phase 6 dual-polarization synthesizer when "
-            "ChamberConfig.dual_polarized=True. Slant / arbitrary angles are "
-            "Phase 7 (deferred); default 'V' preserves single-pol behavior."
+            "'V' = vertical (θ-polarized, slant 0°), 'H' = horizontal (φ-polarized, "
+            "slant 90°), '+45'/'-45' = ±45° slant cross-polarized elements. Modeled as "
+            "a [θ, φ] basis vector [cos ζ, sin ζ]. Used by the dual-polarization "
+            "synthesizer when ChamberConfig.dual_polarized=True; slant pols require "
+            "dual_polarized=True. Default 'V' preserves single-pol behavior."
         ),
     )
+    # Array orientation in the GCS (TR 38.901 Sec 7.1.3). All 0 => identity, so the
+    # standard 360° turntable test (where DUT orientation is averaged out) is
+    # unaffected. The fixed starting orientation only becomes meaningful for
+    # dynamic (non-rotating) MIMO OTA, where it shapes the DUT-array geometry in
+    # the chamber (B-matrix) and the target-channel per-antenna phases.
+    bearing_deg: float = Field(0.0, description="Array bearing angle alpha (azimuth) in degrees.")
+    downtilt_deg: float = Field(0.0, description="Array downtilt angle beta (elevation) in degrees.")
+    slant_deg: float = Field(0.0, description="Array slant angle gamma (rotation about boresight) in degrees.")
 
 class TargetChannelConfig(BaseModel):
     """
@@ -50,6 +59,11 @@ class TargetChannelConfig(BaseModel):
     force_condition: Optional[Literal['LOS', 'NLOS']] = Field(None, description="Force Line-of-Sight or Non-Line-of-Sight")
     random_seed: Optional[int] = Field(None, description="Seed for the random number generator")
     use_median_lsps: bool = Field(False, description="Use median LSP values instead of random sampling")
+
+    # TR 38.901 CDL compliance options (opt-in; default off preserves raw-table CDL).
+    scale_to_scenario: bool = Field(False, description="Rescale tabulated CDL delays/angles to the scenario LSPs (TR 38.901 Sec 7.7.3 / 7.7.5.1)")
+    split_subclusters: bool = Field(False, description="Split the 2 strongest clusters into 3 sub-clusters (TR 38.901 Sec 7.7.1)")
+    c_ds_ns: float = Field(3.91, description="Sub-cluster delay-spread constant c_DS in ns (used when split_subclusters=True)")
 
     # WiFi Options
     enable_ofdm: bool = Field(False, description="Enable WiFi OFDM subcarrier generation")

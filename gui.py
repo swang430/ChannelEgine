@@ -154,6 +154,10 @@ class ChannelModelApp(tk.Tk):
             "center_frequency_ghz": ("中心频率 (GHz):", "3.5", None),
             "los_condition": ("LOS 条件:", "Automatic", ["Automatic", "LOS", "NLOS"]),
             "use_median_lsps": ("使用LSP中值:", False, [True, False]),
+            # TR 38.901 CDL 合规选项 (opt-in，默认关；仅对 CDL/SCME 簇模型有效)
+            "scale_to_scenario": ("CDL 场景重缩放 (7.7.5.1):", False, [True, False]),
+            "split_subclusters": ("CDL 子簇分裂 (7.7.1):", False, [True, False]),
+            "c_ds_ns": ("子簇 c_DS (ns):", "3.91", None),
             "random_seed": ("随机种子:", "", None),
             "simulation_time_s": ("仿真时间 (s):", "0.0", None)
         }
@@ -292,7 +296,8 @@ class ChannelModelApp(tk.Tk):
         for key in wifi_keys:
             self.controls[key]['label'].config(state=tk.NORMAL if is_wifi else tk.DISABLED)
             self.controls[key]['widget'].config(state=tk.NORMAL if is_wifi else tk.DISABLED)
-        for key in ["scenario_name", "cluster_model_name", "los_condition", "use_median_lsps"]:
+        for key in ["scenario_name", "cluster_model_name", "los_condition", "use_median_lsps",
+                    "scale_to_scenario", "split_subclusters", "c_ds_ns"]:
             self.controls[key]['label'].config(state=tk.DISABLED if (is_wifi or is_custom) else tk.NORMAL)
             self.controls[key]['widget'].config(state=tk.DISABLED if (is_wifi or is_custom) else tk.NORMAL)
         if is_wifi:
@@ -362,11 +367,15 @@ class ChannelModelApp(tk.Tk):
         self._create_entry(parent_frame, f'{prefix}_spacing_h', "Spacing H (lambda):", "0.5", None, 4)
         self._create_entry(parent_frame, f'{prefix}_spacing_v', "Spacing V (lambda):", "0.5", None, 5)
         self._create_entry(parent_frame, f'{prefix}_element_pattern', "Element Pattern:", 'Isotropic', ['Isotropic', 'TR38.901'], 6)
-        # Phase 6 T6.1: polarization V/H. Default 'V' = backward compat.
-        # Only matters when chamber.dual_polarized=True. Slant ±45° = Phase 7 (deferred).
-        self._create_entry(parent_frame, f'{prefix}_polarization', "Polarization (V/H):", 'V', ['V', 'H'], 7)
+        # Polarization. Default 'V' = backward compat. Non-V (H / ±45° slant) only
+        # matters when chamber.dual_polarized=True.
+        self._create_entry(parent_frame, f'{prefix}_polarization', "Polarization:", 'V', ['V', 'H', '+45', '-45'], 7)
+        # Array orientation in the GCS (TR 38.901 Sec 7.1.3). All 0 => identity.
+        self._create_entry(parent_frame, f'{prefix}_bearing', "Bearing α (deg):", "0", None, 8)
+        self._create_entry(parent_frame, f'{prefix}_downtilt', "Downtilt β (deg):", "0", None, 9)
+        self._create_entry(parent_frame, f'{prefix}_slant', "Slant γ (deg):", "0", None, 10)
         if prefix == 'rx':
-            self._create_entry(parent_frame, 'ue_velocity_kph', "UE Velocity (km/h):", "3", None, 8)
+            self._create_entry(parent_frame, 'ue_velocity_kph', "UE Velocity (km/h):", "3", None, 11)
 
     def _create_entry(self, parent, key, text, default, values, row):
         label = ttk.Label(parent, text=text)
@@ -560,15 +569,19 @@ class ChannelModelApp(tk.Tk):
             tx_positions = get_antenna_positions(
                 array_type=params['tx_array_type'], num_rows=int(params['tx_num_rows']),
                 num_cols=int(params['tx_num_cols']), spacing_h_m=float(params['tx_spacing_h']) * lambda_meters,
-                spacing_v_m=float(params['tx_spacing_v']) * lambda_meters
+                spacing_v_m=float(params['tx_spacing_v']) * lambda_meters,
+                bearing_deg=float(params['tx_bearing']), downtilt_deg=float(params['tx_downtilt']),
+                slant_deg=float(params['tx_slant'])
             )
             rx_positions = get_antenna_positions(
                 array_type=params['rx_array_type'], num_rows=int(params['rx_num_rows']),
                 num_cols=int(params['rx_num_cols']), spacing_h_m=float(params['rx_spacing_h']) * lambda_meters,
-                spacing_v_m=float(params['rx_spacing_v']) * lambda_meters
+                spacing_v_m=float(params['rx_spacing_v']) * lambda_meters,
+                bearing_deg=float(params['rx_bearing']), downtilt_deg=float(params['rx_downtilt']),
+                slant_deg=float(params['rx_slant'])
             )
 
-            ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
+            ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_bearing_deg=float(params['tx_bearing']), tx_downtilt_deg=float(params['tx_downtilt']), tx_slant_deg=float(params['tx_slant']), tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_bearing_deg=float(params['rx_bearing']), rx_downtilt_deg=float(params['rx_downtilt']), rx_slant_deg=float(params['rx_slant']), rx_positions=rx_positions)
             
             model_name = wifi_model_name if is_wifi else scenario_name
             log_msg = f"Starting simulation for Standard: {standard}, Model: {model_name}"
@@ -601,14 +614,24 @@ class ChannelModelApp(tk.Tk):
                 # We'll use the dict/object mapping as defined in mimo_ota_simulator/data_models.py
                 
                 tx_ant_ota = AntennaArrayConfig(
+                    array_type=params['tx_array_type'],
+                    element_pattern=params['tx_element_pattern'],
                     num_rows=int(params['tx_num_rows']), num_cols=int(params['tx_num_cols']),
                     spacing_h=float(params['tx_spacing_h']), spacing_v=float(params['tx_spacing_v']),
-                    polarization=params.get('tx_polarization', 'V'),  # Phase 6 T6.1
+                    polarization=params.get('tx_polarization', 'V'),
+                    bearing_deg=float(params['tx_bearing']),
+                    downtilt_deg=float(params['tx_downtilt']),
+                    slant_deg=float(params['tx_slant']),
                 )
                 rx_ant_ota = AntennaArrayConfig(
+                    array_type=params['rx_array_type'],
+                    element_pattern=params['rx_element_pattern'],
                     num_rows=int(params['rx_num_rows']), num_cols=int(params['rx_num_cols']),
                     spacing_h=float(params['rx_spacing_h']), spacing_v=float(params['rx_spacing_v']),
-                    polarization=params.get('rx_polarization', 'V'),  # Phase 6 T6.1
+                    polarization=params.get('rx_polarization', 'V'),
+                    bearing_deg=float(params['rx_bearing']),
+                    downtilt_deg=float(params['rx_downtilt']),
+                    slant_deg=float(params['rx_slant']),
                 )
 
                 wifi_bandwidth_hz = float(params["wifi_bandwidth_mhz"]) * 1e6 if is_wifi else 20e6
@@ -663,7 +686,10 @@ class ChannelModelApp(tk.Tk):
                     rx_antenna=rx_ant_ota,
                     force_condition=force_los_condition,
                     ue_velocity=(ue_velocity_mps, 0, 0),
-                    use_median_lsps=use_median_lsps
+                    use_median_lsps=use_median_lsps,
+                    scale_to_scenario=bool(params['scale_to_scenario']),
+                    split_subclusters=bool(params['split_subclusters']),
+                    c_ds_ns=float(params['c_ds_ns']),
                 )
 
                 # Run OTA Sim
@@ -803,7 +829,13 @@ class ChannelModelApp(tk.Tk):
                     simulator.config.ue_velocities = ue_vel_vector
                     simulator.config.antenna_config = ant_config
                 
-                    simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=use_median_lsps)
+                    simulator.generator = ChannelGenerator(
+                        simulator.config, simulator.params, simulator.config.cluster_model_name,
+                        use_median_lsps=use_median_lsps,
+                        scale_to_scenario=bool(params['scale_to_scenario']),
+                        split_subclusters=bool(params['split_subclusters']),
+                        c_ds_ns=float(params['c_ds_ns']),
+                    )
 
                     results = simulator.run(force_condition=force_los_condition, time_s=time_s, logger=lambda msg: self.simulation_queue.put(("log", msg)))
 
@@ -984,14 +1016,18 @@ class ChannelModelApp(tk.Tk):
             tx_positions = get_antenna_positions(
                 array_type=params['tx_array_type'], num_rows=int(params['tx_num_rows']),
                 num_cols=int(params['tx_num_cols']), spacing_h_m=float(params['tx_spacing_h']) * lambda_meters,
-                spacing_v_m=float(params['tx_spacing_v']) * lambda_meters
+                spacing_v_m=float(params['tx_spacing_v']) * lambda_meters,
+                bearing_deg=float(params['tx_bearing']), downtilt_deg=float(params['tx_downtilt']),
+                slant_deg=float(params['tx_slant'])
             )
             rx_positions = get_antenna_positions(
                 array_type=params['rx_array_type'], num_rows=int(params['rx_num_rows']),
                 num_cols=int(params['rx_num_cols']), spacing_h_m=float(params['rx_spacing_h']) * lambda_meters,
-                spacing_v_m=float(params['rx_spacing_v']) * lambda_meters
+                spacing_v_m=float(params['rx_spacing_v']) * lambda_meters,
+                bearing_deg=float(params['rx_bearing']), downtilt_deg=float(params['rx_downtilt']),
+                slant_deg=float(params['rx_slant'])
             )
-            ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_positions=rx_positions)
+            ant_config = AntennaArray(tx_array_type=params['tx_array_type'], num_tx_rows=int(params['tx_num_rows']), num_tx_cols=int(params['tx_num_cols']), tx_spacing_h=float(params['tx_spacing_h']), tx_spacing_v=float(params['tx_spacing_v']), tx_element_pattern=params['tx_element_pattern'], tx_bearing_deg=float(params['tx_bearing']), tx_downtilt_deg=float(params['tx_downtilt']), tx_slant_deg=float(params['tx_slant']), tx_positions=tx_positions, rx_array_type=params['rx_array_type'], num_rx_rows=int(params['rx_num_rows']), num_rx_cols=int(params['rx_num_cols']), rx_spacing_h=float(params['rx_spacing_h']), rx_spacing_v=float(params['rx_spacing_v']), rx_element_pattern=params['rx_element_pattern'], rx_bearing_deg=float(params['rx_bearing']), rx_downtilt_deg=float(params['rx_downtilt']), rx_slant_deg=float(params['rx_slant']), rx_positions=rx_positions)
 
             # Initialize Simulator
             np.random.seed(seed)
@@ -1000,7 +1036,13 @@ class ChannelModelApp(tk.Tk):
             simulator.config.ue_positions = ue_pos
             simulator.config.ue_velocities = ue_vel_vector
             simulator.config.antenna_config = ant_config
-            simulator.generator = ChannelGenerator(simulator.config, simulator.params, simulator.config.cluster_model_name, use_median_lsps=params["use_median_lsps"])
+            simulator.generator = ChannelGenerator(
+                simulator.config, simulator.params, simulator.config.cluster_model_name,
+                use_median_lsps=params["use_median_lsps"],
+                scale_to_scenario=bool(params['scale_to_scenario']),
+                split_subclusters=bool(params['split_subclusters']),
+                c_ds_ns=float(params['c_ds_ns']),
+            )
 
             # Export
             sos_params = simulator.export_fpga_sos_params()

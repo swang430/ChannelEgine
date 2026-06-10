@@ -10,6 +10,10 @@ class AntennaArray(BaseModel):
     tx_spacing_h: float = 0.5
     tx_spacing_v: float = 0.5
     tx_element_pattern: str = 'Isotropic'
+    # Array orientation in the GCS (3GPP TR 38.901 Sec 7.1.3). All 0 => identity.
+    tx_bearing_deg: float = 0.0
+    tx_downtilt_deg: float = 0.0
+    tx_slant_deg: float = 0.0
     tx_positions: Optional[np.ndarray] = None
 
     rx_array_type: str = 'ULA'
@@ -18,6 +22,9 @@ class AntennaArray(BaseModel):
     rx_spacing_h: float = 0.5
     rx_spacing_v: float = 0.5
     rx_element_pattern: str = 'Isotropic'
+    rx_bearing_deg: float = 0.0
+    rx_downtilt_deg: float = 0.0
+    rx_slant_deg: float = 0.0
     rx_positions: Optional[np.ndarray] = None
 
     class Config:

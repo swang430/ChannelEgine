@@ -6,6 +6,7 @@ from .data_models import ChamberConfig, TargetChannelConfig, UniversalChannelPro
 from .channel_builders import create_builder
 from channel_model_38901.simulator import ChannelSimulator
 from channel_model_38901.common.data_models import EngineCluster
+from channel_model_38901.common.geometry import apply_orientation
 from wifi_channel_model.simulator import WiFiChannelSimulator
 from wifi_channel_model.common.data_models import WiFiScenarioConfig
 
@@ -90,9 +91,9 @@ class MIMO_OTA_Simulator:
             raise ValueError(
                 f"chamber.dual_polarized=False but rx_antenna.polarization="
                 f"{rx_pol!r}. Single-pol mode implicitly assumes matched "
-                f"polarization (V); explicit 'H' requires "
-                f"chamber.dual_polarized=True. Either set dual_polarized=True "
-                f"or polarization='V'."
+                f"polarization (V); any non-V polarization ('H', '+45', '-45') "
+                f"requires chamber.dual_polarized=True. Either set "
+                f"dual_polarized=True or polarization='V'."
             )
 
         num_rx_antennas = target_config.rx_antenna.num_rows * target_config.rx_antenna.num_cols
@@ -110,10 +111,11 @@ class MIMO_OTA_Simulator:
         probe_positions = self._calculate_probe_positions(chamber_config)
         dut_antenna_positions = self._calculate_dut_antenna_positions(target_config.rx_antenna, wavelength)
 
-        # Pre-compute which probe port couples to the DUT for dual-pol mode.
-        # Convention: 2p = V port (θ), 2p+1 = H port (φ).
-        couples_v = (rx_pol == 'V')   # DUT V-pol → V probe port couples
-        couples_h = (rx_pol == 'H')   # DUT H-pol → H probe port couples
+        # Rx-side polarization projection for dual-pol mode. Convention:
+        # 2p = V port (θ), 2p+1 = H port (φ). The DUT couples to each port by the
+        # corresponding component of its [θ, φ] pol vector [cos ζ, sin ζ], so V/H
+        # remain port-exclusive while ±45° slant couples to both ports by cos45°.
+        rx_pol_vec = self._pol_vec(rx_pol)   # (2,) -> [θ-weight, φ-weight]
 
         for p_idx in range(chamber_config.num_probes):
             probe_pos = probe_positions[p_idx]
@@ -137,10 +139,11 @@ class MIMO_OTA_Simulator:
                 if not chamber_config.dual_polarized:
                     b_matrix[r_idx, p_idx] = channel_response
                 else:
-                    # Dual-pol: probe V port (2p) couples to V-pol DUT,
-                    # probe H port (2p+1) couples to H-pol DUT.
-                    b_matrix[r_idx, 2*p_idx]     = channel_response if couples_v else 0.0
-                    b_matrix[r_idx, 2*p_idx + 1] = channel_response if couples_h else 0.0
+                    # Dual-pol: project the channel onto V/H probe ports by the
+                    # DUT pol vector. V→[1,0], H→[0,1] stay port-exclusive (legacy
+                    # bit-identical); ±45° couples to both ports by cos45°.
+                    b_matrix[r_idx, 2*p_idx]     = channel_response * rx_pol_vec[0]
+                    b_matrix[r_idx, 2*p_idx + 1] = channel_response * rx_pol_vec[1]
 
         # Apply calibration vector if provided
         if chamber_config.calibration_vector is not None:
@@ -163,17 +166,26 @@ class MIMO_OTA_Simulator:
             x_coords = np.linspace(-0.5 * (num_cols - 1) * spacing_h, 0.5 * (num_cols - 1) * spacing_h, num_cols)
             y_coords = np.zeros(num_cols)
             z_coords = np.zeros(num_cols)
-            return np.stack([x_coords, y_coords, z_coords], axis=1)
-        
+            positions = np.stack([x_coords, y_coords, z_coords], axis=1)
+
         elif antenna_config.array_type == 'URA':
             x_coords = np.linspace(-0.5 * (num_cols - 1) * spacing_h, 0.5 * (num_cols - 1) * spacing_h, num_cols)
             z_coords = np.linspace(-0.5 * (num_rows - 1) * spacing_v, 0.5 * (num_rows - 1) * spacing_v, num_rows)
             xx, zz = np.meshgrid(x_coords, z_coords)
             yy = np.zeros_like(xx)
-            return np.stack([xx.flatten(), yy.flatten(), zz.flatten()], axis=1)
-        
+            positions = np.stack([xx.flatten(), yy.flatten(), zz.flatten()], axis=1)
+
         else:
             raise NotImplementedError(f"DUT antenna array type '{antenna_config.array_type}' is not yet supported.")
+
+        # Apply the DUT's fixed orientation in the chamber (TR 38.901 Sec 7.1.3).
+        # Default 0 => identity, so legacy / 360°-rotation tests are bit-identical.
+        return apply_orientation(
+            positions,
+            getattr(antenna_config, 'bearing_deg', 0.0),
+            getattr(antenna_config, 'downtilt_deg', 0.0),
+            getattr(antenna_config, 'slant_deg', 0.0),
+        )
 
     # Default XPR when caller does not set cluster.xpr_linear (Phase 6 OQ2):
     # 7 dB matches TR 38.901 §7.7-2 typical UMa/UMi NLOS cross-polarization ratio.
@@ -224,18 +236,26 @@ class MIMO_OTA_Simulator:
             [sqrt_inv_kappa * np.exp(1j * phi[2]), np.exp(1j * phi[3])],
         ], dtype=complex)
 
-    @staticmethod
-    def _pol_vec(polarization: str) -> np.ndarray:
+    # [θ-component, φ-component] basis vector [cos ζ, sin ζ] per TR 38.901 §7.3.2,
+    # for slant angle ζ: V=0°, H=90°, ±45° slant. Stored exactly so V/H keep their
+    # hard zeros (no cos(90°)≈6e-17 leakage into the orthogonal probe port).
+    _INV_SQRT2 = float(1.0 / np.sqrt(2.0))
+    _POL_VECS = {
+        'V': (1.0, 0.0),
+        'H': (0.0, 1.0),
+        '+45': (_INV_SQRT2, _INV_SQRT2),
+        '-45': (_INV_SQRT2, -_INV_SQRT2),
+    }
+
+    @classmethod
+    def _pol_vec(cls, polarization: str) -> np.ndarray:
         """Return the [θ-component, φ-component] basis vector for a polarization label."""
-        if polarization == 'V':
-            return np.array([1.0, 0.0])
-        elif polarization == 'H':
-            return np.array([0.0, 1.0])
-        else:
+        if polarization not in cls._POL_VECS:
             raise ValueError(
-                f"Unsupported polarization {polarization!r}; Phase 6 supports 'V' or 'H'. "
-                f"Slant ±45° / arbitrary angles are Phase 7 (deferred)."
+                f"Unsupported polarization {polarization!r}; supported: "
+                f"{sorted(cls._POL_VECS)}."
             )
+        return np.array(cls._POL_VECS[polarization])
 
     @staticmethod
     def _estimate_pathloss_db(bs_position, ue_position, center_freq_hz: float) -> float:

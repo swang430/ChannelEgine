@@ -11,14 +11,24 @@ from .models.sma_models import SMa_ChannelCondition, SMa_Pathloss, SMa_Fading
 from .models.umi_open_area_models import UMi_OpenArea_ChannelCondition, UMi_OpenArea_Pathloss, UMi_OpenArea_Fading
 from .models.inf_models import InF_ChannelCondition, InF_Pathloss, InF_Fading
 from .models.spatial_correlation import get_spatial_correlation_matrix
-from .common.geometry import get_antenna_positions
+from .models.antenna_pattern import calculate_element_gain
+from .common.geometry import get_antenna_positions, gcs_to_lcs_angles
 
 class ChannelGenerator:
     """
     核心信道生成器引擎。
     该类负责根据用户配置，执行3GPP TR 38.901标准中定义的12个步骤，生成一个信道实现。
     """
-    def __init__(self, config: ScenarioConfig, params: ParameterTables, cluster_model_name: Optional[str] = None, use_median_lsps: bool = False):
+    # 3GPP CDL tables (Table 7.7.1) store delays normalized to a 1 us reference DS.
+    _CDL_DELAY_REF_S = 1000e-9
+
+    # TR 38.901 Sec 7.7.1: the two strongest clusters split into 3 sub-clusters.
+    # Per-sub-cluster delay offsets (units of c_DS) and power fractions, and the
+    # mapping of the 20 rays (1-indexed in the spec) to each sub-cluster.
+    _SUBCLUSTER_DELAY_OFFSETS = (0.0, 1.28, 2.56)
+    _SUBCLUSTER_POWER_FRACTIONS = (10.0 / 20.0, 6.0 / 20.0, 4.0 / 20.0)
+
+    def __init__(self, config: ScenarioConfig, params: ParameterTables, cluster_model_name: Optional[str] = None, use_median_lsps: bool = False, scale_to_scenario: bool = False, split_subclusters: bool = False, c_ds_ns: float = 3.91):
         """
         初始化信道生成器。
 
@@ -27,11 +37,21 @@ class ChannelGenerator:
             params (ParameterTables): 从JSON文件加载的3GPP标准参数表。
             cluster_model_name (Optional[str], optional): 小尺度簇模型的名称。默认为 'Stochastic'。
             use_median_lsps (bool, optional): 是否使用LSP中位值。默认为 False。
+            scale_to_scenario (bool, optional): 是否把 CDL 表格延迟/角度重缩放到场景 LSP。默认 False。
+            split_subclusters (bool, optional): 是否对两个最强簇做 Sec 7.7.1 子簇分裂。默认 False。
+            c_ds_ns (float, optional): 子簇延迟扩展常数 c_DS（纳秒）。默认 3.91ns。
         """
         self.config = config
         self.params = params
         self.cluster_model_name = cluster_model_name if cluster_model_name else 'Stochastic'
         self.use_median_lsps = use_median_lsps
+        # Opt-in: rescale tabulated CDL delays/angles to the scenario LSPs (TR 38.901
+        # Sec 7.7.3 / 7.7.5.1). Default False preserves raw-table CDL behaviour.
+        self.scale_to_scenario = scale_to_scenario
+        # Opt-in: split the 2 strongest clusters into 3 sub-clusters (TR 38.901
+        # Sec 7.7.1). Default False preserves the unsplit cluster list.
+        self.split_subclusters = split_subclusters
+        self.c_ds_ns = c_ds_ns
         self._select_models()
 
     def _select_models(self):
@@ -64,14 +84,16 @@ class ChannelGenerator:
                 ant_config.tx_array_type,
                 ant_config.num_tx_rows, ant_config.num_tx_cols,
                 ant_config.tx_spacing_h * lambda_0,
-                ant_config.tx_spacing_v * lambda_0
+                ant_config.tx_spacing_v * lambda_0,
+                ant_config.tx_bearing_deg, ant_config.tx_downtilt_deg, ant_config.tx_slant_deg
             )
         if ant_config.rx_positions is None:
             ant_config.rx_positions = get_antenna_positions(
                 ant_config.rx_array_type,
                 ant_config.num_rx_rows, ant_config.num_rx_cols,
                 ant_config.rx_spacing_h * lambda_0,
-                ant_config.rx_spacing_v * lambda_0
+                ant_config.rx_spacing_v * lambda_0,
+                ant_config.rx_bearing_deg, ant_config.rx_downtilt_deg, ant_config.rx_slant_deg
             )
 
     @staticmethod
@@ -84,12 +106,58 @@ class ChannelGenerator:
             np.sin(theta)
         ])
 
+    @staticmethod
+    def _element_field_amplitude(pattern: str, zenith_deg: float, azimuth_deg: float,
+                                 bearing_deg: float, downtilt_deg: float, slant_deg: float) -> float:
+        """
+        Linear field-amplitude factor for one antenna element in a given GCS direction.
+        For 'TR38.901' the 3GPP Table 7.3-1 element pattern is evaluated in the array LCS
+        (the GCS angle is first rotated by the array orientation). 'Isotropic' => 1.0.
+        """
+        if pattern != 'TR38.901':
+            return 1.0
+        theta_l, phi_l = gcs_to_lcs_angles(zenith_deg, azimuth_deg,
+                                           bearing_deg, downtilt_deg, slant_deg)
+        gain_db = calculate_element_gain(phi_l, theta_l)
+        return 10.0 ** (gain_db / 20.0)
+
+    def _cluster_element_gain(self, cluster) -> float:
+        """Combined Tx*Rx linear field-amplitude gain for a cluster's mean direction."""
+        ant = self.config.antenna_config
+        g_tx = self._element_field_amplitude(
+            ant.tx_element_pattern, cluster.zod_theta, cluster.aod_phi,
+            ant.tx_bearing_deg, ant.tx_downtilt_deg, ant.tx_slant_deg)
+        g_rx = self._element_field_amplitude(
+            ant.rx_element_pattern, cluster.zoa_theta, cluster.aoa_phi,
+            ant.rx_bearing_deg, ant.rx_downtilt_deg, ant.rx_slant_deg)
+        return g_tx * g_rx
+
     def _synthesize_plane_wave(self, k_hat_rx: np.ndarray, k_hat_tx: np.ndarray, lambda_0: float) -> np.ndarray:
         ant_config = self.config.antenna_config
         k_factor = 2 * np.pi / lambda_0
         a_rx = np.exp(1j * k_factor * (ant_config.rx_positions @ k_hat_rx))
         a_tx = np.exp(1j * k_factor * (ant_config.tx_positions @ k_hat_tx))
         return a_rx[:, None] @ a_tx[None, :]
+
+    def _los_element_gain(self) -> float:
+        """Combined Tx*Rx element field-amplitude gain along the geometric LOS direction."""
+        ant = self.config.antenna_config
+        if ant.tx_element_pattern != 'TR38.901' and ant.rx_element_pattern != 'TR38.901':
+            return 1.0
+        d_vec = self.config.ue_positions[0] - self.config.bs_positions[0]
+        dist = np.linalg.norm(d_vec)
+        if dist < 1e-9:
+            return 1.0
+        dx, dy, dz = d_vec
+        zen_tx = np.rad2deg(np.arccos(np.clip(dz / dist, -1.0, 1.0)))
+        azi_tx = np.rad2deg(np.arctan2(dy, dx))
+        zen_rx = np.rad2deg(np.arccos(np.clip(-dz / dist, -1.0, 1.0)))
+        azi_rx = np.rad2deg(np.arctan2(-dy, -dx))
+        g_tx = self._element_field_amplitude(ant.tx_element_pattern, zen_tx, azi_tx,
+                                             ant.tx_bearing_deg, ant.tx_downtilt_deg, ant.tx_slant_deg)
+        g_rx = self._element_field_amplitude(ant.rx_element_pattern, zen_rx, azi_rx,
+                                             ant.rx_bearing_deg, ant.rx_downtilt_deg, ant.rx_slant_deg)
+        return g_tx * g_rx
 
     def _synthesize_los_component(self, lambda_0: float) -> np.ndarray:
         ant_config = self.config.antenna_config
@@ -148,10 +216,15 @@ class ChannelGenerator:
         is_deterministic_clusters = self.cluster_model_name.startswith('CDL-') or self.cluster_model_name == 'SCME' or self.cluster_model_name.startswith('SCME-')
         if is_deterministic_clusters:
             if logger: logger(f"  - 为 {self.cluster_model_name} 加载确定性簇...")
-            clusters = self._load_deterministic_clusters(self.cluster_model_name)
+            clusters = self._load_deterministic_clusters(self.cluster_model_name, lsps)
         else:
             if logger: logger("  - 生成随机簇...")
             clusters = self._generate_stochastic_clusters(lsps, is_los, logger)
+
+        # TR 38.901 Sec 7.7.1: 子簇分裂（opt-in），把两个最强簇各分成 3 个子簇。
+        if self.split_subclusters:
+            clusters = self._apply_subcluster_split(clusters)
+            if logger: logger(f"  - 子簇分裂后簇数: {len(clusters)}")
 
         # 步骤 3: 合成信道并应用大尺度效应
         H_normalized = self._synthesize_channel(clusters, lsps, time_s, is_deterministic_clusters, logger)
@@ -161,7 +234,41 @@ class ChannelGenerator:
         if logger: logger("信道生成完成。")
         return H_final, H_normalized, clusters, lsps, pathloss_db, is_los
 
-    def _load_deterministic_clusters(self, model_name: str) -> List[EngineCluster]:
+    @staticmethod
+    def _power_weighted_azimuth_mean(angles_deg: np.ndarray, powers: np.ndarray) -> float:
+        z = np.sum(powers * np.exp(1j * np.deg2rad(angles_deg)))
+        return float(np.rad2deg(np.angle(z)))
+
+    @staticmethod
+    def _rms_azimuth_spread(angles_deg: np.ndarray, powers: np.ndarray, mean_deg: float) -> float:
+        # Wrap deviations to [-180,180] (TR 38.901 circular RMS angular spread).
+        d = (angles_deg - mean_deg + 180.0) % 360.0 - 180.0
+        var = np.sum(powers * d**2) / np.sum(powers)
+        return float(np.sqrt(var))
+
+    @classmethod
+    def _scale_azimuth(cls, angles_deg: np.ndarray, powers: np.ndarray, as_desired_deg: float) -> np.ndarray:
+        """TR 38.901 Sec 7.7.5.1 azimuth scaling: rescale spread to scenario, preserve mean."""
+        mean = cls._power_weighted_azimuth_mean(angles_deg, powers)
+        as_model = cls._rms_azimuth_spread(angles_deg, powers, mean)
+        if as_model < 1e-9 or as_desired_deg <= 0.0:
+            return angles_deg
+        d = (angles_deg - mean + 180.0) % 360.0 - 180.0
+        return mean + (as_desired_deg / as_model) * d
+
+    @classmethod
+    def _scale_zenith(cls, angles_deg: np.ndarray, powers: np.ndarray, zs_desired_deg: float) -> np.ndarray:
+        """Zenith scaling about the power-weighted mean, then clip to [0,180]."""
+        mean = float(np.sum(powers * angles_deg) / np.sum(powers))
+        d = angles_deg - mean
+        var = np.sum(powers * d**2) / np.sum(powers)
+        zs_model = float(np.sqrt(var))
+        if zs_model < 1e-9 or zs_desired_deg <= 0.0:
+            return angles_deg
+        scaled = mean + (zs_desired_deg / zs_model) * d
+        return np.clip(scaled, 0.0, 180.0)
+
+    def _load_deterministic_clusters(self, model_name: str, lsps: Optional[LargeScaleParameters] = None) -> List[EngineCluster]:
         """从参数文件中加载确定性模型（如CDL）的簇参数。"""
         if model_name.startswith('CDL-'):
             model_params = self.params.get_cdl_model_params(model_name)
@@ -173,42 +280,77 @@ class ChannelGenerator:
         if not model_params:
             raise ValueError(f"在参数文件中未找到确定性模型 '{model_name}'。")
 
-        clusters = []
+        raw = model_params['clusters']
         # 对于确定性模型，JSON中的功率是绝对的。我们将其归一化以供引擎使用。
-        total_power_linear = sum(10**(c['power_db'] / 10) for c in model_params['clusters'])
-        
-        last_aod, last_aoa, last_zod, last_zoa = 0, 0, 90, 90
+        powers_linear = np.array([10**(c['power_db'] / 10) for c in raw])
+        normalized_powers = powers_linear / powers_linear.sum()
 
-        for c_data in model_params['clusters']:
-            power_linear = 10**(c_data['power_db'] / 10)
-            normalized_power = power_linear / total_power_linear
+        last = {'aod': 0.0, 'aoa': 0.0, 'zod': 90.0, 'zoa': 90.0}
+        aod = np.empty(len(raw)); aoa = np.empty(len(raw))
+        zod = np.empty(len(raw)); zoa = np.empty(len(raw))
+        delays = np.empty(len(raw))
+        for i, c in enumerate(raw):
+            last['aod'] = c.get('aod_deg', last['aod']); aod[i] = last['aod']
+            last['aoa'] = c.get('aoa_deg', last['aoa']); aoa[i] = last['aoa']
+            last['zod'] = c.get('zod_deg', last['zod']); zod[i] = last['zod']
+            last['zoa'] = c.get('zoa_deg', last['zoa']); zoa[i] = last['zoa']
+            delays[i] = c['delay_ns'] * 1e-9
 
-            aod = c_data.get('aod_deg', last_aod)
-            aoa = c_data.get('aoa_deg', last_aoa)
-            zod = c_data.get('zod_deg', last_zod)
-            zoa = c_data.get('zoa_deg', last_zoa)
-            last_aod, last_aoa, last_zod, last_zoa = aod, aoa, zod, zoa
+        # TR 38.901 Sec 7.7.3 / 7.7.5.1: 把表格化的 CDL 延迟与角度重缩放到场景 LSP。
+        if self.scale_to_scenario and lsps is not None:
+            delays = delays * (lsps.delay_spread_s / self._CDL_DELAY_REF_S)
+            aod = self._scale_azimuth(aod, normalized_powers, lsps.departure_azimuth_spread_deg)
+            aoa = self._scale_azimuth(aoa, normalized_powers, lsps.arrival_azimuth_spread_deg)
+            zod = self._scale_zenith(zod, normalized_powers, lsps.departure_zenith_spread_deg)
+            zoa = self._scale_zenith(zoa, normalized_powers, lsps.arrival_zenith_spread_deg)
 
-            # Phase 6 fix (PR #6 Codex P2): mirror the generated linear XPR
-            # into both fields. `k_n` is the legacy name (kept for backward
-            # compat); `xpr_linear` is the canonical Phase 6+ field consumed
-            # by the dual-pol synthesizer. Until k_n is fully renamed, the
-            # 3GPP path must write both so Phase 6 _build_pol_matrix sees the
-            # scenario-specific XPR instead of the 7 dB default fallback.
-            xpr_lin = 10 ** (model_params.get('xpr_db', 11) / 10)
-            cluster = EngineCluster(
-                delay=c_data['delay_ns'] * 1e-9,
-                power=normalized_power,
-                aod_phi=aod, aoa_phi=aoa, zod_theta=zod, zoa_theta=zoa,
-                as_aod=c_data.get('as_aod_deg', 0.0),
-                as_aoa=c_data.get('as_aoa_deg', 0.0),
-                as_zod=c_data.get('as_zod_deg', 0.0),
-                as_zoa=c_data.get('as_zoa_deg', 0.0),
+        # Phase 6 fix (PR #6 Codex P2): mirror the generated linear XPR
+        # into both fields. `k_n` is the legacy name (kept for backward
+        # compat); `xpr_linear` is the canonical Phase 6+ field consumed
+        # by the dual-pol synthesizer.
+        xpr_lin = 10 ** (model_params.get('xpr_db', 11) / 10)
+        clusters = []
+        for i in range(len(raw)):
+            clusters.append(EngineCluster(
+                delay=float(delays[i]),
+                power=float(normalized_powers[i]),
+                aod_phi=float(aod[i]), aoa_phi=float(aoa[i]),
+                zod_theta=float(zod[i]), zoa_theta=float(zoa[i]),
+                as_aod=raw[i].get('as_aod_deg', 0.0),
+                as_aoa=raw[i].get('as_aoa_deg', 0.0),
+                as_zod=raw[i].get('as_zod_deg', 0.0),
+                as_zoa=raw[i].get('as_zoa_deg', 0.0),
                 k_n=xpr_lin,            # legacy field (was sole XPR storage)
                 xpr_linear=xpr_lin,     # canonical Phase 6+ field
-            )
-            clusters.append(cluster)
+            ))
         return clusters
+
+    def _apply_subcluster_split(self, clusters: List[EngineCluster]) -> List[EngineCluster]:
+        """
+        TR 38.901 Sec 7.7.1: split the two strongest clusters into 3 sub-clusters each.
+
+        Each of the two highest-power clusters is replaced by 3 sub-clusters carrying
+        power fractions {10,6,4}/20 of the parent and delay offsets {0, 1.28, 2.56}·c_DS.
+        Sub-clusters inherit the parent cluster's mean angles (cluster-level CIR). All
+        other clusters are passed through unchanged. Order is preserved.
+        """
+        if len(clusters) < 2:
+            return clusters
+        c_ds_s = self.c_ds_ns * 1e-9
+        strongest_idx = set(np.argsort([c.power for c in clusters])[-2:].tolist())
+        out: List[EngineCluster] = []
+        for idx, cluster in enumerate(clusters):
+            if idx not in strongest_idx:
+                out.append(cluster)
+                continue
+            for d_off, p_frac in zip(self._SUBCLUSTER_DELAY_OFFSETS,
+                                     self._SUBCLUSTER_POWER_FRACTIONS):
+                sub = cluster.model_copy()
+                sub.delay = cluster.delay + d_off * c_ds_s
+                sub.power = cluster.power * p_frac
+                sub.h_matrix = None
+                out.append(sub)
+        return out
 
     def _generate_stochastic_clusters(self, lsps: LargeScaleParameters, is_los: bool, logger: Optional[Callable[[str], None]]) -> List[EngineCluster]:
         """根据LSP随机生成簇参数。"""
@@ -326,6 +468,9 @@ class ChannelGenerator:
                     # 如果矩阵不是正定的，回退到单位矩阵 (IID)
                     H_corr = H_iid
 
+            # 应用单元方向图增益 (TR 38.901 Table 7.3-1); Isotropic 时为 1.0
+            H_corr = H_corr * self._cluster_element_gain(cluster)
+
             cluster.h_matrix = H_corr
             
             # 计算多普勒频移
@@ -341,7 +486,7 @@ class ChannelGenerator:
 
         if lsps.k_factor_linear > 0:
             k_linear = lsps.k_factor_linear
-            H_los = self._synthesize_los_component(lambda_0)
+            H_los = self._synthesize_los_component(lambda_0) * self._los_element_gain()
             H_total_normalized = (
                 np.sqrt(k_linear / (k_linear + 1)) * H_los +
                 np.sqrt(1 / (k_linear + 1)) * H_total_normalized
@@ -370,9 +515,13 @@ class ChannelGenerator:
         lsps = self.fading_model.generate_lsps(self.config, is_los, use_median_lsps=self.use_median_lsps)
         
         if self.cluster_model_name.startswith('CDL-') or self.cluster_model_name == 'SCME':
-            clusters = self._load_deterministic_clusters(self.cluster_model_name)
+            clusters = self._load_deterministic_clusters(self.cluster_model_name, lsps)
         else:
             clusters = self._generate_stochastic_clusters(lsps, is_los, None)
+
+        # TR 38.901 Sec 7.7.1: 子簇分裂（opt-in），与 run() 主路径保持一致。
+        if self.split_subclusters:
+            clusters = self._apply_subcluster_split(clusters)
 
         # --- 2. Ray Offset Table (TR 38.901 Table 7.5-3) ---
         # Load from parameters (Algorithm-Data Decoupling)
@@ -422,6 +571,23 @@ class ChannelGenerator:
                 zoa_ray = cluster.zoa_theta + c_scale * alpha * cluster.as_zoa
                 # ZoD
                 zod_ray = cluster.zod_theta + c_scale * alpha * cluster.as_zod
+
+                # A'. Element radiation pattern (TR 38.901 Table 7.3-1), evaluated
+                # per-ray at this ray's own Tx/Rx direction (more accurate than the
+                # cluster-mean scalar used in the cluster-level synthesizer). The
+                # element pattern is identical across array elements, so this gain
+                # is constant over the rx/tx antenna loops -> compute once per ray.
+                # Isotropic patterns return 1.0, keeping legacy exports unchanged.
+                g_ray = (
+                    self._element_field_amplitude(
+                        ant_config.tx_element_pattern, zod_ray, aod_ray,
+                        ant_config.tx_bearing_deg, ant_config.tx_downtilt_deg,
+                        ant_config.tx_slant_deg)
+                    * self._element_field_amplitude(
+                        ant_config.rx_element_pattern, zoa_ray, aoa_ray,
+                        ant_config.rx_bearing_deg, ant_config.rx_downtilt_deg,
+                        ant_config.rx_slant_deg)
+                )
 
                 # B. Calculate Doppler (Hz) for this Ray
                 # 3D Projection
@@ -482,8 +648,8 @@ class ChannelGenerator:
                         # Total Weight = sqrt(P_ray) * exp(j * (Phi_init + Phase_rx + Phase_tx))
                         
                         total_phase = phase_init + phase_rx + phase_tx
-                        weight = np.sqrt(p_ray) * np.exp(1j * total_phase)
-                        
+                        weight = np.sqrt(p_ray) * g_ray * np.exp(1j * total_phase)
+
                         sos_params.append({
                             "Cluster_ID": cluster_idx,
                             "Ray_ID": m,
@@ -493,7 +659,7 @@ class ChannelGenerator:
                             "Delay_s": cluster.delay,
                             "Weight_Real": weight.real,
                             "Weight_Imag": weight.imag,
-                            "Power_Linear": p_ray,
+                            "Power_Linear": p_ray * g_ray**2,
                             "Phase_Rad": np.angle(weight)
                         })
                     

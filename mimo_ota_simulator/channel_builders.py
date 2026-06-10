@@ -25,7 +25,10 @@ class Standard3GPPBuilder(ChannelProfileBuilder):
             scenario_name=self.config.model_name,
             center_frequency_hz=self.config.center_frequency_hz,
             cluster_model_name=self.config.cluster_model_name,
-            use_median_lsps=self.config.use_median_lsps
+            use_median_lsps=self.config.use_median_lsps,
+            scale_to_scenario=self.config.scale_to_scenario,
+            split_subclusters=self.config.split_subclusters,
+            c_ds_ns=self.config.c_ds_ns,
         )
         
         # Set positions and velocity
@@ -56,6 +59,18 @@ class Standard3GPPBuilder(ChannelProfileBuilder):
             rx_spacing_v=rx.spacing_v,
             tx_array_type=tx.array_type,
             rx_array_type=rx.array_type,
+            # Previously dropped: element pattern + array orientation. Without these
+            # the OTA standard path silently forced Isotropic / 0° orientation on the
+            # target channel regardless of the AntennaArrayConfig. Default values keep
+            # legacy behaviour bit-identical.
+            tx_element_pattern=tx.element_pattern,
+            rx_element_pattern=rx.element_pattern,
+            tx_bearing_deg=tx.bearing_deg,
+            tx_downtilt_deg=tx.downtilt_deg,
+            tx_slant_deg=tx.slant_deg,
+            rx_bearing_deg=rx.bearing_deg,
+            rx_downtilt_deg=rx.downtilt_deg,
+            rx_slant_deg=rx.slant_deg,
         )
 
         # Generate the channel realization
