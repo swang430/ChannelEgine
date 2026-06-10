@@ -38,18 +38,17 @@ class TestPruneWeakClusters:
         tau2, P2 = ChannelGenerator._prune_weak_clusters(tau, P)
         np.testing.assert_allclose(P2, P)
 
-    def test_los_specular_first_cluster_survives_pruning(self):
-        """LOS 首簇承载镜面 K/(K+1), 即便扩散功率 < -25 dB 也不得被删;
-        判据保持扩散功率 — 与最强扩散簇相差 <25 dB 的簇不因镜面分量
-        被误删 (Codex PR#26 P2 r1+r4)。"""
+    def test_weak_first_diffuse_cluster_pruned_in_los_too(self):
+        """弱的首扩散簇照常删除 (Codex PR#26 P2 r5): 镜面分量由
+        k_factor_linear 在合成阶段独立生成, 不依赖簇列表, 判据纯扩散功率;
+        与最强扩散簇相差 <25 dB 的弱簇仍存活。"""
         tau = np.array([0.0, 1e-8, 2e-8, 3e-8])
         # 首簇扩散功率远低于 -25 dB; 第 4 簇相对最强扩散簇 -20 dB (该留)
         P = np.array([0.00001, 0.65, 0.34349, 0.0065])
-        tau2, P2 = ChannelGenerator._prune_weak_clusters(tau, P, protect_first=True)
-        assert len(P2) == 4  # 首簇受保护, 第 4 簇按扩散判据存活
-        # 反向确认: 不保护时首簇会被误删 (旧行为)
-        tau3, P3 = ChannelGenerator._prune_weak_clusters(tau, P)
-        assert len(P3) == 3
+        tau2, P2 = ChannelGenerator._prune_weak_clusters(tau, P)
+        assert len(P2) == 3
+        np.testing.assert_allclose(tau2, tau[1:])
+        np.testing.assert_allclose(P2.sum(), 1.0)
 
     def test_end_to_end_cluster_count_can_shrink(self):
         """大 ζ 下功率离散 > 25 dB, 端到端簇数应可小于场景 N。"""
@@ -81,12 +80,12 @@ class TestLosDelayScaling:
         np.random.seed(17)
         clusters = gen._generate_stochastic_clusters(lsps, True, None)
 
-        # 复算: 同 seed 下未缩放延迟与功率 (LOS 修剪带首簇保护)
+        # 复算: 同 seed 下未缩放延迟与功率
         np.random.seed(17)
         tau_raw = gen._generate_cluster_delays(
             lsps, scenario_params['num_clusters_los'], True, scenario_params)
         P_n = gen._generate_cluster_powers(tau_raw, lsps, True, scenario_params)
-        tau_kept, _ = gen._prune_weak_clusters(tau_raw, P_n, protect_first=True)
+        tau_kept, _ = gen._prune_weak_clusters(tau_raw, P_n)
         k_db = 10.0
         d_scale = 0.7705 - 0.0433 * k_db + 0.0002 * k_db**2 + 0.000017 * k_db**3
         np.testing.assert_allclose(

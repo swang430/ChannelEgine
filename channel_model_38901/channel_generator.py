@@ -433,13 +433,13 @@ class ChannelGenerator:
 
         # §7.5 step 5 末: 删除相对最强簇低于 -25 dB 的簇 (audit batch 2, F7)。
         # 删除后重新归一化以维持引擎的单位功率约定 (被删簇功率占比 <0.3%/个)。
-        # 判据用扩散功率 (eq 7.5-6, Codex PR#26 P2 r4 — K 调整功率只用于
-        # 角度方程, 若作判据会让高 K 下与最强扩散簇相差 <25 dB 的簇被误删);
-        # 但 LOS 首簇承载镜面分量 K/(K+1), 强制保留 (Codex PR#26 P2 r1)。
+        # 判据用扩散功率 (eq 7.5-6, Codex PR#26 P2 r4/r5): K 调整功率只用于
+        # 角度方程; 且本引擎的镜面分量在 _synthesize_channel 里由
+        # k_factor_linear 独立合成 (全局 Rician 混合), 不依赖簇列表 — 弱的
+        # 首扩散簇按规则正常删除, 不需要保护 (角度生成在删簇之后, LOS 对齐
+        # 自然落在剩余的第一簇上)。
         table_n = num_clusters  # C_φ/C_θ 表按场景簇数 N 查, 不随删簇变
-        tau_n, P_n = self._prune_weak_clusters(
-            tau_n, P_n,
-            protect_first=(is_los and lsps.k_factor_linear > 0))
+        tau_n, P_n = self._prune_weak_clusters(tau_n, P_n)
         num_clusters = len(P_n)
 
         # §7.5 step 4 末 (audit batch 2, F6): LOS 时延迟除以 D(K) 补偿镜面
@@ -527,17 +527,13 @@ class ChannelGenerator:
         return scenario_params['delay_scaling_factor']
 
     @staticmethod
-    def _prune_weak_clusters(tau_n, P_n, threshold_db: float = -25.0,
-                             protect_first: bool = False):
+    def _prune_weak_clusters(tau_n, P_n, threshold_db: float = -25.0):
         """§7.5 step 5 末的弱簇删除: 按扩散功率 (eq 7.5-6) 判据, 低于
         max·10^(threshold/10) 的簇移除, 剩余重新归一化 (引擎单位功率约定)。
 
-        protect_first (Codex PR#26 P2 r1+r4): LOS 时首簇承载镜面分量
-        K/(K+1), 即便扩散功率低于阈值也强制保留 — 但判据本身保持扩散
-        功率, 避免高 K 下其余扩散簇被相对镜面分量误删。"""
+        LOS 不需要首簇特殊保护 (Codex PR#26 P2 r5): 本引擎的镜面分量由
+        k_factor_linear 在合成阶段独立生成, 不依赖簇列表。"""
         keep = P_n >= np.max(P_n) * 10.0 ** (threshold_db / 10.0)
-        if protect_first and len(keep):
-            keep[0] = True
         if np.all(keep):
             return tau_n, P_n
         tau_n = tau_n[keep]
