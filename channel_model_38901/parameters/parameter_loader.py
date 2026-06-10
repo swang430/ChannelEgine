@@ -37,4 +37,60 @@ class ParameterLoader:
         # Basic validation
         if "standard_version" not in tables.data or "scenarios" not in tables.data:
             raise ValueError("Invalid parameter file format")
+        ParameterLoader._warn_unconsumed_keys(tables.data)
         return tables
+
+    # 引擎实际消费的 key 集合 (audit batch 2 / PR15 配置消费校验)。
+    # 新增 JSON 字段时必须同步登记, 否则加载时告警 — 防止 dead config
+    # (历史案例: los_probability / shadow_fading_std_db / scaling_factors
+    # 表在被消费前分别 dead 了数月)。
+    _KNOWN_SCENARIO_KEYS = frozenset({
+        'delay_scaling_factor', 'delay_scaling_factor_los', 'delay_scaling_factor_nlos',
+        'lsp_parameters_los', 'lsp_parameters_nlos',
+        'num_clusters_los', 'num_clusters_nlos',
+        'pathloss_los', 'pathloss_nlos',
+        'ray_angle_offsets_deg',
+        'scaling_factors_aoa_aod', 'scaling_factors_zoa_zod',
+        'xpr_mu_los', 'xpr_mu_nlos', 'xpr_sigma_los', 'xpr_sigma_nlos',
+        'V', 'S',  # InF 专用 (inf_models.py)
+    })
+    _KNOWN_LSP_KEYS = frozenset({
+        'correlations',
+        'c_asa_deg', 'c_asd_deg', 'c_zsa_deg',
+        'per_cluster_shadowing_std_db',
+    })
+    _KNOWN_LSP_PREFIXES = ('mu_log10_', 'sigma_log10_')
+    _KNOWN_PATHLOSS_KEYS = frozenset({'formula', 'formula_1', 'formula_2'})
+
+    @classmethod
+    def _warn_unconsumed_keys(cls, data: dict) -> None:
+        """对 scenario / lsp / pathloss 块做消费校验, 未知 key 发 UserWarning。"""
+        import warnings
+        for scenario, params in data.get('scenarios', {}).items():
+            unknown = [k for k in params if k not in cls._KNOWN_SCENARIO_KEYS]
+            if unknown:
+                warnings.warn(
+                    f"参数文件 scenario '{scenario}' 含引擎不消费的 key {unknown} "
+                    f"— dead config 或拼写错误? (新字段须登记 _KNOWN_SCENARIO_KEYS)",
+                    UserWarning,
+                )
+            for lsp_set in ('lsp_parameters_los', 'lsp_parameters_nlos'):
+                lsp = params.get(lsp_set) or {}
+                unknown = [k for k in lsp
+                           if k not in cls._KNOWN_LSP_KEYS
+                           and not k.startswith(cls._KNOWN_LSP_PREFIXES)]
+                if unknown:
+                    warnings.warn(
+                        f"参数文件 '{scenario}/{lsp_set}' 含引擎不消费的 key "
+                        f"{unknown} — dead config 或拼写错误?",
+                        UserWarning,
+                    )
+            for pl_set in ('pathloss_los', 'pathloss_nlos'):
+                pl = params.get(pl_set) or {}
+                unknown = [k for k in pl if k not in cls._KNOWN_PATHLOSS_KEYS]
+                if unknown:
+                    warnings.warn(
+                        f"参数文件 '{scenario}/{pl_set}' 含引擎不消费的 key "
+                        f"{unknown} — dead config 或拼写错误?",
+                        UserWarning,
+                    )

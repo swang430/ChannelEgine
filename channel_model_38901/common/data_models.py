@@ -79,9 +79,3 @@ class EngineCluster(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-class ChannelProfile(BaseModel):
-    """A standardized, internal representation of a channel model's parameters."""
-    name: str
-    clusters: List[EngineCluster]
-    num_tx_antennas: int
-    num_rx_antennas: int
