@@ -226,7 +226,9 @@ with st.sidebar:
 
     with st.expander("3. 物理参数与校准", expanded=False):
         probe_gain_dBi = st.number_input("探头天线增益 (dBi)", -10.0, 20.0, 0.0, 0.1)
-        qz_radius_m = st.number_input("静区半径 (m)", 0.1, 2.0, 0.3, 0.05)
+        qz_radius_m = st.number_input(
+            "静区半径 (m)", 0.1, 2.0, 0.3, 0.05,
+            help="仅作记录 (metadata-only), 不参与任何计算 — 见 audit batch 1 F1")
         calibration_usage = st.selectbox(
             "校准应用范围",
             ("仅导出预失真（不影响仿真）", "仿真中引入硬件响应（导出不预失真）"),
@@ -256,8 +258,17 @@ with st.sidebar:
         
         run_mode = st.radio("运行模式", ('单次快照 (Single Snapshot)', '统计验证 (Statistical Validation)'))
         
-        force_condition = st.selectbox('LOS/NLOS 条件', ('默认 (Default)', '强制 LOS', '强制 NLOS'), key='los')
-        use_median_lsps = st.checkbox('使用 LSP 中值', value=False, help="跳过随机采样，使用大尺度参数的中位值。")
+        # custom 模式下这两个控件不生效 (profile 是 source of truth), 禁用
+        # 而非静默忽略 (audit batch 2, P3-2)
+        _custom_mode = input_mode == 'custom'
+        force_condition = st.selectbox(
+            'LOS/NLOS 条件', ('默认 (Default)', '强制 LOS', '强制 NLOS'),
+            key='los', disabled=_custom_mode,
+            help="自定义 JSON 模式下由 profile.is_los 决定, 此控件禁用" if _custom_mode else None)
+        use_median_lsps = st.checkbox(
+            '使用 LSP 中值', value=False, disabled=_custom_mode,
+            help="自定义 JSON 模式下无 LSP 采样, 此控件禁用" if _custom_mode
+            else "跳过随机采样，使用大尺度参数的中位值。")
         _jitter_disabled = (st.session_state.synthesis_method == 'strict_pfs')
         probe_phase_jitter = st.checkbox(
             '模拟探头相位抖动',
