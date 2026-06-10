@@ -651,6 +651,14 @@ if st.session_state.simulation_results:
                 
                 st.caption("注意: 这是单次生成快照的瞬时相关性。要获得具有物理意义的统计结果，请使用'统计验证'模式。")
 
+        # OFDM 频响 (audit batch 2 / P2-5: enable_ofdm 此前算了不显示)
+        if results.get('h_subcarriers') is not None:
+            with st.expander("OFDM 子载波频响 |H(f)|", expanded=False):
+                h_sc = np.asarray(results['h_subcarriers'])
+                mag_db = 20 * np.log10(np.maximum(np.abs(h_sc[:, 0, 0]), 1e-12))
+                st.line_chart(mag_db)
+                st.caption(f"N_FFT = {h_sc.shape[0]}; 纵轴 dB, 横轴子载波索引")
+
         # --- Create the two main plots ---
         col1, col2 = st.columns(2)
         with col1:

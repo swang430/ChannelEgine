@@ -575,9 +575,13 @@ class MIMO_OTA_Simulator:
             lsps=lsps,
             is_los=False
         )
-        return self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter, B_matrix, target_H_matrix=target_H_matrix)
+        result = self.synthesize_ota(chamber_config, channel_config, profile, synthesis_method, probe_phase_jitter, B_matrix, target_H_matrix=target_H_matrix)
+        # Audit batch 2 / P2-5: enable_ofdm/n_fft 此前算了 h_subcarriers 但
+        # 不进结果 dict — UI 控件勾了等于没勾。透传给调用方/UI。
+        result['h_subcarriers'] = wifi_result.h_subcarriers
+        return result
 
-    def synthesize_ota(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig, 
+    def synthesize_ota(self, chamber_config: ChamberConfig, channel_config: TargetChannelConfig,
             channel_profile: UniversalChannelProfile,
             synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'ray',
             probe_phase_jitter: bool = False,
