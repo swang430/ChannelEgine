@@ -1,8 +1,71 @@
 # MIMO-First ↔ Channel Engine 集成契约 (v2.0)
 
-**Status**: ACTIVE (生效 2026-05-19, 更新 P2-7 non-ring chamber 落地后)
+**Status**: ACTIVE (生效 2026-05-19, 更新 2026-06-11 audit batch 2 后 — 升级注意事项见 §0)
 **Supersedes**: v1.0 (2026-04, 见 §6 历史)
-**Library version**: Phase 8 / P2-7 (post-Phase-6 dual-pol + non-ring chamber probe geometry)
+**Library version**: Phase 8 / P2-7 + audit batch 2 (PR #16–#31)
+
+---
+
+## 0. ⚠️ Audit batch 2 升级注意事项 (2026-06-11, PR #16–#31)
+
+> ChannelEngine 完成了一轮 16-PR 的 TR 38.901 合规修复 (silent-ignored
+> config / spec 简化全面清理, 实现状态总表见
+> [`docs/spec/tr38901-section75-traceability.md`](../docs/spec/tr38901-section75-traceability.md))。
+> **本节是 MIMO-First/MIMO-3D 调用方升级前必读。**
+
+### 0.1 接口层面: 零破坏
+
+§2 推荐路径的全部 public API 签名不变 (`CustomCDLProfile.from_dict/from_file`、
+`TargetChannelConfig`/`ChamberConfig`/`AntennaArrayConfig`、
+`MIMO_OTA_Simulator().run()`、`PropsimASCIIExporter.export()`); schema 无新增
+必填字段。被删除的 `mimo_ota_simulator/parsers.py`(import 即 ImportError)、
+`channel_model_38901` 的 `ChannelProfile` 类、两份备用参数 JSON 均为
+零引用 dead code, 外部不可能在用。
+
+### 0.2 新增 fail-fast(唯一可能让调用方报错的两处)
+
+| 配置 | 旧行为 | 新行为 (PR #20) |
+|---|---|---|
+| 单极化 chamber (`dual_polarized=False`) + `tx_antenna.polarization` ≠ `'V'` | 静默按 V 处理 | `ValueError`(与 rx 侧既有校验对齐) |
+| `cluster_model_name` 不在白名单(如小写 typo `'cdl-a'`) | 静默落入随机簇路径 | `ValueError` |
+
+这两类配置此前拿到的本来就是错误信道; 升级后请全量跑一遍调用路径确认无触发。
+
+### 0.3 数值输出变化(无错无警, 但结果不同 — 均为修复)
+
+**custom CDL 路径**(MIMO-First 主路径):
+- 探头权重改 (az, el) 各向异性高斯 (PR #23): profile 中 `zoa_deg≠90` 或
+  custom 立体 probe 布局时 A 矩阵变化; **ring 布局 + 水平簇 (zoa=90°)
+  与旧版 bit-identical**。
+- `probe_phase_jitter=True` 时导出 .asc 现在真含 jitter (PR #22) — 此前
+  导出与 `effective_H_matrix` 静默不一致。
+- SoS/FPGA 导出 (PR #27): ray 随机配对 (§7.5 step 8) + **`initial_phases_rad[0]`
+  真进 per-ray 相位** — 此前调用方传的初相在 SoS 导出里被静默丢弃。
+- 探头 `pattern='TR38.901'` 现在真衰减 B 矩阵 (PR #19, 峰值 0 dB 形状因子,
+  此前等同 Isotropic)。
+
+**standard 3GPP 路径**(`model_name='UMa'` 等): 统计特性全面变化 — LSP
+互相关激活 (PR #16)、zenith 约定统一 (PR #17)、角度围绕几何 LOS 方向 +
+C_φ/C_θ 表 (PR #25)、per-cluster shadowing ζ 按 Table 7.5-6 (PR #26)、
+-25 dB 弱簇删除 (PR #26)、簇内 ray 扇出缩小约一个量级 (PR #24)。
+**同 seed 输出与旧版必然不同; 任何固定 seed 的 golden 基线必须重生成。**
+
+### 0.4 无害新增
+
+- 新告警: `num_rays≠20`、单极化 + `xpr_db`/`initial_phases_rad`、参数文件
+  缺新字段 (回退旧行为 + 升级提示)。
+- 结果 dict 新键: `h_subcarriers`(WiFi+OFDM, per-antenna `(n_fft, N_rx, N_tx)`,
+  PR #28)、`probe_phase_jitter_vector_ul`(PR #22)。
+- `PropsimASCIIExporter.last_mode_a_info`: Mode A 链路预算
+  (`required_attenuation_db` 含 `target_output_power_dbm`, PR #21);
+  Mode A 的 stdout 打印格式有变, 勿解析 stdout, 改读该属性。
+
+### 0.5 调用方升级清单
+
+1. 确认走的是真服务还是 mock(§5 的 adapter 修了没 — D11 责任在 MIMO-First 侧);
+2. 升级后重跑端到端回归; 固定 seed 的 golden 基线重生成;
+3. 检查配置是否触发 §0.2 的两个 ValueError;
+4. 若消费 SoS 导出: 初相现在生效、射线配对随机化 — 行为修复而非回归。
 
 ---
 
