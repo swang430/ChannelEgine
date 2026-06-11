@@ -62,7 +62,10 @@ C_φ/C_θ 表 (PR #25)、per-cluster shadowing ζ 按 Table 7.5-6 (PR #26)、
 
 ### 0.5 调用方升级清单
 
-1. 确认走的是真服务还是 mock(§5 的 adapter 修了没 — D11 责任在 MIMO-First 侧);
+1. 确认走的是真服务还是 mock(§5 adapter 已于 2026-05-18 修复并于 2026-06-11
+   对 batch 2 实证, 但 `MOCK_ASC_MODE=1` 的部署仍出占位 .asc — 查响应
+   `mock_mode` 字段);**库更新后必须重启 channel-engine-service**(sys.path
+   惰性 import + 模块缓存, 长跑进程可能持旧库);
 2. 升级后重跑端到端回归; 固定 seed 的 golden 基线重生成;
 3. 检查配置是否触发 §0.2 的两个 ValueError;
 4. 若消费 SoS 导出: 初相现在生效、射线配对随机化 — 行为修复而非回归。
@@ -277,7 +280,16 @@ MIMO-First 默认应用 `'strict_pfs'`。
 4. **调用 library**: `MIMO_OTA_Simulator().run(...)` + `PropsimASCIIExporter().export(...)`
 5. **打包**: 把生成的 `.asc` 文件 zip + Base64 + 组 response JSON
 
-**已知 gap（待 MIMO-First repo 修）**: 当前 `channel-engine-service/app/api/endpoints/hardware_pipeline.py` 调本 repo 的接口三层全错（类名 `OTASimulator` vs `MIMO_OTA_Simulator`，构造签名错，方法名 `run_with_external_clusters` 不存在）。MIMO-First 那边需要按本文档 §2 重写适配代码。
+**~~已知 gap~~ → 已修复 (2026-05-18 MIMO-First P0-7)**: 旧版 `hardware_pipeline.py`
+调本 repo 接口三层全错（类名 `OTASimulator`、构造签名、`run_with_external_clusters`
+不存在）→ 已按本文档 §2 重写：`CustomCDLProfile.from_dict` + `ChamberConfig`
+(probe_positions 透传) + `TargetChannelConfig` (custom/standard 分路) +
+`MIMO_OTA_Simulator().run(synthesis_method='strict_pfs')` +
+`PropsimASCIIExporter.export_to_zip_memory` base64 直出；mock 仅显式
+`MOCK_ASC_MODE=1`，不再静默 fallback。**2026-06-11 对 audit batch 2 (b1c2eca)
+实证**: MIMO-First `test_channel_engine_real_path.py` 13/13 过 + CAICT-FS
+multi-ring 31 位置（含仰角簇、全四 `as_*` 字段）经适配层真合成 124 .asc OK；
+`as_aod/as_zoa/as_zod` 端到端透传同日补齐 (MIMO-First #164)。
 
 ---
 
