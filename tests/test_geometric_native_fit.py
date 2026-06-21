@@ -91,3 +91,36 @@ def test_subrays_carried_through():
     profile = geometric_native_fit(mpcs, V, FC, F64CapabilityProfile())
     c = profile.snapshots[0].clusters[0]
     assert c.subrays is not None and len(c.subrays) == 5
+
+
+# ───────────── Codex P2 #36 修复 ─────────────
+
+def test_no_self_referential_parent():
+    """分裂血缘不自指: parent_cluster_id != 自身 cluster_id (Codex P2)。"""
+    mpcs = _grp(5, 6, delay=0.0) + _grp(95, 6, delay=0.0)
+    profile = geometric_native_fit(mpcs, V, FC, F64CapabilityProfile(tap_budget=24, rho_thresh=0.03))
+    cl = profile.snapshots[0].clusters
+    for c in cl:
+        assert c.parent_cluster_id != c.cluster_id
+    # 分裂发生时: 首兄弟 parent=None, 其余指向首兄弟
+    assert any(c.parent_cluster_id is None for c in cl)
+    assert any(c.parent_cluster_id is not None for c in cl)
+
+
+def test_all_angular_spreads_preserved():
+    """aod/zoa/zod 也有展宽时, 4 个 as_* 都 > 0 (不只 as_aoa) (Codex P2)。"""
+    mpcs = [MPC(0.0, 1.0, 30 + a, -20 + a, 90 + z, 85 + z)
+            for a in (-5, 0, 5) for z in (-3, 0, 3)]
+    profile = geometric_native_fit(mpcs, V, FC, F64CapabilityProfile())
+    c = profile.snapshots[0].clusters[0]
+    assert c.as_aoa_deg > 0 and c.as_aod_deg > 0
+    assert c.as_zoa_deg > 0 and c.as_zod_deg > 0
+
+
+def test_circular_mean_for_wrapped_azimuth():
+    """方位角跨 ±180° (179° / -179°) → 圆均值 ≈ ±180, 不是线性的 0 (Codex P2)。"""
+    mpcs = [MPC(0.0, 1.0, 179.0, 179.0), MPC(0.0, 1.0, -179.0, -179.0)]
+    profile = geometric_native_fit(mpcs, V, FC, F64CapabilityProfile())
+    c = profile.snapshots[0].clusters[0]
+    assert abs(abs(c.aoa_deg) - 180.0) < 5.0
+    assert abs(abs(c.aod_deg) - 180.0) < 5.0

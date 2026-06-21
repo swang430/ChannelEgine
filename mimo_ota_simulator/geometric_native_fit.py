@@ -7,16 +7,20 @@ B-2 标注式 CDL (AnnotatedCDLProfile)。这是把"F64 无 custom PSD"的 block
 
 算法 (单快照, 确定性):
   1. 按时延把 MPC 初聚成簇 (F64 抽头在不同时延)。
-  2. 若初始簇数 > tap_budget, 按时延邻近 + 功率弱优先合并到 budget。
+  2. 若初始簇数 > tap_budget, 按时延邻近合并到 budget。
   3. native-fit 分裂循环: 对每个 needs_split 的簇 (F1 最优原生残差 > rho_thresh),
      按多普勒中位数二分; budget-aware (总簇数 < tap_budget 才分; 功率大者优先分)。
   4. 每簇经 F1 映射成 doppler_repr (native / dual_gaussian), 装配 AnnotatedCDLProfile。
+
+分裂血缘: 每个 (合并后/分裂前) 初始簇有稳定 origin_id; 子簇继承。最终同 origin 的多个簇,
+非首个的 parent_cluster_id 指向首个 (首个/未分裂者为 None) —— 避免自指, 又把兄弟关联。
 
 依赖 F1 (doppler_native_mapping) + F2 (annotated_cdl_schema)。纯函数, 仅 numpy + pydantic。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -55,9 +59,9 @@ class F64CapabilityProfile:
 
 @dataclass
 class _Cluster:
-    """中间簇 (聚类过程态)。"""
+    """中间簇 (聚类过程态)。origin_id = 合并后/分裂前的稳定起源, 子簇继承。"""
     mpcs: List[MPC]
-    parent_id: Optional[int] = None
+    origin_id: Optional[int] = None
 
     @property
     def power(self) -> float:
@@ -68,6 +72,23 @@ class _Cluster:
         w = np.array([m.power_linear for m in self.mpcs])
         d = np.array([m.delay_s for m in self.mpcs])
         return float(np.sum(w * d) / w.sum())
+
+
+# ───────────────────── 角度统计 (方位用圆均值防 wrap) ─────────────────────
+
+def _wmean_spread(angles_deg: Sequence[float], weights: np.ndarray, *, circular: bool) -> Tuple[float, float]:
+    """加权均值 + 加权 std (deg)。circular=True 用圆统计 (方位角跨 ±180° 不反向)。"""
+    a = np.asarray(angles_deg, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+    if circular:
+        rad = np.deg2rad(a)
+        mean = float(np.rad2deg(np.arctan2(np.sum(w * np.sin(rad)), np.sum(w * np.cos(rad)))))
+        dev = (a - mean + 180.0) % 360.0 - 180.0       # wrap 到 [-180,180]
+    else:
+        mean = float(np.sum(w * a))
+        dev = a - mean
+    return mean, float(np.sqrt(np.sum(w * dev ** 2)))
 
 
 # ───────────────────── 步骤 ─────────────────────
@@ -91,22 +112,19 @@ def _merge_to_budget(clusters: List[_Cluster], tap_budget: int) -> List[_Cluster
     clusters = list(clusters)
     while len(clusters) > tap_budget:
         clusters.sort(key=lambda c: c.delay_centroid)
-        # 找相邻时延差最小的一对合并
         gaps = [clusters[i + 1].delay_centroid - clusters[i].delay_centroid
                 for i in range(len(clusters) - 1)]
         i = int(np.argmin(gaps))
-        merged = _Cluster(mpcs=clusters[i].mpcs + clusters[i + 1].mpcs)
-        clusters[i:i + 2] = [merged]
+        clusters[i:i + 2] = [_Cluster(mpcs=clusters[i].mpcs + clusters[i + 1].mpcs)]
     return clusters
 
 
 def _cluster_native(cluster: _Cluster, velocity, f_c, rho_thresh: float):
     """对一个簇跑 F1 原生映射 (用簇内 MPC 角度 + 功率)。"""
-    aoa = [m.aoa_deg for m in cluster.mpcs]
-    zoa = [m.zoa_deg for m in cluster.mpcs]
-    power = [m.power_linear for m in cluster.mpcs]
-    p = np.array(power, dtype=float)
-    fd = _doppler_from_angles(np.array(aoa), np.array(zoa), velocity, f_c)
+    p = np.array([m.power_linear for m in cluster.mpcs], dtype=float)
+    fd = _doppler_from_angles(
+        np.array([m.aoa_deg for m in cluster.mpcs]),
+        np.array([m.zoa_deg for m in cluster.mpcs]), velocity, f_c)
     return map_doppler_to_native(fd, p / p.sum(), split_threshold=rho_thresh)
 
 
@@ -120,12 +138,9 @@ def _doppler_median_split(cluster: _Cluster, velocity, f_c) -> Optional[Tuple[_C
     p = np.array([m.power_linear for m in cluster.mpcs])
     order = np.argsort(fd)
     cdf = np.cumsum(p[order]) / p.sum()
-    cut = np.searchsorted(cdf, 0.5)
-    cut = min(max(cut, 1), len(cluster.mpcs) - 1)        # 两侧都非空
-    lo_idx = order[:cut]
-    hi_idx = order[cut:]
-    lo = _Cluster(mpcs=[cluster.mpcs[i] for i in lo_idx], parent_id=cluster.parent_id)
-    hi = _Cluster(mpcs=[cluster.mpcs[i] for i in hi_idx], parent_id=cluster.parent_id)
+    cut = min(max(int(np.searchsorted(cdf, 0.5)), 1), len(cluster.mpcs) - 1)
+    lo = _Cluster([cluster.mpcs[i] for i in order[:cut]], origin_id=cluster.origin_id)
+    hi = _Cluster([cluster.mpcs[i] for i in order[cut:]], origin_id=cluster.origin_id)
     return lo, hi
 
 
@@ -134,41 +149,29 @@ def _native_fit_split(clusters: List[_Cluster], velocity, f_c,
     """budget-aware 分裂: 反复把功率最大的 needs_split 簇二分, 直到无 needs_split 或撞 budget。"""
     work = list(clusters)
     while len(work) < profile.tap_budget:
-        # 找功率最大的 needs_split 且可分的簇
-        candidates = []
-        for idx, c in enumerate(work):
-            res = _cluster_native(c, velocity, f_c, profile.rho_thresh)
-            if res.needs_split and len(c.mpcs) >= 2:
-                candidates.append((c.power, idx))
+        candidates = [(c.power, idx) for idx, c in enumerate(work)
+                      if len(c.mpcs) >= 2 and _cluster_native(c, velocity, f_c, profile.rho_thresh).needs_split]
         if not candidates:
             break
-        candidates.sort(reverse=True)
-        _, idx = candidates[0]
+        _, idx = max(candidates)
         split = _doppler_median_split(work[idx], velocity, f_c)
         if split is None:
             break
-        # 分裂血缘: 子簇 parent = 原簇在最终列表里的序号 (装配时回填); 这里先标 origin idx
-        lo, hi = split
-        lo.parent_id = work[idx].parent_id if work[idx].parent_id is not None else idx
-        hi.parent_id = lo.parent_id
-        work[idx:idx + 1] = [lo, hi]
+        work[idx:idx + 1] = list(split)        # 子簇已继承 origin_id
     return work
 
 
-def _build_annotated(cluster: _Cluster, cluster_id: int, velocity, f_c,
-                     rho_thresh: float) -> Tuple[AnnotatedCluster, float]:
+def _build_annotated(cluster: _Cluster, cluster_id: int, parent_cluster_id: Optional[int],
+                     velocity, f_c, rho_thresh: float) -> Tuple[AnnotatedCluster, float]:
     """把一个最终簇装配成 AnnotatedCluster (经 F1 定 doppler_repr + 携带子径)。"""
     res = _cluster_native(cluster, velocity, f_c, rho_thresh)
-    p = np.array([m.power_linear for m in cluster.mpcs])
-    w = p / p.sum()
-    # 功率加权代表角度
-    aoa = float(np.sum(w * np.array([m.aoa_deg for m in cluster.mpcs])))
-    aod = float(np.sum(w * np.array([m.aod_deg for m in cluster.mpcs])))
-    zoa = float(np.sum(w * np.array([m.zoa_deg for m in cluster.mpcs])))
-    zod = float(np.sum(w * np.array([m.zod_deg for m in cluster.mpcs])))
-    # 角扩展 (绕代表角的加权 std)
-    as_aoa = float(np.sqrt(np.sum(w * (np.array([m.aoa_deg for m in cluster.mpcs]) - aoa) ** 2)))
-    delay = float(np.sum(w * np.array([m.delay_s for m in cluster.mpcs])))
+    w = np.array([m.power_linear for m in cluster.mpcs], dtype=float)
+
+    aoa, as_aoa = _wmean_spread([m.aoa_deg for m in cluster.mpcs], w, circular=True)
+    aod, as_aod = _wmean_spread([m.aod_deg for m in cluster.mpcs], w, circular=True)
+    zoa, as_zoa = _wmean_spread([m.zoa_deg for m in cluster.mpcs], w, circular=False)
+    zod, as_zod = _wmean_spread([m.zod_deg for m in cluster.mpcs], w, circular=False)
+    delay, _ = _wmean_spread([m.delay_s for m in cluster.mpcs], w, circular=False)
 
     if res.kind == 'dual_gaussian':
         doppler = DopplerDualGaussian(
@@ -183,11 +186,10 @@ def _build_annotated(cluster: _Cluster, cluster_id: int, velocity, f_c,
     subrays = [SubRay(aoa_deg=m.aoa_deg, aod_deg=m.aod_deg, zoa_deg=m.zoa_deg,
                       zod_deg=m.zod_deg, power_linear=m.power_linear) for m in cluster.mpcs]
     ac = AnnotatedCluster(
-        cluster_id=cluster_id,
-        parent_cluster_id=cluster.parent_id,
-        delay_s=delay, power_linear=float(p.sum()),
+        cluster_id=cluster_id, parent_cluster_id=parent_cluster_id,
+        delay_s=delay, power_linear=float(w.sum()),
         aoa_deg=aoa, aod_deg=aod, zoa_deg=zoa, zod_deg=zod,
-        as_aoa_deg=as_aoa,
+        as_aoa_deg=as_aoa, as_aod_deg=as_aod, as_zoa_deg=as_zoa, as_zod_deg=as_zod,
         doppler_repr=doppler, physicality='rt_physical', subrays=subrays)
     return ac, res.residual
 
@@ -204,12 +206,23 @@ def geometric_native_fit(
 
     clusters = _initial_delay_clusters(mpcs, profile.delay_resolution_s)
     clusters = _merge_to_budget(clusters, profile.tap_budget)
+    for i, c in enumerate(clusters):           # 合并后/分裂前赋稳定 origin_id
+        c.origin_id = i
     clusters = _native_fit_split(clusters, velocity_mps, f_c_hz, profile)
+
+    # 血缘: 同 origin 多于 1 个 (即被分裂过) → 非首个指向首个 cluster_id (首个/未分裂为 None)
+    by_origin: dict = defaultdict(list)
+    for cid, c in enumerate(clusters):
+        by_origin[c.origin_id].append(cid)
+    parent_of: dict = {}
+    for cids in by_origin.values():
+        for cid in cids[1:]:
+            parent_of[cid] = cids[0]
 
     annotated: List[AnnotatedCluster] = []
     residuals: List[float] = []
     for cid, c in enumerate(clusters):
-        ac, resid = _build_annotated(c, cid, velocity_mps, f_c_hz, profile.rho_thresh)
+        ac, resid = _build_annotated(c, cid, parent_of.get(cid), velocity_mps, f_c_hz, profile.rho_thresh)
         annotated.append(ac)
         residuals.append(resid)
 
