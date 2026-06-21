@@ -64,6 +64,19 @@ def _extract_subrays(snap: CDLSnapshot) -> Dict[int, List]:
     }
 
 
+def _select_snapshot(annotated: AnnotatedCDLProfile, snapshot_index: int) -> CDLSnapshot:
+    """按 declared CDLSnapshot.index 选快照 (非 list offset)。schema 仅保证 index 集合
+    连续 0..n-1, 不保证 snapshots 列表顺序 == index 顺序 (Codex P2: 乱序 list 上用 offset
+    会烘错帧)。index 在 profile 内唯一, 故至多匹配一个。"""
+    matching = [s for s in annotated.snapshots if s.index == snapshot_index]
+    if not matching:
+        raise IndexError(
+            f"snapshot_index={snapshot_index} 不在 profile 快照 index 中 "
+            f"(可用: {sorted(s.index for s in annotated.snapshots)})"
+        )
+    return matching[0]
+
+
 def bake_b1_annotated(
     annotated: AnnotatedCDLProfile,
     chamber_config: ChamberConfig,
@@ -96,16 +109,13 @@ def bake_b1_annotated(
         )
 
     n_snap = len(annotated.snapshots)
-    if not 0 <= snapshot_index < n_snap:
-        raise IndexError(f"snapshot_index={snapshot_index} 越界 (共 {n_snap} 快照)")
+    snap = _select_snapshot(annotated, snapshot_index)
     if n_snap > 1:
         warnings.warn(
             f"AnnotatedCDLProfile 有 {n_snap} 个快照 (动态轨迹), 本烘焙器单快照先行, "
-            f"仅烘 snapshot_index={snapshot_index}; 跨快照 .asc 帧拼接进 backlog。",
+            f"仅烘 snapshot index={snapshot_index}; 跨快照 .asc 帧拼接进 backlog。",
             UserWarning, stacklevel=2,
         )
-
-    snap = annotated.snapshots[snapshot_index]
     custom = _snapshot_to_custom(annotated, snap)
     cluster_subrays = _extract_subrays(snap)
 

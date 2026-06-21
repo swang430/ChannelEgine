@@ -156,3 +156,25 @@ def test_multisnapshot_warns_and_bakes_one(tmp_path):
     with pytest.warns(UserWarning, match="单快照"):
         files = bake_b1_annotated(annotated, _chamber(), _channel(), _export(tmp_path))
     assert len(files) == N_PROBES * N_TX
+
+
+def test_selects_snapshot_by_declared_index_not_list_offset():
+    """Codex P2: snapshots 列表乱序 [index=1, index=0] 时 snapshot_index=0 取 declared
+    index=0 的快照 (非 list offset 0 = index=1)。schema 仅保证 index 集合连续、不保证
+    list 顺序。用 ue_velocity 区分两快照。"""
+    from mimo_ota_simulator.b1_annotated_baker import _select_snapshot
+    s0 = CDLSnapshot(index=0, ue_velocity_mps=(1.0, 0.0, 0.0), clusters=[_subray_cluster()])
+    s1 = CDLSnapshot(index=1, ue_velocity_mps=(2.0, 0.0, 0.0), clusters=[_subray_cluster()])
+    annotated = AnnotatedCDLProfile(
+        center_frequency_hz=3.5e9, pathloss_db=80.0, is_los=False,
+        clustering_meta=ClusteringMeta(
+            algorithm='phase_continuous', target_path='B1_baked',
+            test_class='throughput_psd', f64_profile_ref='t', tap_budget_used=1),
+        trajectory_meta=TrajectoryMeta(
+            n_snapshots=2, skeleton_rate_hz=100.0, delta_d_geo_m=0.04, route_len_m=1.0),
+        snapshots=[s1, s0],     # list 乱序: index=1 在前
+    )
+    assert _select_snapshot(annotated, 0).ue_velocity_mps == (1.0, 0.0, 0.0)   # declared 0
+    assert _select_snapshot(annotated, 1).ue_velocity_mps == (2.0, 0.0, 0.0)   # declared 1
+    with pytest.raises(IndexError, match="不在 profile"):
+        _select_snapshot(annotated, 9)
