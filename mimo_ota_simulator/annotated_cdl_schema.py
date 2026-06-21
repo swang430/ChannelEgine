@@ -99,7 +99,8 @@ class AnnotatedCluster(BaseModel):
     parent_cluster_id: Optional[int] = None         # 由分裂而来则指父簇
     birth_index: Optional[int] = None
     death_index: Optional[int] = None
-    power_ramp: Literal['stable', 'birth', 'death'] = 'stable'
+    power_ramp: Literal['stable', 'birth', 'death', 'transient'] = 'stable'
+    # 'transient' = 单个中途快照内生灭同帧 (一闪而过的簇)
 
     # 标准几何 / 功率 (与 CDLClusterSpec 对齐)
     delay_s: float = Field(..., ge=0.0)

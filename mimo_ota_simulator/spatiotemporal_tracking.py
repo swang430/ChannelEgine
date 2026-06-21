@@ -125,12 +125,11 @@ def native_fit_trajectory(
             g = l2g[c.cluster_id]
             life = appears[g]
             first, last = life[0], life[-1]
-            if s_idx == first and first > 0:
-                ramp = 'birth'                      # 轨迹中途新生
-            elif s_idx == last and last < n_snap - 1:
-                ramp = 'death'                      # 轨迹中途消亡
-            else:
-                ramp = 'stable'
+            born = (s_idx == first and first > 0)          # 轨迹中途新生
+            died = (s_idx == last and last < n_snap - 1)   # 轨迹中途消亡
+            # 单个中途快照的簇生灭同帧 → 'transient' (否则 if/elif 会丢掉 death, Codex P2)
+            ramp = ('transient' if born and died else
+                    'birth' if born else 'death' if died else 'stable')
             parent_g = l2g[c.parent_cluster_id] if c.parent_cluster_id is not None else None
             out_clusters.append(c.model_copy(update={
                 'cluster_id': g, 'parent_cluster_id': parent_g,

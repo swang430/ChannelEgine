@@ -52,6 +52,17 @@ def test_death_mid_trajectory():
     assert dead and all(c.death_index == 0 for c in dead)
 
 
+def test_transient_one_interior_snapshot_cluster():
+    """簇只在某个内部快照出现 (0缺/1在/2缺) → 生灭同帧 → power_ramp='transient' (Codex P2)。"""
+    snaps = [_grp(30, 6, 0.0),
+             _grp(30, 6, 0.0) + _grp(90, 6, 200e-9),
+             _grp(30, 6, 0.0)]
+    p = native_fit_trajectory(snaps, V, FC, PROF, **TRAJ)
+    transient = [c for c in p.snapshots[1].clusters if c.power_ramp == 'transient']
+    assert transient                                   # 90° 簇生灭同帧
+    assert all(c.birth_index == 1 and c.death_index == 1 for c in transient)
+
+
 def test_stable_cluster_throughout_three_snapshots():
     """簇全程在 → 始终 stable (非生灭)。"""
     snaps = [_grp(40, 6, 0.0), _grp(41, 6, 0.0), _grp(42, 6, 0.0)]
