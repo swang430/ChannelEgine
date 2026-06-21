@@ -55,11 +55,16 @@ class MPC:
 
 @dataclass(frozen=True)
 class F64CapabilityProfile:
-    """F64 能力档 (聚类约束); 现场标定见 V1.0 §9。"""
+    """F64 能力档 (聚类约束 + 路径判决门); 现场标定见 V1.0 §9。"""
     name: str = 'default'
     tap_budget: int = 24            # 每逻辑通道最大抽头
     rho_thresh: float = 0.06        # native 拟合残差验收阈
     delay_resolution_s: float = 5e-9
+    # ── 路径判决 (§6) 用门; 阈值现场标定 (§9.7) ──
+    has_gcm: bool = False               # GCM license (大质心/FR2 高速确定性路需要)
+    large_centroid_thresh_hz: float = 200e3   # B-1 运行时频偏上限 (>此 B-1 烘不动 → GCM)
+    fr2_freq_thresh_hz: float = 24e9          # FR2 起始频率
+    fr2_high_speed_mps: float = 30.0          # FR2 高速门 (亚毫米地图区 B-1 不可行)
 
 
 @dataclass
