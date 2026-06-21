@@ -18,7 +18,7 @@ from mimo_ota_simulator.b2_tap_params import (
 def _native_cluster(cid=0):
     return AnnotatedCluster(
         cluster_id=cid, delay_s=0.0, power_linear=1.0, aoa_deg=30.0, aod_deg=10.0,
-        as_aoa_deg=5.0, as_aod_deg=2.0, xpr_db=10.0,
+        as_aoa_deg=5.0, as_aod_deg=2.0, as_zoa_deg=3.0, as_zod_deg=1.5, xpr_db=10.0,
         doppler_repr=DopplerNative(shape='classical', f_d_centroid_hz=50.0,
                                    f_d_max_hz=100.0, native_fit_residual=0.02))
 
@@ -53,6 +53,7 @@ def test_native_cluster_to_tap():
     assert t.doppler_centroid_hz == 50.0
     assert t.doppler_spread_hz == 100.0       # f_d_max_hz
     assert t.aoa_deg == 30.0 and t.as_aoa_deg == 5.0
+    assert t.as_zoa_deg == 3.0 and t.as_zod_deg == 1.5   # 仰角展宽透传 (Codex P2)
     assert t.xpr_db == 10.0
     assert t.native_fit_residual == 0.02
 

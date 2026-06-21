@@ -43,6 +43,8 @@ class TapParameter:
     zod_deg: float = 90.0
     as_aoa_deg: float = 0.0
     as_aod_deg: float = 0.0
+    as_zoa_deg: float = 0.0     # 仰角展宽 (3D RT 仰角簇 + 多环布局 PAS 映射需要, Codex P2)
+    as_zod_deg: float = 0.0
     # 极化 / 拟合质量
     xpr_db: Optional[float] = None
     native_fit_residual: float = 0.0
@@ -99,6 +101,7 @@ def extract_tap_parameters(
                 doppler_params=dict(dr.shape_params or {}),
                 aoa_deg=c.aoa_deg, aod_deg=c.aod_deg, zoa_deg=c.zoa_deg, zod_deg=c.zod_deg,
                 as_aoa_deg=c.as_aoa_deg, as_aod_deg=c.as_aod_deg,
+                as_zoa_deg=c.as_zoa_deg, as_zod_deg=c.as_zod_deg,
                 xpr_db=c.xpr_db, native_fit_residual=dr.native_fit_residual))
         elif dr.kind == 'dual_gaussian':
             taps.append(TapParameter(
@@ -113,6 +116,7 @@ def extract_tap_parameters(
                 },
                 aoa_deg=c.aoa_deg, aod_deg=c.aod_deg, zoa_deg=c.zoa_deg, zod_deg=c.zod_deg,
                 as_aoa_deg=c.as_aoa_deg, as_aod_deg=c.as_aod_deg,
+                as_zoa_deg=c.as_zoa_deg, as_zod_deg=c.as_zod_deg,
                 xpr_db=c.xpr_db, native_fit_residual=dr.native_fit_residual))
         else:
             # baked / subray_sum 是 B-1/GCM 烘焙路, 不该出现在 B2_parametric profile
