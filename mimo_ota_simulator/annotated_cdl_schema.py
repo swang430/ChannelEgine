@@ -181,10 +181,14 @@ class AnnotatedCDLProfile(BaseModel):
                 "phase_continuous 聚类不能配 target_path=B2_parametric (确定性相位不能交统计衰落)"
             )
 
-        # 快照 index 唯一 (动态轨迹逐帧标识, F4 跟踪/F64 逐帧切换都依赖)
+        # 快照 index 须连续 0..n-1 (唯一【且无跳号】): cluster birth_index/death_index
+        # 与跨快照连续性都按 index 寻址, 重复或跳号都会让 F4 生命周期跟踪 / F64 逐帧切换歧义。
         snap_indexes = [s.index for s in self.snapshots]
-        if len(set(snap_indexes)) != len(snap_indexes):
-            raise ValueError(f"snapshot index 必须唯一, got {snap_indexes}")
+        if sorted(snap_indexes) != list(range(len(snap_indexes))):
+            raise ValueError(
+                f"snapshot index 必须是连续 0..{len(snap_indexes) - 1} (唯一且无跳号), "
+                f"got {sorted(snap_indexes)}"
+            )
         # 多快照 (动态) 须有 trajectory_meta (骨架率 / Δd_geo / 轨迹长度)
         if len(self.snapshots) > 1 and self.trajectory_meta is None:
             raise ValueError("多快照 (动态) profile 须提供 trajectory_meta")

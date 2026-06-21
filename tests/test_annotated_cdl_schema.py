@@ -137,8 +137,15 @@ def test_multi_snapshot_requires_trajectory_meta():
 def test_duplicate_snapshot_index_raises():
     """快照 index 重复 → raises (Codex P2)。"""
     tm = TrajectoryMeta(n_snapshots=2, skeleton_rate_hz=100, delta_d_geo_m=1.0, route_len_m=100)
-    with pytest.raises(ValidationError, match='index 必须唯一'):
+    with pytest.raises(ValidationError, match='index 必须是连续'):
         _profile([_native_cluster(5)], snapshots=[_snap(0), _snap(0)], trajectory_meta=tm)
+
+
+def test_snapshot_index_gap_raises():
+    """快照 index 跳号 (0,2 缺 1) → raises (Codex P2: gaps 也歧义)。"""
+    tm = TrajectoryMeta(n_snapshots=2, skeleton_rate_hz=100, delta_d_geo_m=1.0, route_len_m=100)
+    with pytest.raises(ValidationError, match='无跳号'):
+        _profile([_native_cluster(5)], snapshots=[_snap(0), _snap(2)], trajectory_meta=tm)
 
 
 def test_valid_dynamic_multi_snapshot():
