@@ -23,6 +23,15 @@ def _simple_mpcs():
     ]
 
 
+def _phase_mpcs():
+    """带确定性 phase_rad 的 mpcs (确定性相位类 ISAC/beam_tracking 必需)。"""
+    return [
+        MPC(delay_s=0.0, power_linear=1.0, aoa_deg=30.0, aod_deg=10.0, phase_rad=0.5),
+        MPC(delay_s=1e-9, power_linear=0.8, aoa_deg=31.0, aod_deg=10.5, phase_rad=1.2),
+        MPC(delay_s=2e-9, power_linear=0.6, aoa_deg=29.0, aod_deg=9.5, phase_rad=2.0),
+    ]
+
+
 # ───────────── f_D,max ─────────────
 
 def test_f_d_max_formula():
@@ -49,7 +58,7 @@ def test_throughput_native_unrepresentable_falls_back_b1():
     f64 = F64CapabilityProfile(tap_budget=1, rho_thresh=0.01)   # resid≈0.018 > 0.01
     d = select_path_and_clustering('throughput_psd', disp, (60.0, 0.0, 0.0), FC, f64)
     assert d.target_path == 'B1_baked'
-    assert d.clustering_algo == 'phase_continuous'
+    assert d.clustering_algo == 'raw_passthrough'   # disp 无 phase_rad → 标准扇烘焙 (非 phase_continuous)
     assert d.native_fit_residual > f64.rho_thresh
 
 
@@ -64,7 +73,7 @@ def test_consistency_class_also_b2_route():
 def test_isac_low_centroid_is_b1():
     """低 f_D,max 确定性相位 → B-1 可行 (非 GCM)。"""
     f64 = F64CapabilityProfile(large_centroid_thresh_hz=1e6)   # 高阈, 116Hz 远低
-    d = select_path_and_clustering('isac_sensing', _simple_mpcs(), V_LOW, FC, f64)
+    d = select_path_and_clustering('isac_sensing', _phase_mpcs(), V_LOW, FC, f64)
     assert d.target_path == 'B1_baked'
     assert d.clustering_algo == 'phase_continuous'
 
@@ -72,7 +81,7 @@ def test_isac_low_centroid_is_b1():
 def test_isac_large_centroid_with_gcm_is_gcm():
     """大质心 + 有 GCM license → GCM。"""
     f64 = F64CapabilityProfile(large_centroid_thresh_hz=100.0, has_gcm=True)  # 116>100
-    d = select_path_and_clustering('isac_sensing', _simple_mpcs(), V_LOW, FC, f64)
+    d = select_path_and_clustering('isac_sensing', _phase_mpcs(), V_LOW, FC, f64)
     assert d.target_path == 'GCM_native'
     assert d.clustering_algo == 'phase_continuous'
 
@@ -80,7 +89,7 @@ def test_isac_large_centroid_with_gcm_is_gcm():
 def test_isac_large_centroid_without_gcm_escalates():
     """大质心 + 无 GCM → ESCALATE fail-loud, 绝不静默回落 B1_baked (Codex P2 #165 母题)。"""
     f64 = F64CapabilityProfile(large_centroid_thresh_hz=100.0, has_gcm=False)
-    d = select_path_and_clustering('beam_tracking', _simple_mpcs(), V_LOW, FC, f64)
+    d = select_path_and_clustering('beam_tracking', _phase_mpcs(), V_LOW, FC, f64)
     assert d.target_path == 'ESCALATE'
     assert d.is_escalation
     assert d.target_path != 'B1_baked'        # 显式断言不回落
@@ -89,16 +98,30 @@ def test_isac_large_centroid_without_gcm_escalates():
 def test_fr2_high_speed_without_gcm_escalates():
     """FR2 (28GHz) + 高速 (50 m/s) + 无 GCM → ESCALATE。"""
     f64 = F64CapabilityProfile(has_gcm=False)   # 默认 fr2=24e9, 高速门 30 m/s
-    d = select_path_and_clustering('beam_tracking', _simple_mpcs(), (50.0, 0.0, 0.0),
+    d = select_path_and_clustering('beam_tracking', _phase_mpcs(), (50.0, 0.0, 0.0),
                                    28e9, f64)
     assert d.target_path == 'ESCALATE'
 
 
 def test_fr2_high_speed_with_gcm_is_gcm():
     f64 = F64CapabilityProfile(has_gcm=True)
-    d = select_path_and_clustering('isac_sensing', _simple_mpcs(), (50.0, 0.0, 0.0),
+    d = select_path_and_clustering('isac_sensing', _phase_mpcs(), (50.0, 0.0, 0.0),
                                    28e9, f64)
     assert d.target_path == 'GCM_native'
+
+
+def test_unknown_test_class_raises():
+    """Codex P2: config typo (Literal 不校验运行时值) → fail-loud, 不静默路由 B2。"""
+    with pytest.raises(ValueError, match="未知 test_class"):
+        select_path_and_clustering('beam-tracking', _phase_mpcs(), V_LOW, FC)   # 连字符 typo
+
+
+def test_deterministic_class_requires_phase_rad():
+    """Codex P2: 确定性相位类 (ISAC/beam_tracking) 的 MPC 缺 phase_rad → fail-loud
+    (下游 phase_continuous_fit 必拒, 不能假装可执行)。"""
+    no_phase = [MPC(delay_s=0.0, power_linear=1.0, aoa_deg=30.0, aod_deg=10.0)]  # phase_rad=None
+    with pytest.raises(ValueError, match="phase_rad"):
+        select_path_and_clustering('isac_sensing', no_phase, V_LOW, FC)
 
 
 # ───────────── fail-loud ─────────────
