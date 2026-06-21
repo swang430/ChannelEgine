@@ -61,10 +61,18 @@ def test_regression(golden_file_name):
     np.testing.assert_allclose(new_results['pathloss_db'], golden_data['pathloss_db'][0], err_msg="Pathloss does not match.")
     assert new_results['is_los'] == golden_data['is_los'][0], "LOS/NLOS condition does not match."
 
-    # Compare LSPs
+    # Compare LSPs with a numerical tolerance. Exact float `==` is fragile to
+    # last-bit BLAS/LAPACK differences across environments (e.g. Apple
+    # Accelerate vs OpenBLAS): Cholesky-correlated fields drift in the last bit
+    # and k_factor_linear amplifies that through 10**(K_dB/10). rtol=1e-6
+    # absorbs that noise while still catching any real synthesis regression.
     new_lsps_dict = new_results['lsps'].model_dump()
     golden_lsps_dict = golden_data['lsps'][0]
-    assert new_lsps_dict == golden_lsps_dict, "LSP data does not match."
+    assert set(new_lsps_dict) == set(golden_lsps_dict), "LSP keys do not match."
+    for key in golden_lsps_dict:
+        np.testing.assert_allclose(
+            new_lsps_dict[key], golden_lsps_dict[key], rtol=1e-6, atol=1e-12,
+            err_msg=f"LSP '{key}' does not match.")
 
     # Compare Clusters by converting the new list of objects to a structured array
     cluster_dtype = golden_data['clusters'].dtype
@@ -80,4 +88,11 @@ def test_regression(golden_file_name):
         new_structured_clusters[i]['k_n'] = c.k_n
         new_structured_clusters[i]['h_matrix'] = c.h_matrix
 
-    np.testing.assert_equal(new_structured_clusters, golden_data['clusters'], err_msg="Cluster data does not match.")
+    # Same tolerance rationale as the LSP comparison above (previously exact
+    # assert_equal, which fails on last-bit cross-environment float noise --
+    # e.g. cluster h_matrix drifts ~1e-10 relative between BLAS backends).
+    golden_clusters = golden_data['clusters']
+    for field in cluster_dtype.names:
+        np.testing.assert_allclose(
+            new_structured_clusters[field], golden_clusters[field],
+            rtol=1e-6, atol=1e-12, err_msg=f"Cluster field '{field}' does not match.")
