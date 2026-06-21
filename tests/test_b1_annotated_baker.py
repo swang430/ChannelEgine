@@ -178,3 +178,18 @@ def test_selects_snapshot_by_declared_index_not_list_offset():
     assert _select_snapshot(annotated, 1).ue_velocity_mps == (2.0, 0.0, 0.0)   # declared 1
     with pytest.raises(IndexError, match="不在 profile"):
         _select_snapshot(annotated, 9)
+
+
+def test_random_seed_makes_bake_deterministic(tmp_path):
+    """含 baked/标准扇簇 (ray 相位抽全局 RNG) 时, 设 channel_config.random_seed → 重复
+    bake 产出同 .asc。Codex P2: bake 直接调 synthesize_ota 须复制 run() 的播种, 否则
+    random_seed 被忽略、重复 bake 因全局 RNG 漂移而不同。"""
+    annotated = _annotated(_baked_cluster(), algorithm='raw_passthrough')
+    channel = TargetChannelConfig(
+        model_name='UMi-StreetCanyon', cluster_model_name='CDL-A',
+        center_frequency_hz=3.5e9, input_mode='custom', random_seed=42,
+        tx_antenna=AntennaArrayConfig(num_cols=N_TX, array_type='ULA'),
+        rx_antenna=AntennaArrayConfig(num_cols=2, array_type='ULA'))
+    f1 = bake_b1_annotated(annotated, _chamber(), channel, _export(tmp_path, 'seed1.asc'))
+    f2 = bake_b1_annotated(annotated, _chamber(), channel, _export(tmp_path, 'seed2.asc'))
+    assert open(f1[0]).read() == open(f2[0]).read()          # 同 seed → 确定性 .asc

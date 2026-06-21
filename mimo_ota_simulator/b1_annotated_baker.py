@@ -16,6 +16,8 @@ PropsimASCIIExporter 烘 per-(Tx, Probe) .asc (含 OTA 校准预失真)。
 import warnings
 from typing import Dict, List, Optional
 
+import numpy as np
+
 from .annotated_cdl_schema import AnnotatedCDLProfile, CDLSnapshot
 from .cdl_schema import CustomCDLProfile, CDLClusterSpec
 from .channel_builders import CustomCDLBuilder
@@ -120,6 +122,12 @@ def bake_b1_annotated(
     cluster_subrays = _extract_subrays(snap)
 
     profile = CustomCDLBuilder(custom).build()
+    # 与 MIMO_OTA_Simulator.run() 同语义 (simulator.py:529): 合成前按 random_seed 播种
+    # 全局 np.random (None = 不播种, caller 控制)。bake 直接调 synthesize_ota 绕过了 run()
+    # 的播种, 否则含 baked/标准扇簇的 profile (ray 相位抽全局 RNG) 重复 bake 会产生不同
+    # .asc, 即便设了 channel_config.random_seed (Codex P2)。
+    if channel_config.random_seed is not None:
+        np.random.seed(channel_config.random_seed)
     sim_result = MIMO_OTA_Simulator().synthesize_ota(
         chamber_config, channel_config, profile,
         synthesis_method=synthesis_method, cluster_subrays=cluster_subrays,
