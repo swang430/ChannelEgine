@@ -181,3 +181,23 @@ def test_empty_cluster_subrays_equals_none():
     assert len(_rays_of(r_empty, 0)) == 20          # 标准扇, 不崩
     assert np.array_equal(r_empty['transmit_mapping_matrix_A'],
                           r_none['transmit_mapping_matrix_A'])   # {} ≡ None bit-identical
+
+
+def test_unannotated_cluster_matches_legacy_none():
+    """Codex P2 (第三轮): 注解 cluster 0 后, 未注解 cluster 1 (标准扇) 的随机实现与
+    cluster_subrays=None (全标准扇) 逐位一致 —— subray_sum 簇消耗等量 draw 丢弃, 全局
+    RNG 流前进量不变, legacy 兼容 + 隔离同时成立。"""
+    chamber, channel, profile = _setup(clusters=[
+        _cluster(power=0.6, aoa=20, aod=10),
+        _cluster(power=0.4, aoa=120, aod=80),
+    ])
+    np.random.seed(2024)
+    r_none = MIMO_OTA_Simulator().synthesize_ota(
+        chamber, channel, profile, synthesis_method='ray', cluster_subrays=None)
+    c1_none = [r['phi_init'] for r in _rays_of(r_none, 1)]
+    np.random.seed(2024)
+    r_ann = MIMO_OTA_Simulator().synthesize_ota(
+        chamber, channel, profile, synthesis_method='ray',
+        cluster_subrays={0: [_sub(20, 10, 1.0, 0.5), _sub(21, 11, 0.5, 1.0)]})
+    c1_ann = [r['phi_init'] for r in _rays_of(r_ann, 1)]
+    assert np.array_equal(c1_none, c1_ann)   # cluster 1 与全标准扇情况逐位一致 (legacy 兼容)

@@ -809,18 +809,7 @@ class MIMO_OTA_Simulator:
             # Store ray components for time-series generation (Doppler)
             ray_components = []
 
-            # P2-14 (Codex P2): cluster_subrays 混合路径下每簇用独立派生 RNG, 使
-            # "是否注解某簇 / 注解几个子径"不改变其他【未注解】簇的随机实现 —— 确定性
-            # subray_sum 簇跳过随机抽取会偏移共享 RNG 流, 污染后续标准扇簇。纯标准扇
-            # (cluster_subrays=None) 仍走全局 np.random 保持 bit-identical (不 draw seed)。
-            _subray_base_seed = np.random.randint(0, 2**31 - 1) if cluster_subrays else None
-
             for i, cluster in enumerate(physical_clusters):
-                # 每簇独立 RNG (混合路径簇间隔离); None / 空 dict 退回全局 np.random
-                # (bit-identical)。条件用 truthy 与 _subray_base_seed 严格一致 (Codex P2:
-                # cluster_subrays={} 时 base_seed=None, 若这里用 is-not-None 会 None+i TypeError)。
-                _cluster_rng = (np.random.RandomState((_subray_base_seed + i) % (2**32))
-                                if cluster_subrays else np.random)
                 # We will map each ray to probes independently
                 cluster_power_accum = np.zeros(num_effective_probes)
                 cluster_A_accum = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
@@ -848,6 +837,15 @@ class MIMO_OTA_Simulator:
                 # 无 cluster_subrays 时严格走标准扇旧路径 (bit-identical)。
                 _subrays_this = cluster_subrays.get(i) if cluster_subrays else None
                 if _subrays_this:
+                    # P2-14 (Codex P2): subray_sum 簇用确定性 phase_rad 不抽随机相位,
+                    # 但消耗与标准扇【等量】的全局 RNG draw 并丢弃, 使全局流前进量与"该簇
+                    # 是标准扇"完全一致 → 未注解簇 (后续标准扇 cluster) 的 legacy 随机实现
+                    # 既不受本簇是否注解/子径数影响 (隔离), 又与 cluster_subrays=None 逐位
+                    # 一致。标准扇每簇抽 20 个 ray 的相位: ray=20 个 scalar, strict_pfs=20×P。
+                    if use_strict_pfs:
+                        np.random.uniform(-np.pi, np.pi, size=20 * num_effective_probes)
+                    else:
+                        np.random.uniform(-np.pi, np.pi, size=20)
                     # 真实子径: 功率按簇内相对值分配簇功率 (簇功率经 channel_builders
                     # 归一化后子径自动继承, 子径功率和 == 簇功率); 相位用确定性 phase_rad。
                     _sub_pow_total = sum(sr.power_linear for sr in _subrays_this) or 1.0
@@ -921,9 +919,9 @@ class MIMO_OTA_Simulator:
                     if det_phase is not None:
                         phi_rnd = float(det_phase)
                     elif use_strict_pfs:
-                        phi_rnd = base_phase + _cluster_rng.uniform(-np.pi, np.pi, size=num_effective_probes)
+                        phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
                     else:
-                        phi_rnd = base_phase + _cluster_rng.uniform(-np.pi, np.pi)
+                        phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi)
 
                     # p_ray 来自 _ray_sources (标准扇 = cluster.power/20; 真实子径 = 按相对功率分配)
 
