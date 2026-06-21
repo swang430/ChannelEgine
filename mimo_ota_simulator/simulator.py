@@ -601,7 +601,11 @@ class MIMO_OTA_Simulator:
             synthesis_method: Literal['pinv', 'cluster', 'ray', 'strict_pfs'] = 'ray',
             probe_phase_jitter: bool = False,
             B_matrix: Optional[np.ndarray] = None,
-            target_H_matrix: Optional[np.ndarray] = None) -> Dict:
+            target_H_matrix: Optional[np.ndarray] = None,
+            cluster_subrays: Optional[Dict[int, List]] = None) -> Dict:
+        # cluster_subrays (B-1 标注式烘焙旁路, P2-14): {cluster_index: [SubRay, ...]}.
+        # 给定的簇用真实 RT 子径 (确定性 phase_rad 相干求和) 替代标准扇 20 子径展开;
+        # 未给定的簇 (或 None) 走标准扇随机相位旧路径 (bit-identical)。仅 ray/strict_pfs 法生效。
         # Audit batch 2 / A7: 单极化 chamber 下 tx 侧极化此前不校验, 'H'/±45
         # 被静默按 V 处理 (rx 侧在 _synthesize_b_matrix 一直有同款 ValueError)。
         tx_pol = channel_config.tx_antenna.polarization
@@ -827,16 +831,35 @@ class MIMO_OTA_Simulator:
                 else:
                     pol_factor_col = 1.0 + 0j  # broadcasts as scalar in W_base mul
 
-                for m in range(20):
-                    alpha = ray_offsets[m]
-                    c_scale = 1.0 # Scaling factor
-                    
-                    # 1. Calculate Ray Angles
-                    aoa_ray = cluster.aoa_phi + c_scale * alpha * cluster.as_aoa
-                    aod_ray = cluster.aod_phi + c_scale * alpha * cluster.as_aod
-                    zoa_ray = cluster.zoa_theta + c_scale * alpha * cluster.as_zoa
-                    zod_ray = cluster.zod_theta + c_scale * alpha * cluster.as_zod
-                    
+                # 子径来源 (P2-14 B-1 标注式烘焙): annotated 真实子径 (确定性相位) 或
+                # 标准扇 20 (随机相位)。逐子径合成 (探头权重 / Tx steering / 元素方向图 /
+                # 多普勒) 对两种来源完全共用; 仅"角度 + 功率 + 相位来源"不同。
+                # 无 cluster_subrays 时严格走标准扇旧路径 (bit-identical)。
+                _subrays_this = cluster_subrays.get(i) if cluster_subrays else None
+                if _subrays_this:
+                    # 真实子径: 功率按簇内相对值分配簇功率 (簇功率经 channel_builders
+                    # 归一化后子径自动继承, 子径功率和 == 簇功率); 相位用确定性 phase_rad。
+                    _sub_pow_total = sum(sr.power_linear for sr in _subrays_this) or 1.0
+                    _ray_sources = [
+                        (sr.aoa_deg, sr.aod_deg, sr.zoa_deg, sr.zod_deg,
+                         cluster.power * (sr.power_linear / _sub_pow_total),
+                         sr.phase_rad)
+                        for sr in _subrays_this
+                    ]
+                else:
+                    # 标准扇: 簇中心 + AS·offset 展开 20 子径, 功率平分, 相位随机 (det=None)。
+                    _ray_sources = [
+                        (cluster.aoa_phi + alpha * cluster.as_aoa,
+                         cluster.aod_phi + alpha * cluster.as_aod,
+                         cluster.zoa_theta + alpha * cluster.as_zoa,
+                         cluster.zod_theta + alpha * cluster.as_zod,
+                         cluster.power / 20.0,
+                         None)
+                        for alpha in ray_offsets[:20]
+                    ]
+
+                for aoa_ray, aod_ray, zoa_ray, zod_ray, p_ray, det_phase in _ray_sources:
+
                     # 2. Calculate Probe Weights for this Ray (Point Source Mode)
                     # We treat each ray as a point source. 
                     # CRITICAL FIX: Do NOT use AS=0 (Nearest Neighbor). This causes phase quantization.
@@ -882,13 +905,16 @@ class MIMO_OTA_Simulator:
                         if cluster.initial_phases is not None and len(cluster.initial_phases) >= 1
                         else 0.0
                     )
-                    if use_strict_pfs:
+                    # 相位: 真实子径用确定性 phase_rad (scalar, 子径相干求和, 不随机);
+                    # 标准扇按合成法随机 (strict_pfs per-probe iid 向量 / ray scalar)。
+                    if det_phase is not None:
+                        phi_rnd = float(det_phase)
+                    elif use_strict_pfs:
                         phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
                     else:
                         phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi)
 
-                    # Power per ray
-                    p_ray = cluster.power / 20.0
+                    # p_ray 来自 _ray_sources (标准扇 = cluster.power/20; 真实子径 = 按相对功率分配)
 
                     # Per-ray element field amplitude (Table 7.3-1), Tx at the ray
                     # departure direction and Rx/DUT at the ray arrival direction —
@@ -912,7 +938,10 @@ class MIMO_OTA_Simulator:
                     # Apply random phase for current snapshot.
                     # ray:        W_base (P, Tx) * scalar      -> (P, Tx)
                     # strict_pfs: W_base (P, Tx) * (P, 1)       -> (P, Tx) per-probe independent
-                    if use_strict_pfs:
+                    # 按 phi_rnd 维度分支 (而非 use_strict_pfs 标志): strict_pfs 给
+                    # per-probe (P,) 向量 → [:, None]; ray scalar 与确定性 det_phase
+                    # 都是 scalar → 直接广播。det_phase 在 strict_pfs 法下仍是 scalar。
+                    if np.ndim(phi_rnd) > 0:
                         A_ray = W_base * np.exp(1j * phi_rnd)[:, None]
                     else:
                         A_ray = W_base * np.exp(1j * phi_rnd)
