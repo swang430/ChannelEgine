@@ -45,7 +45,7 @@ class NativeMappingResult:
     kind: Literal['native', 'dual_gaussian']
     shape: NativeShape
     f_d_centroid_hz: float        # 质心 = Σ p·f_D / Σ p
-    f_d_max_hz: float             # 展宽半宽 = max|f_D| (该簇子径跨度)
+    f_d_max_hz: float             # 展宽半宽 = max|f_D − 质心| (绕质心; 质心见 f_d_centroid_hz)
     params: dict                  # gaussian:{std_hz}; dual_gaussian:{beam_a,beam_b,power_ratio_db}; ...
     residual: float               # 总变差距离 TV ∈ [0,1], 越小越好
     needs_split: bool             # 即便双高斯残差仍超阈 → F3 应分裂该簇
@@ -126,14 +126,24 @@ def _jakes_density(f: np.ndarray, f_d_max: float) -> np.ndarray:
 # ───────────────────────── 矩 + 拟合 ─────────────────────────
 
 def psd_moments(fd: np.ndarray, power: np.ndarray) -> dict:
-    """加权矩: 质心 / 标准差 / 展宽半宽 (max|f|)。"""
+    """加权矩。
+
+    - ``centroid_hz``     : 质心 Σp·f
+    - ``std_hz``          : 加权标准差
+    - ``f_d_max_hz``      : 展宽半宽 = max|f − 质心| (绕质心, 与 V1.0 §5.3 结果字段一致;
+                            质心由 f_d_centroid 单独承载, 不混进展宽)
+    - ``f_d_abs_max_hz``  : 绝对最大 |f| (用于 flat 判定 —— "有没有任何多普勒")
+    """
     w = power / power.sum()
     centroid = float(np.sum(w * fd))
     var = float(np.sum(w * (fd - centroid) ** 2))
+    if fd.size == 0:
+        return {'centroid_hz': centroid, 'std_hz': 0.0, 'f_d_max_hz': 0.0, 'f_d_abs_max_hz': 0.0}
     return {
         'centroid_hz': centroid,
         'std_hz': float(np.sqrt(max(var, 0.0))),
-        'f_d_max_hz': float(np.max(np.abs(fd))) if fd.size else 0.0,
+        'f_d_max_hz': float(np.max(np.abs(fd - centroid))),
+        'f_d_abs_max_hz': float(np.max(np.abs(fd))),
     }
 
 
@@ -247,19 +257,22 @@ def map_doppler_to_native(
 
     m = psd_moments(fd, power)
     centroid, std, f_d_max = m['centroid_hz'], m['std_hz'], m['f_d_max_hz']
+    f_d_abs_max = m['f_d_abs_max_hz']
 
-    # 退化 1: 几乎无多普勒 (静止) → flat
-    if f_d_max <= flat_f_d_max_hz:
+    # 退化 1: 几乎无【任何】多普勒 (静止) → flat。用绝对 max 判, 否则斜入射单线
+    # (展宽≈0 但质心≠0) 会被误判 flat。
+    if f_d_abs_max <= flat_f_d_max_hz:
         return NativeMappingResult('native', 'flat', centroid, f_d_max, {}, 0.0, False)
-    # 退化 2: 展宽极窄 (单射线 / LOS) → pure_doppler (单线)
+    # 退化 2: 展宽极窄 (单射线 / LOS) → pure_doppler (质心处单线)
     if std <= pure_doppler_std_hz:
         return NativeMappingResult('native', 'pure_doppler', centroid, f_d_max,
                                    {}, 0.0, False)
 
     centers, width, emp_cdf = _grid_and_emp_cdf(fd, power)
 
-    # 候选 1: classical (Jakes, 各向同性), f_d_max = 该簇子径跨度
-    rho_classical = _cdf_l1(emp_cdf, _jakes_density(centers, f_d_max), width)
+    # 候选 1: classical (Jakes)。Jakes 居中到【质心】再评分 (质心由 f_d_centroid 单独承载),
+    # 否则斜入射簇 (质心≠0) 跟零中心 Jakes 比会虚高残差 (Codex P2 #34)。半宽 = 绕质心展宽。
+    rho_classical = _cdf_l1(emp_cdf, _jakes_density(centers - centroid, f_d_max), width)
     # 候选 2: 单高斯
     g_mu, g_sig = fit_single_gaussian(fd, power)
     rho_gauss = _cdf_l1(emp_cdf, _gaussian_density(centers, g_mu, g_sig), width)

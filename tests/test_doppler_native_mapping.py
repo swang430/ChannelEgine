@@ -40,6 +40,18 @@ def test_doppler_centroid_is_fmax_cos_phi():
     assert centroid == pytest.approx(f_d_max * np.cos(np.deg2rad(phi)), rel=0.05)
 
 
+def test_fd_max_is_spread_around_centroid_not_abs_max():
+    """斜入射簇: f_d_max_hz = 绕质心展宽 (≪ 质心/绝对 max), 质心单独承载 (Codex P2 #34 修复)。"""
+    v, f_c, phi = 30.0, 3.5e9, 50.0
+    res = map_cluster_to_native_from_geometry(
+        aoa_deg=phi, zoa_deg=90.0, as_aoa_deg=6.0, as_zoa_deg=0.0,
+        velocity_mps=[v, 0, 0], f_c_hz=f_c)
+    f_d_scenario = v * f_c / C_LIGHT
+    assert res.f_d_centroid_hz == pytest.approx(f_d_scenario * np.cos(np.deg2rad(phi)), rel=0.1)
+    # 展宽半宽远小于质心 (证明 f_d_max 不含质心偏移)
+    assert res.f_d_max_hz < 0.5 * abs(res.f_d_centroid_hz)
+
+
 # ───────────── 三种谱分类 ─────────────
 
 def test_narrow_cluster_maps_to_gaussian():
