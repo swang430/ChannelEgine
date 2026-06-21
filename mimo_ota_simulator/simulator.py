@@ -835,8 +835,15 @@ class MIMO_OTA_Simulator:
                 # 标准扇 20 (随机相位)。逐子径合成 (探头权重 / Tx steering / 元素方向图 /
                 # 多普勒) 对两种来源完全共用; 仅"角度 + 功率 + 相位来源"不同。
                 # 无 cluster_subrays 时严格走标准扇旧路径 (bit-identical)。
-                _subrays_this = cluster_subrays.get(i) if cluster_subrays else None
-                if _subrays_this:
+                # 区分 "key 存在但空列表" (上游可能丢光 RT 子径 → fail-fast) vs "key 缺失"
+                # (正常走标准扇)。truthy 检查会把 {i: []} 误当未注解、静默退标准扇假射线 (Codex P2)。
+                if cluster_subrays and i in cluster_subrays:
+                    _subrays_this = cluster_subrays[i]
+                    if not _subrays_this:
+                        raise ValueError(
+                            f"cluster_subrays[{i}] 为空列表; 显式注解的簇须含 ≥1 子径 (空 = "
+                            f"上游可能丢光 RT 子径, fail-fast 而非静默退标准扇假射线)。"
+                        )
                     # P2-14 (Codex P2): 此旁路文档化为确定性 phase_rad 相干求和; 直接调
                     # synthesize_ota 会绕过 AnnotatedCDLProfile 对 subray_sum 必有 phase_rad
                     # 的上层校验, 故此处 fail-fast —— phase_rad=None 否则静默落随机分支

@@ -213,3 +213,12 @@ def test_subray_without_phase_rad_fails_fast():
     with pytest.raises(ValueError, match="phase_rad"):
         MIMO_OTA_Simulator().synthesize_ota(
             chamber, channel, profile, synthesis_method='ray', cluster_subrays=bad)
+
+
+def test_empty_subray_list_for_cluster_fails_fast():
+    """Codex P2: {i: []} 显式注解该簇但子径为空 → fail-fast (上游丢光子径信号),
+    不静默退标准扇假射线。区别于 {} / None (整体未注解, 走标准扇 bit-identical)。"""
+    chamber, channel, profile = _setup()
+    with pytest.raises(ValueError, match="空列表|子径"):
+        MIMO_OTA_Simulator().synthesize_ota(
+            chamber, channel, profile, synthesis_method='ray', cluster_subrays={0: []})
