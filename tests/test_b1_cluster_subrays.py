@@ -143,3 +143,26 @@ def test_bypass_only_affects_named_clusters():
         chamber, channel, profile, synthesis_method='ray', cluster_subrays=subrays)
     assert len(_rays_of(res, 0)) == 2     # 真实子径
     assert len(_rays_of(res, 1)) == 20    # 标准扇旧路径
+
+
+def test_unannotated_cluster_rng_isolated():
+    """Codex P2: 给 cluster 0 加 (或改变子径数) 不影响未注解 cluster 1 (标准扇) 的
+    随机实现 —— 每簇独立派生 RNG, 簇间隔离 (确定性簇跳过随机抽取不再偏移共享流)。"""
+    chamber, channel, profile = _setup(clusters=[
+        _cluster(power=0.6, aoa=20, aod=10),
+        _cluster(power=0.4, aoa=120, aod=80),
+    ])
+    np.random.seed(42)
+    r1 = MIMO_OTA_Simulator().synthesize_ota(
+        chamber, channel, profile, synthesis_method='ray',
+        cluster_subrays={0: [_sub(20, 10, 1.0, 0.5)]})            # cluster 0: 1 子径
+    c1_a = [r['phi_init'] for r in _rays_of(r1, 1)]
+    np.random.seed(42)
+    r2 = MIMO_OTA_Simulator().synthesize_ota(
+        chamber, channel, profile, synthesis_method='ray',
+        cluster_subrays={0: [_sub(20, 10, 1, 0.5), _sub(21, 11, 1, 0.6),
+                             _sub(22, 12, 1, 0.7)]})              # cluster 0: 3 子径
+    c1_b = [r['phi_init'] for r in _rays_of(r2, 1)]
+    # cluster 1 标准扇随机实现不受 cluster 0 子径数影响 (Codex P2 修复前会偏移)
+    assert np.array_equal(c1_a, c1_b)
+    assert len(c1_a) == 20

@@ -808,8 +808,17 @@ class MIMO_OTA_Simulator:
             
             # Store ray components for time-series generation (Doppler)
             ray_components = []
-            
+
+            # P2-14 (Codex P2): cluster_subrays 混合路径下每簇用独立派生 RNG, 使
+            # "是否注解某簇 / 注解几个子径"不改变其他【未注解】簇的随机实现 —— 确定性
+            # subray_sum 簇跳过随机抽取会偏移共享 RNG 流, 污染后续标准扇簇。纯标准扇
+            # (cluster_subrays=None) 仍走全局 np.random 保持 bit-identical (不 draw seed)。
+            _subray_base_seed = np.random.randint(0, 2**31 - 1) if cluster_subrays else None
+
             for i, cluster in enumerate(physical_clusters):
+                # 每簇独立 RNG (混合路径簇间隔离); None 时退回全局 np.random (bit-identical)
+                _cluster_rng = (np.random.RandomState((_subray_base_seed + i) % (2**32))
+                                if cluster_subrays is not None else np.random)
                 # We will map each ray to probes independently
                 cluster_power_accum = np.zeros(num_effective_probes)
                 cluster_A_accum = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
@@ -910,9 +919,9 @@ class MIMO_OTA_Simulator:
                     if det_phase is not None:
                         phi_rnd = float(det_phase)
                     elif use_strict_pfs:
-                        phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi, size=num_effective_probes)
+                        phi_rnd = base_phase + _cluster_rng.uniform(-np.pi, np.pi, size=num_effective_probes)
                     else:
-                        phi_rnd = base_phase + np.random.uniform(-np.pi, np.pi)
+                        phi_rnd = base_phase + _cluster_rng.uniform(-np.pi, np.pi)
 
                     # p_ray 来自 _ray_sources (标准扇 = cluster.power/20; 真实子径 = 按相对功率分配)
 
