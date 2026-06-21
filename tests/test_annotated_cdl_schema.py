@@ -112,6 +112,44 @@ def test_trajectory_nsnapshots_mismatch_raises():
                                                 delta_d_geo_m=1.0, route_len_m=100))
 
 
+# ───────────── Codex P2 #35 修复 ─────────────
+
+def test_dual_gaussian_beam_fields_validated():
+    """beam 字段受校验: 缺 std_hz / std_hz<=0 → raises (Codex P2)。"""
+    with pytest.raises(ValidationError):
+        DopplerDualGaussian(beam_a={'center_shift_hz': 0.0},                 # 缺 std_hz
+                            beam_b={'center_shift_hz': 0.0, 'std_hz': 10.0})
+    with pytest.raises(ValidationError):
+        DopplerDualGaussian(beam_a={'center_shift_hz': 0.0, 'std_hz': -1.0}, # std_hz<=0
+                            beam_b={'center_shift_hz': 0.0, 'std_hz': 10.0})
+
+
+def _snap(idx, cid=5, v=(30, 0, 0)):
+    return CDLSnapshot(index=idx, ue_velocity_mps=v, clusters=[_native_cluster(cid)])
+
+
+def test_multi_snapshot_requires_trajectory_meta():
+    """多快照但缺 trajectory_meta → raises (Codex P2)。"""
+    with pytest.raises(ValidationError, match='trajectory_meta'):
+        _profile([_native_cluster(5)], snapshots=[_snap(0), _snap(1)])  # trajectory_meta=None
+
+
+def test_duplicate_snapshot_index_raises():
+    """快照 index 重复 → raises (Codex P2)。"""
+    tm = TrajectoryMeta(n_snapshots=2, skeleton_rate_hz=100, delta_d_geo_m=1.0, route_len_m=100)
+    with pytest.raises(ValidationError, match='index 必须唯一'):
+        _profile([_native_cluster(5)], snapshots=[_snap(0), _snap(0)], trajectory_meta=tm)
+
+
+def test_valid_dynamic_multi_snapshot():
+    """合法动态: 2 快照 + 唯一 index + trajectory_meta 一致 → OK, 跨快照同 cluster_id (连续性)。"""
+    tm = TrajectoryMeta(n_snapshots=2, skeleton_rate_hz=100, delta_d_geo_m=1.0, route_len_m=100)
+    p = _profile([_native_cluster(5)], snapshots=[_snap(0), _snap(1, v=(31, 0, 0))],
+                 trajectory_meta=tm)
+    assert len(p.snapshots) == 2
+    assert p.snapshots[1].clusters[0].cluster_id == 5
+
+
 # ───────────── 向后兼容 ─────────────
 
 def test_from_custom_profile_roundtrips_to_b1_baked():

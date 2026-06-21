@@ -33,12 +33,19 @@ class DopplerNative(BaseModel):
     native_fit_residual: float = Field(0.0, ge=0.0)
 
 
+class GaussianBeam(BaseModel):
+    """双高斯里的单个 beam (映射到 F64 Gaussian 谱的一个 beam)。"""
+    model_config = ConfigDict(extra='forbid')
+    center_shift_hz: float
+    std_hz: float = Field(..., gt=0.0)
+
+
 class DopplerDualGaussian(BaseModel):
     """B-2: 双高斯逼近 (F64 Gaussian 双 beam)。"""
     model_config = ConfigDict(extra='forbid')
     kind: Literal['dual_gaussian'] = 'dual_gaussian'
-    beam_a: dict                                    # {center_shift_hz, std_hz}
-    beam_b: dict
+    beam_a: GaussianBeam                            # 字段受校验 (center_shift_hz + std_hz>0)
+    beam_b: GaussianBeam
     power_ratio_db: float = 0.0
     native_fit_residual: float = Field(0.0, ge=0.0)
 
@@ -173,6 +180,14 @@ class AnnotatedCDLProfile(BaseModel):
             raise ValueError(
                 "phase_continuous 聚类不能配 target_path=B2_parametric (确定性相位不能交统计衰落)"
             )
+
+        # 快照 index 唯一 (动态轨迹逐帧标识, F4 跟踪/F64 逐帧切换都依赖)
+        snap_indexes = [s.index for s in self.snapshots]
+        if len(set(snap_indexes)) != len(snap_indexes):
+            raise ValueError(f"snapshot index 必须唯一, got {snap_indexes}")
+        # 多快照 (动态) 须有 trajectory_meta (骨架率 / Δd_geo / 轨迹长度)
+        if len(self.snapshots) > 1 and self.trajectory_meta is None:
+            raise ValueError("多快照 (动态) profile 须提供 trajectory_meta")
 
         for snap in self.snapshots:
             seen_ids = set()
