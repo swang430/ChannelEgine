@@ -107,5 +107,6 @@ def test_new_b1_strict_pfs_matches_legacy(tmp_path):
     files_b = bake_b1_annotated(annotated, chamber, channel, _export(tmp_path, 'new_pfs.asc'),
                                 synthesis_method='strict_pfs')
 
+    assert len(files_a) == len(files_b) > 0          # 防 zip 截断掩盖文件数回归 (Codex P2)
     for fa, fb in zip(sorted(files_a), sorted(files_b)):
         assert open(fa).read() == open(fb).read()
