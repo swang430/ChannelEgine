@@ -166,3 +166,18 @@ def test_unannotated_cluster_rng_isolated():
     # cluster 1 标准扇随机实现不受 cluster 0 子径数影响 (Codex P2 修复前会偏移)
     assert np.array_equal(c1_a, c1_b)
     assert len(c1_a) == 20
+
+
+def test_empty_cluster_subrays_equals_none():
+    """空 dict cluster_subrays={} = 无注解簇, 与 None 同义: 标准扇 + bit-identical,
+    不崩 (Codex P2: base_seed 用 truthy=None 但 RNG 分支若 is-not-None 会 None+i TypeError)。"""
+    chamber, channel, profile = _setup()
+    np.random.seed(7)
+    r_empty = MIMO_OTA_Simulator().synthesize_ota(
+        chamber, channel, profile, synthesis_method='ray', cluster_subrays={})
+    np.random.seed(7)
+    r_none = MIMO_OTA_Simulator().synthesize_ota(
+        chamber, channel, profile, synthesis_method='ray', cluster_subrays=None)
+    assert len(_rays_of(r_empty, 0)) == 20          # 标准扇, 不崩
+    assert np.array_equal(r_empty['transmit_mapping_matrix_A'],
+                          r_none['transmit_mapping_matrix_A'])   # {} ≡ None bit-identical

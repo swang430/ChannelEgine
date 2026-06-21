@@ -816,9 +816,11 @@ class MIMO_OTA_Simulator:
             _subray_base_seed = np.random.randint(0, 2**31 - 1) if cluster_subrays else None
 
             for i, cluster in enumerate(physical_clusters):
-                # 每簇独立 RNG (混合路径簇间隔离); None 时退回全局 np.random (bit-identical)
+                # 每簇独立 RNG (混合路径簇间隔离); None / 空 dict 退回全局 np.random
+                # (bit-identical)。条件用 truthy 与 _subray_base_seed 严格一致 (Codex P2:
+                # cluster_subrays={} 时 base_seed=None, 若这里用 is-not-None 会 None+i TypeError)。
                 _cluster_rng = (np.random.RandomState((_subray_base_seed + i) % (2**32))
-                                if cluster_subrays is not None else np.random)
+                                if cluster_subrays else np.random)
                 # We will map each ray to probes independently
                 cluster_power_accum = np.zeros(num_effective_probes)
                 cluster_A_accum = np.zeros((num_effective_probes, num_tx_antennas), dtype=complex)
