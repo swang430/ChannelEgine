@@ -201,3 +201,15 @@ def test_unannotated_cluster_matches_legacy_none():
         cluster_subrays={0: [_sub(20, 10, 1.0, 0.5), _sub(21, 11, 0.5, 1.0)]})
     c1_ann = [r['phi_init'] for r in _rays_of(r_ann, 1)]
     assert np.array_equal(c1_none, c1_ann)   # cluster 1 与全标准扇情况逐位一致 (legacy 兼容)
+
+
+def test_subray_without_phase_rad_fails_fast():
+    """Codex P2: 直接调 synthesize_ota 传 phase_rad=None 的子径 → fail-fast。SubRay schema
+    本身允许 phase_rad=None (仅上层 AnnotatedCDLProfile 对 subray_sum 拒绝), 但底层旁路也
+    必须守 —— 否则 None 静默落随机分支, 失去确定性 + 多抽 RNG 污染后续未注解簇。"""
+    chamber, channel, profile = _setup()
+    bad = {0: [SubRay(aoa_deg=20, aod_deg=10, zoa_deg=90, zod_deg=90,
+                      power_linear=1.0, phase_rad=None)]}
+    with pytest.raises(ValueError, match="phase_rad"):
+        MIMO_OTA_Simulator().synthesize_ota(
+            chamber, channel, profile, synthesis_method='ray', cluster_subrays=bad)

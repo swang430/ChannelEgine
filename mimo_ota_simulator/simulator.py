@@ -837,7 +837,16 @@ class MIMO_OTA_Simulator:
                 # 无 cluster_subrays 时严格走标准扇旧路径 (bit-identical)。
                 _subrays_this = cluster_subrays.get(i) if cluster_subrays else None
                 if _subrays_this:
-                    # P2-14 (Codex P2): subray_sum 簇用确定性 phase_rad 不抽随机相位,
+                    # P2-14 (Codex P2): 此旁路文档化为确定性 phase_rad 相干求和; 直接调
+                    # synthesize_ota 会绕过 AnnotatedCDLProfile 对 subray_sum 必有 phase_rad
+                    # 的上层校验, 故此处 fail-fast —— phase_rad=None 否则静默落随机分支
+                    # (失去确定性 + 在 20 个 discard 之外多抽 RNG, 污染后续未注解簇)。
+                    if any(sr.phase_rad is None for sr in _subrays_this):
+                        raise ValueError(
+                            f"cluster_subrays[{i}] 含 phase_rad=None 的子径; B-1 标注式烘焙"
+                            f"旁路要求每个子径携带确定性 phase_rad (相干求和)。"
+                        )
+                    # subray_sum 簇用确定性 phase_rad 不抽随机相位,
                     # 但消耗与标准扇【等量】的全局 RNG draw 并丢弃, 使全局流前进量与"该簇
                     # 是标准扇"完全一致 → 未注解簇 (后续标准扇 cluster) 的 legacy 随机实现
                     # 既不受本簇是否注解/子径数影响 (隔离), 又与 cluster_subrays=None 逐位
