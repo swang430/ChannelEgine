@@ -39,13 +39,18 @@ from .doppler_native_mapping import _doppler_from_angles, map_doppler_to_native
 
 @dataclass(frozen=True)
 class MPC:
-    """一条多径分量 (RT 射线)。"""
+    """一条多径分量 (RT 射线)。
+
+    phase_rad = 确定性初相 (RT 几何路径长决定); geometric_native_fit (B-2 统计路) 不用,
+    phase_continuous (F5, B-1/GCM 确定性路) 必需。
+    """
     delay_s: float
     power_linear: float
     aoa_deg: float
     aod_deg: float
     zoa_deg: float = 90.0
     zod_deg: float = 90.0
+    phase_rad: Optional[float] = None
 
 
 @dataclass(frozen=True)
