@@ -105,6 +105,16 @@ class PropsimASCIIExporter:
 
     def _generate_asc_content(self, data: np.ndarray, delays: np.ndarray, carrier_frequency_hz: float) -> str:
         """Generates the content of a standard .ASC file as a string."""
+        # 当前导出器保留既有一位小数格式，不代表仪器精度上限。
+        # Propsim User Reference Rev10.2 §21.1–21.1.1 p330示例为26092.1，
+        # 该段未声明任意精度；这里只拒绝头部与计算更新率不一致的输入。
+        rate_text = f"{self.config.sample_rate_hz:.1f}"
+        if float(rate_text) != self.config.sample_rate_hz:
+            raise ValueError(
+                f"当前 ASC 导出器将更新率写为一位小数；输入 {self.config.sample_rate_hz} Hz "
+                f"会写成 {rate_text} Hz，与计算时间轴不一致，已拒绝导出。"
+                "请显式选择可原样表示的更新率后重新生成。"
+            )
         num_samples, num_taps = data.shape
         out = io.StringIO()
         
@@ -112,7 +122,7 @@ class PropsimASCIIExporter:
         out.write("***** Header *****\n")
         out.write(f"{num_samples} CIRs\n")
         out.write(f"{num_taps} Taps/CIR\n")
-        out.write(f"{self.config.sample_rate_hz:.1f} CIR_Update_Rate\n")
+        out.write(f"{rate_text} CIR_Update_Rate\n")
         out.write(f"{carrier_frequency_hz:.1f} Carrier_Frequency\n")
         out.write("***** Tap data *****\n")
         
