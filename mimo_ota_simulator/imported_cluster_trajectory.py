@@ -75,8 +75,10 @@ def validate_trajectory(data):
             require(number(frame['timeSeconds']) == time, '帧时刻与时间轴不一致')
             identity = (frame['frameId'], integer(frame['internalLinkId']))
             require(frame['frameId'] is None or type(frame['frameId']) is int, '原始帧身份无效')
-            require(identity not in seen, '重复的帧与链路身份')
-            seen.add(identity)
+            # 未知帧编号不能作为重复证据；样本次序和时间仍须独立校验。
+            if frame['frameId'] is not None:
+                require(identity not in seen, '重复的帧与链路身份')
+                seen.add(identity)
             count = integer(frame['inputPathCount'])
             result = frame['clustering']
             status = frame['status']

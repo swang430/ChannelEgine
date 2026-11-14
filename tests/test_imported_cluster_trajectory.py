@@ -137,3 +137,22 @@ def test_no_valid_paths_response_stays_unknown():
     row = reader().sampled_responses(data, [0.])[1]
     assert row == dict(sampleIndex=1, timeSeconds=1., status='unavailable',
                        reason='no_valid_paths', real=None, imag=None)
+
+
+def test_unknown_frame_ids_allow_same_link_at_distinct_sample_times():
+    data = document()
+    for frame in data['frames']:
+        frame.update(frameId=None, internalLinkId=10)
+    original = copy.deepcopy(data)
+    assert reader().validate_trajectory(data) == original
+    rows = reader().sampled_responses(data, [0.])
+    assert [row['timeSeconds'] for row in rows] == original['timing']['timesSeconds']
+    assert [row['sampleIndex'] for row in rows] == [0, 1, 2]
+    assert data == original
+
+
+def test_known_frame_and_link_duplicate_is_rejected():
+    data = document()
+    data['frames'][1].update(frameId=0, internalLinkId=10)
+    with pytest.raises(ValueError, match='重复的帧与链路身份'):
+        reader().validate_trajectory(data)
