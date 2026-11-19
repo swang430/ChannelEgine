@@ -65,3 +65,20 @@ for row in rows:
 变异脚本只修改已加载模块的内存代码，逐项执行测试，最后恢复内存实现。
 每个替换锚点必须唯一命中；只有测试失败才算检出，收集错误不算检出。
 这些是软件测试，不能替代真实接口采集或仪器验证。
+
+## 按方向交付全帧采样结果
+
+在仓库根目录可直接运行，集成服务也可在进程内调用同一函数。
+
+```bash
+python -m mimo_ota_simulator.sampled_trajectory trajectory.json --direction downlink --offsets-hz 0 5000000
+```
+
+`synthesize_sampled_trajectory(data, offsets_hz, *, direction)` 每次接收一个方向。
+调用者依据资产来源指定 downlink 或 uplink。如果输入显式声明方向，两者必须一致。
+返回对象的 schemaVersion 为 `channelengine-sampled-trajectory/1`，direction 记录方向，
+offsetsHz 保存有序频偏。frames 包括每个样本的 sampleIndex、frameId、internalLinkId、
+timeSeconds、status、reason、real、imag。最后一项对应输入末帧，包括末帧缺测的情况。
+sampling 为 `source_samples_only`，帧间没有输出。仅适用于选定收发天线对的模型复频响；
+坐标变换、探头映射、连续快衰落、频带内物理精度和仪器回放均需各自的证据。
+质量表缺少有效路径计数时，filteredPaths 显式填 null。簇数仍须在输入路径数和预算以内。
