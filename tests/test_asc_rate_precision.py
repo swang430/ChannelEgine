@@ -80,7 +80,7 @@ def test_allowed_rate_header_and_phase(tmp_path, dynamic, direction, transport, 
     expected = np.exp(2j*np.pi*40*np.arange(count)/rate) if dynamic else np.ones(count)
     # 现有实虚部各六位科学计数输出，仅比较序列化精度，不作物理精度验收。
     np.testing.assert_allclose(rows[:, 1]+1j*rows[:, 2], expected, rtol=0, atol=8e-8)
-    np.testing.assert_array_equal(rows[:, 0], np.full(count, 1e-7))
+    np.testing.assert_array_equal(rows[:, 0], np.full(count, 100.))
 
 
 def test_raw_preserves_rate_and_existing_format(tmp_path, dynamic, direction, transport):
@@ -98,3 +98,12 @@ def test_raw_preserves_rate_and_existing_format(tmp_path, dynamic, direction, tr
     expected_text = ''.join(f'{1e-7:.9e}\t{v.real:.6e}\t{v.imag:.6e}\n' for v in expected)
     assert text == expected_text
     assert 'CIR_Update_Rate' not in text
+
+
+@pytest.mark.parametrize('delay_s', [np.nan, np.inf, np.finfo(np.float64).max])
+def test_standard_rejects_unrepresentable_delay(tmp_path, delay_s):
+    result = result_for(False)
+    result['channel_impulse_response'][0]['delay'] = delay_s
+    with pytest.raises(ValueError, match='纳秒'):
+        exporter(tmp_path, 1000.).export(result)
+    assert list(tmp_path.iterdir()) == []
