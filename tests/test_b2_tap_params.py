@@ -116,8 +116,10 @@ def test_multisnapshot_warns_and_extracts_one():
         trajectory_meta=TrajectoryMeta(
             n_snapshots=2, skeleton_rate_hz=100.0, delta_d_geo_m=0.04, route_len_m=1.0),
         snapshots=snaps)
+    with pytest.raises(ValueError, match="明确选择"):
+        extract_tap_parameters(prof)
     with pytest.warns(UserWarning, match="单快照"):
-        taps = extract_tap_parameters(prof)
+        taps = extract_tap_parameters(prof, snapshot_index=1)
     assert len(taps) == 1
 
 

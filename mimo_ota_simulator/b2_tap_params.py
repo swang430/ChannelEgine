@@ -70,7 +70,7 @@ def _dual_gaussian_centroid_hz(beam_a, beam_b, power_ratio_db: float) -> float:
 
 def extract_tap_parameters(
     annotated: AnnotatedCDLProfile,
-    snapshot_index: int = 0,
+    snapshot_index: Optional[int] = None,
 ) -> List[TapParameter]:
     """AnnotatedCDLProfile (B2_parametric) → per-tap 参数表 (单快照)。
 
@@ -82,6 +82,10 @@ def extract_tap_parameters(
             f"extract_tap_parameters 仅接受 target_path=B2_parametric (B-2 参数化路); "
             f"got {tp!r}。B1_baked/GCM_native (baked/subray_sum) 走 b1_annotated_baker 烘焙路。"
         )
+    if snapshot_index is None:
+        if len(annotated.snapshots) != 1:
+            raise ValueError("输入包含多个快照，请明确选择要处理的帧。")
+        snapshot_index = annotated.snapshots[0].index
     snap = _select_snapshot(annotated, snapshot_index)
     if len(annotated.snapshots) > 1:
         warnings.warn(
