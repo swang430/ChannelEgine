@@ -184,3 +184,20 @@ def test_unknown_filtered_count_still_bounds_clusters_by_input():
     frame['inputPathCount'] = frame['clustering']['rawPaths'] = 0
     with pytest.raises(ValueError):
         reader().validate_trajectory(data)
+
+
+def test_unknown_request_and_task_preserve_known_link_and_limits():
+    data = document()
+    data['requestedClusterCount'] = data['source']['taskId'] = None
+    result = reader().synthesize_sampled_trajectory(data, [0], direction='downlink')
+    assert result['source']['taskId'] is None
+    assert data['requestedClusterCount'] is None
+    assert result['frames'][-1]['internalLinkId'] == 12
+    frame = data['frames'][0]
+    clustering = frame['clustering']
+    frame['inputPathCount'] = clustering['rawPaths'] = 25
+    clustering['filteredPaths'] = None
+    clustering['paths'] = [dict(clustering['paths'][0], clusterId=i) for i in range(25)]
+    clustering['nCluster'] = 25
+    with pytest.raises(ValueError):
+        reader().validate_trajectory(data)
