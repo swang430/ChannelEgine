@@ -89,7 +89,7 @@ def bake_b1_annotated(
     synthesis_method: str = 'ray',
     output_path: Optional[str] = None,
     direction: str = "dl",
-    snapshot_index: int = 0,
+    snapshot_index: Optional[int] = None,
 ) -> List[str]:
     """AnnotatedCDLProfile (B1_baked / GCM_native) → per-(Tx, Probe) .asc (OTA, 含校准)。
 
@@ -99,7 +99,7 @@ def bake_b1_annotated(
         export_config / calibration_config: .asc 导出参数 / OTA 校准 (None=不施加)。
         synthesis_method: 'ray' (几何 GSCM, 默认) 或 'strict_pfs' (逐探头独立衰落)。
             subray_sum 簇用确定性 phase_rad, 不受此项影响; 仅 baked (标准扇) 簇受影响。
-        snapshot_index: 多快照时烘第几个 (默认首快照)。
+        snapshot_index: 多快照时必须明确选择要合成的帧。
 
     Returns: 生成的 .asc 文件路径列表 (per Tx→Probe link)。
     """
@@ -111,6 +111,10 @@ def bake_b1_annotated(
         )
 
     n_snap = len(annotated.snapshots)
+    if snapshot_index is None:
+        if len(annotated.snapshots) != 1:
+            raise ValueError("输入包含多个快照，请明确选择要处理的帧。")
+        snapshot_index = annotated.snapshots[0].index
     snap = _select_snapshot(annotated, snapshot_index)
     if n_snap > 1:
         warnings.warn(

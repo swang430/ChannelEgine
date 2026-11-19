@@ -65,3 +65,38 @@ for row in rows:
 变异脚本只修改已加载模块的内存代码，逐项执行测试，最后恢复内存实现。
 每个替换锚点必须唯一命中；只有测试失败才算检出，收集错误不算检出。
 这些是软件测试，不能替代真实接口采集或仪器验证。
+
+## 按方向交付全帧采样结果
+
+在仓库根目录可直接运行，集成服务也可在进程内调用同一函数。
+
+```bash
+python -m mimo_ota_simulator.sampled_trajectory trajectory.json --direction downlink --offsets-hz 0 5000000
+```
+
+`synthesize_sampled_trajectory(data, offsets_hz, *, direction)` 每次接收一个方向。
+调用者依据资产来源指定 downlink 或 uplink。如果输入显式声明方向，两者必须一致。
+返回对象的 schemaVersion 为 `channelengine-sampled-trajectory/1`，direction 记录方向，
+offsetsHz 保存有序频偏。frames 包括每个样本的 sampleIndex、frameId、internalLinkId、
+timeSeconds、status、reason、real、imag。最后一项对应输入末帧，包括末帧缺测的情况。
+sampling 为 `source_samples_only`，帧间没有输出。仅适用于选定收发天线对的模型复频响；
+坐标变换、探头映射、连续快衰落、频带内物理精度和仪器回放均需各自的证据。
+质量表缺少有效路径计数时，filteredPaths 显式填 null。簇数仍须在输入路径数和预算以内。
+
+### 2026-11-19 实际导出数据的软件复核
+
+输入来自同一次仿真的上下行 24 簇导出表。Meta 组织的两个交换文件的 SHA-256 分别为
+`a827f7c35ad500adce98399e2b00b7a370a709ad13ad6a1fa2548c612c31f395`（下行）和
+`82a9de8aa48a36b4101198973bf9db46674f0805d9fa1f87e643299e620994b3`（上行）。
+在两个方向各 38 个源时刻，以 −5、−2.5、0、2.5、5 MHz 频偏运行命令行。
+独立复核程序从 CSV 的损耗、相位、时延直接计算，并用单独的时间表核对每帧身份。
+380 个复数值通过；最大绝对数值差下行为 1.72×10⁻²⁰，上行为 1.54×10⁻²⁰ 以内。
+两方向末帧均为 37，时刻为 36.17493937675094 秒，载频处下行复数为
+(1.6951162149620494e-7, −6.097723221664496e-7)，上行为
+(1.7287273864062641e-7, −6.314623721627944e-7)。这些误差只描述两种软件计算的一致性。
+
+复现时先用前述命令生成单方向输出，再运行下例，将文件名替换为该方向实际文件。
+
+```bash
+python scripts/verify_sampled_export.py output.json R0B0S0D_cluster_cdl.csv independent-carrier-check.csv --direction downlink --offsets-hz -5000000 -2500000 0 2500000 5000000
+```

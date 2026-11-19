@@ -88,10 +88,12 @@ def validate_trajectory(data):
                 continue
             require(status == 'clustered' and isinstance(result, dict), '算法失败不能冒充有效帧')
             require(integer(result['rawPaths']) == count, '输入路径计数不一致')
-            valid = integer(result['filteredPaths'])
+            valid = result['filteredPaths']
+            if valid is not None:
+                require(integer(valid) <= count, '有效路径超过输入路径数')
             paths = result['paths']
-            require(isinstance(paths, list) and 0 < len(paths) <= min(budget, valid)
-                    and valid <= count and integer(result['nCluster']) == len(paths), '实际簇数、有效路径或预算不一致')
+            require(isinstance(paths, list) and 0 < len(paths) <= min(budget, count)
+                    and (valid is None or len(paths) <= valid) and integer(result['nCluster']) == len(paths), '实际簇数、有效路径或预算不一致')
             ids = set()
             for path in paths:
                 cid = integer(path['clusterId'])
@@ -147,3 +149,17 @@ def sampled_responses(data, offsets_hz):
         rows.append(row)
     return rows
 
+
+
+def synthesize_sampled_trajectory(data, offsets_hz, *, direction):
+    """在调用方指定方向的原始采样时刻合成标量信道频响。"""
+    require(direction in ('downlink', 'uplink'), '须明确指定上行或下行')
+    require(isinstance(data, dict), '轨迹必须是对象')
+    require(data.get('direction', direction) == direction, '输入声明的方向与请求不一致')
+    rows = sampled_responses(data, offsets_hz)
+    for row, frame in zip(rows, data['frames']):
+        row.update(frameId=frame['frameId'], internalLinkId=frame['internalLinkId'])
+    return dict(schemaVersion='channelengine-sampled-trajectory/1', direction=direction,
+                offsetsHz=list(offsets_hz), sampling='source_samples_only',
+                source=data['source'].copy(), carrierHz=data['carrierHz'],
+                txAnt=data['txAnt'], rxAnt=data['rxAnt'], frames=rows)

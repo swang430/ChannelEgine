@@ -156,3 +156,31 @@ def test_known_frame_and_link_duplicate_is_rejected():
     data['frames'][1].update(frameId=0, internalLinkId=10)
     with pytest.raises(ValueError, match='重复的帧与链路身份'):
         reader().validate_trajectory(data)
+
+
+def test_sampled_trajectory_keeps_identity_gaps_and_final_response():
+    data = document()
+    data['frames'][1].update(status='no_valid_paths', clustering=None)
+    data['frames'][2]['clustering']['paths'][0].update(hReal=3, hImag=-4)
+    output = reader().synthesize_sampled_trajectory(data, [125e6, 0], direction='uplink')
+    assert output['direction'] == 'uplink'
+    assert output['sampling'] == 'source_samples_only'
+    assert output['offsetsHz'] == [125e6, 0]
+    rows = output['frames']
+    assert [r['timeSeconds'] for r in rows] == data['timing']['timesSeconds']
+    assert rows[1]['real'] is None and rows[1]['reason'] == 'no_valid_paths'
+    assert (rows[-1]['frameId'], rows[-1]['internalLinkId']) == (2, 12)
+    assert rows[-1]['real'] == pytest.approx([-4, 3])
+    assert rows[-1]['imag'] == pytest.approx([-3, -4])
+    with pytest.raises(ValueError):
+        reader().synthesize_sampled_trajectory(data, [0], direction='other')
+
+
+def test_unknown_filtered_count_still_bounds_clusters_by_input():
+    data = document()
+    frame = data['frames'][0]
+    frame['clustering']['filteredPaths'] = None
+    assert reader().validate_trajectory(data) is data
+    frame['inputPathCount'] = frame['clustering']['rawPaths'] = 0
+    with pytest.raises(ValueError):
+        reader().validate_trajectory(data)

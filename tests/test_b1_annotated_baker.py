@@ -153,8 +153,10 @@ def test_multisnapshot_warns_and_bakes_one(tmp_path):
             n_snapshots=2, skeleton_rate_hz=100.0, delta_d_geo_m=0.04, route_len_m=1.0),
         snapshots=snaps,
     )
+    with pytest.raises(ValueError, match="明确选择"):
+        bake_b1_annotated(annotated, _chamber(), _channel(), _export(tmp_path))
     with pytest.warns(UserWarning, match="单快照"):
-        files = bake_b1_annotated(annotated, _chamber(), _channel(), _export(tmp_path))
+        files = bake_b1_annotated(annotated, _chamber(), _channel(), _export(tmp_path), snapshot_index=1)
     assert len(files) == N_PROBES * N_TX
 
 
