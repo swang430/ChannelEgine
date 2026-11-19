@@ -126,7 +126,13 @@ class PropsimASCIIExporter:
         out.write(f"{carrier_frequency_hz:.1f} Carrier_Frequency\n")
         out.write("***** Tap data *****\n")
         
-        delay_strs = [f"{d:.9e}" for d in delays]
+        # 内部时延以秒计。Propsim User Reference Rev 8.0 §20.1.2
+        # “Tap data” 要求每个三元组的首列以纳秒计。
+        with np.errstate(over='ignore', invalid='ignore'):
+            delays_ns = np.asarray(delays, dtype=np.float64) * 1e9
+        if not np.all(np.isfinite(delays_ns)):
+            raise ValueError("ASC 时延转换为纳秒后必须是有限数值")
+        delay_strs = [f"{d:.9e}" for d in delays_ns]
         
         for t in range(num_samples):
             row = []
@@ -464,7 +470,7 @@ class MFSWRawExporter(PropsimASCIIExporter):
     
     Format:
     Generates a Tab-Separated string without any header rows. 
-    Each row is a CIR snapshot. Columns are triples: [Delay (ns)] [Real] [Imag].
+    Each row is a CIR snapshot. Columns are triples: [Delay (seconds)] [Real] [Imag].
     This raw format is then zipped and sent to the Orchestrator's format adapters.
     """
     

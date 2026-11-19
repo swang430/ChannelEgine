@@ -89,6 +89,9 @@ class TestPropsimExport(unittest.TestCase):
         self.assertGreater(num_taps, 1, "CDL-C should have multiple taps")
         self.assertEqual(num_cirs, 1, "Duration 0.001s at 1000Hz should give 1 sample (or very few)")
         
+        expected_ns = sorted(tap['delay'] * 1e9 for tap in sim_results['channel_impulse_response'])
+        np.testing.assert_allclose(data[0, ::3], expected_ns, rtol=1e-9, atol=0)
+
         # Check Data Dimensions
         # Standard Format: Delay Re Im Delay Re Im ...
         # Cols = 3 * NumTaps
