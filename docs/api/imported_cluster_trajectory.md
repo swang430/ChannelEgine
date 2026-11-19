@@ -100,3 +100,7 @@ sampling 为 `source_samples_only`，帧间没有输出。仅适用于选定收�
 ```bash
 python scripts/verify_sampled_export.py output.json R0B0S0D_cluster_cdl.csv independent-carrier-check.csv --direction downlink --offsets-hz -5000000 -2500000 0 2500000 5000000
 ```
+
+导出缺少任务编号或请求预算时，来源 taskId 和 requestedClusterCount 分别显式填 null。
+mpdbPath、每帧链路身份和实际簇数仍必填。未知预算仅按本版上限 24、输入路径数及已知有效路径数校验；
+调用者应从原始输入保留预算及其来源，不能从实际簇数反推请求参数。

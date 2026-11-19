@@ -51,15 +51,18 @@ def validate_trajectory(data):
         require(data['clusterIdentity'] == 'frame-local-only', '本版簇编号仅表示帧内身份')
         require(data['angleCoordinateSystem'] in ('LCS', 'GCS', None), '角度坐标系声明无效')
         source = data['source']
-        for key in ('taskId', 'mpdbPath'):
-            require(isinstance(source[key], str) and source[key].strip(), '缺少来源任务或MPDB身份')
+        task = source['taskId']
+        require(task is None or (isinstance(task, str) and task.strip()), '来源任务须为有效编号或显式未知')
+        require(isinstance(source['mpdbPath'], str) and source['mpdbPath'].strip(), '缺少来源 MPDB 身份')
         for key in ('contentVersion', 'softwareVersion', 'additionalLoss'):
             require(key in source, '来源未知项必须显式保留')
         require(number(data['carrierHz']) > 0, '载频必须为正数')
         integer(data['txAnt'])
         integer(data['rxAnt'])
-        budget = integer(data['requestedClusterCount'])
-        require(1 <= budget <= 24, '本版聚簇预算须为1至24')
+        budget = data['requestedClusterCount']
+        if budget is not None:
+            require(1 <= integer(budget) <= 24, '本版聚簇预算须为1至24')
+        cluster_limit = 24 if budget is None else budget
         timing = data['timing']
         require(isinstance(timing['source'], str) and timing['source'].strip(), '缺少时间来源')
         times, frames = timing['timesSeconds'], data['frames']
@@ -92,7 +95,7 @@ def validate_trajectory(data):
             if valid is not None:
                 require(integer(valid) <= count, '有效路径超过输入路径数')
             paths = result['paths']
-            require(isinstance(paths, list) and 0 < len(paths) <= min(budget, count)
+            require(isinstance(paths, list) and 0 < len(paths) <= min(cluster_limit, count)
                     and (valid is None or len(paths) <= valid) and integer(result['nCluster']) == len(paths), '实际簇数、有效路径或预算不一致')
             ids = set()
             for path in paths:
