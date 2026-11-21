@@ -47,6 +47,8 @@ def generate(archive, geometry, baseline, output, speed, rate):
     if np.any(np.diff(times) <= 0) or rate <= 2 * np.max(np.abs(rays["DOPPLER"])):
         raise ValueError("时间轴重复或采样率不足")
     grid = np.arange(int(np.floor(times[-1] * rate)) + 1) / rate
+    if len(grid) < 2:
+        raise ValueError("动态相位核对至少需要两个输出时刻")
     points = np.array(g["fit_points_m"])
 
     def transfer(az, zen):
@@ -180,7 +182,7 @@ def generate(archive, geometry, baseline, output, speed, rate):
                     comments="",
                     header="\n".join(header),
                 )
-                recovered = np.loadtxt(target, skiprows=12)
+                recovered = np.loadtxt(target, skiprows=12, ndmin=2)
                 if not np.allclose(recovered, triples, atol=0, rtol=6e-12):
                     raise ValueError("文件回读失真")
                 recovered_fields.append(
