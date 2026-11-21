@@ -36,7 +36,7 @@ def field(points, az, zen, components, frequency):
     return phase @ xyz
 
 
-def read_columns(path):
+def read_columns(path, *, dynamic=False):
     with zipfile.ZipFile(path) as z:
         if z.getinfo("R0B0S0D.mpdb").file_size > 256 * 1024**2:
             raise ValueError("下行样本超过大小上限")
@@ -57,8 +57,10 @@ def read_columns(path):
             raise ValueError("本生成器要求全局角度、单频 CIR 和发射第一极化 +45°")
         result = {}
         for table, names in {
-            "CHANNEL": "LINK_ID POLAR JONES_T FADE_L PHASE DELAY AOA ZOA",
-            "LINK": "LINK_ID FRAME_ID TX_ANT RX_ANT FREQUENCY",
+            "CHANNEL": "LINK_ID POLAR JONES_T FADE_L PHASE DELAY AOA ZOA"
+            + (" DOPPLER" if dynamic else ""),
+            "LINK": "LINK_ID FRAME_ID TX_ANT RX_ANT FREQUENCY"
+            + (" RX_ANT_POSITION" if dynamic else ""),
         }.items():
             for name in names.split():
                 column = desc["records"][table][name]
