@@ -167,3 +167,15 @@ Full schema + service-side integration contract: see [`doc/MIMO_First_Integratio
 
 Enable `ChamberConfig.dual_polarized=True` and set `AntennaArrayConfig.polarization` to `'V'` or `'H'` for each Tx/Rx antenna. The synthesizer applies TR 38.901 §7.3.2 per-cluster 2×2 polarization mixing using the cluster's `xpr_db` and `initial_phases_rad`. Slant ±45° / arbitrary polarization is Phase 7 (deferred). See `docs/api/mimo_ota_simulator.md` §8 for the behavior matrix.
 
+
+### 已有簇成员表的多端口离线对照（P1-83）
+
+对每个有成员依据的阵元对调用 `mimo_ota_simulator.joint_cluster_response.reduce_link`，按相同的成员编号归并，同时保留本链路的复系数、时延和角度统计。输入时延为秒、多普勒为 Hz、方位角和天顶角为度。对无成员依据的帧或端口保留缺失。阵元对使用自身接收复系数的功率作权重；OTA 入射场需另外计算。
+
+对已有逐帧簇表可运行下列命令。两个容差由调用方选择，用于推定几何关联。输出包含输入校验值、各帧轨迹编号、消失的轨迹和未匹配功率占比；它不能证明物理射线身份。
+
+```sh
+python -m mimo_ota_simulator.joint_trajectory clusters_joint_tx0rx0.csv --delay-limit-ns 20 --angle-limit-deg 10
+```
+
+RT-IMT-2030 的成员表示例仅覆盖第 0 帧的 TX0～3 至 RX0。以八路传导基线的相同 101 个频点（±50 MHz）逐链路对比 MPDB，四条链路各 24 簇，宽带归一化均方误差分别为 −24.19、−24.26、−23.44、−24.09 dB。38 帧参考阵元簇表可单独用于跟踪，以示例容差得到 291 次关联。其余帧的逐射线成员关系、RX1 的成员关系以及真机播放均未由本样本验证。
