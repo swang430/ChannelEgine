@@ -1,0 +1,703 @@
+{
+  "schema": "candidate-evaluation/1",
+  "plan": {
+    "source_sha256": "217585159349afe88ca9864be4a98158625996fefc2639af4403e9727682a2dd",
+    "members_sha256": "c3b9da980667ef38cf44f7275a3a12105dcc1b4e95eacbffdf23e0f3eb1bcd1a",
+    "selection_frames": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25
+    ],
+    "holdout_frames": [
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37
+    ],
+    "budget_limit": 31,
+    "matrix_p95_limit": 1.0,
+    "phase_p95_limit_deg": 60.0,
+    "objective": "phase",
+    "mode": "ota"
+  },
+  "provenance": {
+    "source_sha256": "217585159349afe88ca9864be4a98158625996fefc2639af4403e9727682a2dd",
+    "members_sha256": "c3b9da980667ef38cf44f7275a3a12105dcc1b4e95eacbffdf23e0f3eb1bcd1a",
+    "time_basis": "MPDB source frame id; source physical time unverified",
+    "delay_zero_basis": "input seconds unchanged; physical zero unverified",
+    "offsets_hz": [
+      -50000000.0,
+      -47500000.0,
+      -45000000.0,
+      -42500000.0,
+      -40000000.0,
+      -37500000.0,
+      -35000000.0,
+      -32500000.0,
+      -30000000.0,
+      -27500000.0,
+      -25000000.0,
+      -22500000.0,
+      -20000000.0,
+      -17500000.0,
+      -15000000.0,
+      -12500000.0,
+      -10000000.0,
+      -7500000.0,
+      -5000000.0,
+      -2500000.0,
+      0.0,
+      2500000.0,
+      5000000.0,
+      7500000.0,
+      10000000.0,
+      12500000.0,
+      15000000.0,
+      17500000.0,
+      20000000.0,
+      22500000.0,
+      25000000.0,
+      27500000.0,
+      30000000.0,
+      32500000.0,
+      35000000.0,
+      37500000.0,
+      40000000.0,
+      42500000.0,
+      45000000.0,
+      47500000.0,
+      50000000.0
+    ],
+    "port_pairs": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        0,
+        4
+      ],
+      [
+        0,
+        6
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        1,
+        5
+      ],
+      [
+        1,
+        7
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        2,
+        4
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        3,
+        5
+      ],
+      [
+        3,
+        7
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        4,
+        6
+      ],
+      [
+        5,
+        7
+      ],
+      [
+        6,
+        7
+      ]
+    ],
+    "amplitude_floor": 1e-08,
+    "method": "P2-109 fixed members, shared early/late cut, coherent coefficient sum",
+    "asc_applicable_frames": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36
+    ]
+  },
+  "selection": {
+    "independent/24": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "missing_frames": [],
+      "unverified_frames": [],
+      "excluded_frame_evidence": [],
+      "actual_taps_min": 24,
+      "actual_taps_max": 24,
+      "changes_against_same_strategy_baseline": {
+        "matrix_nmse": {
+          "improved": 0,
+          "worse": 0,
+          "unchanged": 1066
+        },
+        "phase_error_deg": {
+          "improved": 0,
+          "worse": 0,
+          "unchanged": 17056
+        }
+      },
+      "matrix_nmse": {
+        "valid": 1066,
+        "total": 1066,
+        "coverage": 1.0,
+        "p95": 2.7629692465378053,
+        "worst": {
+          "frame_id": 7,
+          "offset_hz": -25000000.0,
+          "value": 9.079484212038972
+        }
+      },
+      "phase_error_deg": {
+        "valid": 17056,
+        "total": 17056,
+        "coverage": 1.0,
+        "p95": 81.80390484013348,
+        "worst": {
+          "frame_id": 7,
+          "offset_hz": -40000000.0,
+          "value": 179.89516656552726,
+          "port_pair": [
+            3,
+            7
+          ]
+        }
+      },
+      "constraints_met": false
+    },
+    "independent/26": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "missing_frames": [],
+      "unverified_frames": [],
+      "excluded_frame_evidence": [],
+      "actual_taps_min": 26,
+      "actual_taps_max": 26,
+      "changes_against_same_strategy_baseline": {
+        "matrix_nmse": {
+          "improved": 746,
+          "worse": 294,
+          "unchanged": 26
+        },
+        "phase_error_deg": {
+          "improved": 10064,
+          "worse": 6576,
+          "unchanged": 416
+        }
+      },
+      "matrix_nmse": {
+        "valid": 1066,
+        "total": 1066,
+        "coverage": 1.0,
+        "p95": 0.8047963572548449,
+        "worst": {
+          "frame_id": 3,
+          "offset_hz": -32500000.0,
+          "value": 5.4607051674358695
+        }
+      },
+      "phase_error_deg": {
+        "valid": 17056,
+        "total": 17056,
+        "coverage": 1.0,
+        "p95": 68.60457541830533,
+        "worst": {
+          "frame_id": 19,
+          "offset_hz": -50000000.0,
+          "value": 179.83709480744852,
+          "port_pair": [
+            4,
+            5
+          ]
+        }
+      },
+      "constraints_met": false
+    },
+    "independent/31": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "missing_frames": [],
+      "unverified_frames": [],
+      "excluded_frame_evidence": [],
+      "actual_taps_min": 31,
+      "actual_taps_max": 31,
+      "changes_against_same_strategy_baseline": {
+        "matrix_nmse": {
+          "improved": 766,
+          "worse": 274,
+          "unchanged": 26
+        },
+        "phase_error_deg": {
+          "improved": 10441,
+          "worse": 6199,
+          "unchanged": 416
+        }
+      },
+      "matrix_nmse": {
+        "valid": 1066,
+        "total": 1066,
+        "coverage": 1.0,
+        "p95": 0.8057732432155005,
+        "worst": {
+          "frame_id": 3,
+          "offset_hz": -32500000.0,
+          "value": 5.490910044532602
+        }
+      },
+      "phase_error_deg": {
+        "valid": 17056,
+        "total": 17056,
+        "coverage": 1.0,
+        "p95": 66.88762881043208,
+        "worst": {
+          "frame_id": 10,
+          "offset_hz": -45000000.0,
+          "value": 179.46106974535215,
+          "port_pair": [
+            1,
+            5
+          ]
+        }
+      },
+      "constraints_met": false
+    },
+    "shared/24": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "missing_frames": [],
+      "unverified_frames": [],
+      "excluded_frame_evidence": [],
+      "actual_taps_min": 24,
+      "actual_taps_max": 24,
+      "changes_against_same_strategy_baseline": {
+        "matrix_nmse": {
+          "improved": 0,
+          "worse": 0,
+          "unchanged": 1066
+        },
+        "phase_error_deg": {
+          "improved": 0,
+          "worse": 0,
+          "unchanged": 17056
+        }
+      },
+      "matrix_nmse": {
+        "valid": 1066,
+        "total": 1066,
+        "coverage": 1.0,
+        "p95": 2.773138336792715,
+        "worst": {
+          "frame_id": 7,
+          "offset_hz": -25000000.0,
+          "value": 9.044352581599131
+        }
+      },
+      "phase_error_deg": {
+        "valid": 17056,
+        "total": 17056,
+        "coverage": 1.0,
+        "p95": 81.54387089164183,
+        "worst": {
+          "frame_id": 9,
+          "offset_hz": -10000000.0,
+          "value": 179.99891942689442,
+          "port_pair": [
+            2,
+            3
+          ]
+        }
+      },
+      "constraints_met": false
+    },
+    "shared/26": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "missing_frames": [],
+      "unverified_frames": [],
+      "excluded_frame_evidence": [],
+      "actual_taps_min": 26,
+      "actual_taps_max": 26,
+      "changes_against_same_strategy_baseline": {
+        "matrix_nmse": {
+          "improved": 750,
+          "worse": 290,
+          "unchanged": 26
+        },
+        "phase_error_deg": {
+          "improved": 9814,
+          "worse": 6826,
+          "unchanged": 416
+        }
+      },
+      "matrix_nmse": {
+        "valid": 1066,
+        "total": 1066,
+        "coverage": 1.0,
+        "p95": 0.7846869191567599,
+        "worst": {
+          "frame_id": 3,
+          "offset_hz": -32500000.0,
+          "value": 5.694693381542091
+        }
+      },
+      "phase_error_deg": {
+        "valid": 17056,
+        "total": 17056,
+        "coverage": 1.0,
+        "p95": 68.64531134322746,
+        "worst": {
+          "frame_id": 19,
+          "offset_hz": 27500000.0,
+          "value": 179.9278567550995,
+          "port_pair": [
+            3,
+            7
+          ]
+        }
+      },
+      "constraints_met": false
+    },
+    "shared/31": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "missing_frames": [],
+      "unverified_frames": [],
+      "excluded_frame_evidence": [],
+      "actual_taps_min": 30,
+      "actual_taps_max": 31,
+      "changes_against_same_strategy_baseline": {
+        "matrix_nmse": {
+          "improved": 765,
+          "worse": 275,
+          "unchanged": 26
+        },
+        "phase_error_deg": {
+          "improved": 10172,
+          "worse": 6468,
+          "unchanged": 416
+        }
+      },
+      "matrix_nmse": {
+        "valid": 1066,
+        "total": 1066,
+        "coverage": 1.0,
+        "p95": 0.7532448479126261,
+        "worst": {
+          "frame_id": 3,
+          "offset_hz": -32500000.0,
+          "value": 5.719696435482465
+        }
+      },
+      "phase_error_deg": {
+        "valid": 17056,
+        "total": 17056,
+        "coverage": 1.0,
+        "p95": 66.50852826826201,
+        "worst": {
+          "frame_id": 10,
+          "offset_hz": -27500000.0,
+          "value": 179.9574248735551,
+          "port_pair": [
+            0,
+            4
+          ]
+        }
+      },
+      "constraints_met": false
+    }
+  },
+  "selected_candidate": null,
+  "candidate_parameters": {
+    "independent/24": {
+      "strategy": "independent",
+      "requested_taps": 24
+    },
+    "independent/26": {
+      "strategy": "independent",
+      "requested_taps": 26
+    },
+    "independent/31": {
+      "strategy": "independent",
+      "requested_taps": 31
+    },
+    "shared/24": {
+      "strategy": "shared",
+      "requested_taps": 24
+    },
+    "shared/26": {
+      "strategy": "shared",
+      "requested_taps": 26
+    },
+    "shared/31": {
+      "strategy": "shared",
+      "requested_taps": 31
+    }
+  },
+  "selection_input_fingerprint": "14ab9e6702a566e82a1ab2f933d3f22d228122a4bd6bd9071c43e42f6f16abf0",
+  "manual_candidate": null,
+  "plan_fingerprint": "e508363fc83f5fe296543774cc3fb9f4a426a77ad8e2f6ba05eba713c0ece717",
+  "selection_fingerprint": "e78286573162501ab04209bdbb22095979867e6c0a31823a65121c695629b043",
+  "holdout": null,
+  "manual_holdout": null,
+  "unmatched_frame_review": null,
+  "status": "no_candidate_meets_constraints",
+  "automatic_adoption": false,
+  "formal_verdict": null,
+  "alignment_status": "unverified",
+  "ota_status": "unverified",
+  "threshold_scope": "\u672c\u6b21\u793a\u4f8b\u7ea6\u675f\uff0c\u4e0d\u662f\u8ba4\u8bc1\u6807\u51c6",
+  "asc_unmatched_frames": [
+    37
+  ],
+  "limitations": [
+    "\u53ea\u8bfb\u8f85\u52a9\u5206\u6790\uff0c\u4e0d\u8bc1\u660e\u786c\u4ef6\u6216\u573a\u6027\u80fd",
+    "OTA\u573a\u53c2\u8003\u672a\u6838\u9a8c"
+  ]
+}
