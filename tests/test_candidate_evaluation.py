@@ -16,7 +16,7 @@ def inputs():
         frames={}
         for i in range(4):
             p=phase if i<2 else hold
-            frames[i]=dict(used_taps=[2]*8,metrics={'methods':{'candidate':dict(matrix_nmse=[.2,.4],phase_error_deg=[[p,p+1]])}},delta={})
+            frames[i]=dict(used_taps=[2]*8,metrics={'offsets_hz':[-1,1],'port_pairs':[[0,1]],'amplitude_floor':1e-8,'methods':{'candidate':dict(matrix_nmse=[.2,.4],phase_error_deg=[[p,p+1]])}},delta={})
         return dict(strategy='shared',requested_taps=2,frames=frames)
     return provenance, {'A':candidate(10,100),'B':candidate(20,1)}
 
@@ -148,3 +148,51 @@ def test_unverified_asc_scope_cannot_be_promoted_by_declared_metadata(evidence):
     r=evaluate(Plan('a'*64,'b'*64,(0,1),(2,3)),c,provenance=p)
     assert r['selected_candidate'] is None
     assert r['selection']['asc']['unverified_frames']==[0,1]
+
+@pytest.mark.parametrize('key,value', [('offsets_hz',[1,-1]),('port_pairs',[[0,2]]),('amplitude_floor',1e-6),('offsets_hz',None),('port_pairs',None),('amplitude_floor',None)])
+def test_actual_frame_comparison_metadata_required(key,value):
+    Plan,evaluate=api(); p,c=inputs(); c={'A':c['A']}
+    if value is None: c['A']['frames'][0]['metrics'].pop(key)
+    else: c['A']['frames'][0]['metrics'][key]=value
+    r=evaluate(Plan('a'*64,'b'*64,(0,1),(2,3)),c,provenance=p)
+    assert r['selected_candidate'] is None
+    assert r['selection']['A']['unverified_frames']==[0]
+    assert r['selection']['A']['matrix_nmse']['valid']==2
+
+
+def delta_row():
+    return dict(values=[-.1,.2],valid=[True,True],improved=1,worse=1,unchanged=0)
+
+@pytest.mark.parametrize('bad', [None,{}, {'improved':0,'worse':0,'unchanged':0}, {'values':[-.1,.2],'valid':[True,True],'improved':1,'worse':0,'unchanged':0}])
+def test_delta_unknown_retains_coverage_without_zero_fill(bad):
+    Plan,evaluate=api(); p,c=inputs(); c={'A':c['A']}
+    c['A']['frames'][0]['delta']={'matrix_nmse':delta_row()}
+    c['A']['frames'][1]['delta']={'matrix_nmse':bad}
+    r=evaluate(Plan('a'*64,'b'*64,(0,1),(2,3)),c,provenance=p)
+    d=r['selection']['A']['changes_against_same_strategy_baseline']['matrix_nmse']
+    assert d['improved'] is None and d['worse'] is None and d['unchanged'] is None
+    assert d['status']=='unverified'
+    assert d['valid']==2 and d['total']==4 and d['coverage']==.5
+    assert d['covered_frames']==[0] and d['unverified_frames']==[1]
+    assert d['observed_counts']==dict(improved=1,worse=1,unchanged=0)
+
+
+def test_asc_without_baseline_keeps_unknown_changes_but_valid_error():
+    Plan,evaluate=api(); p,c=inputs(); c={'asc':c['A']}; c['asc']['strategy']='existing_asc'
+    p['existing_asc_reference']={'applicable_frames':[0,1,2,3]}
+    r=evaluate(Plan('a'*64,'b'*64,(0,1),(2,3)),c,provenance=p)
+    assert r['selected_candidate']=='asc'
+    for name in ('matrix_nmse','phase_error_deg'):
+        d=r['selection']['asc']['changes_against_same_strategy_baseline'][name]
+        assert d['improved'] is None and d['valid']==0 and d['coverage']==0
+
+
+def test_partial_delta_frame_keeps_unknown_range():
+    Plan,evaluate=api(); p,c=inputs(); c={'A':c['A']}
+    c['A']['frames'][0]['delta']={'matrix_nmse':dict(values=[-.1,None],valid=[True,False],improved=1,worse=0,unchanged=0)}
+    r=evaluate(Plan('a'*64,'b'*64,(0,1),(2,3)),c,provenance=p)
+    d=r['selection']['A']['changes_against_same_strategy_baseline']['matrix_nmse']
+    assert d['valid']==1 and d['coverage']==.25
+    assert d['covered_frames']==[0]
+    assert d['unverified_frames']==[0,1]
+    assert d['improved'] is None

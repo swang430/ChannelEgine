@@ -41,10 +41,44 @@ class EvaluationPlan:
             raise ValueError('评估目的或模式无效')
 
 
+def _delta_evidence(delta, shape):
+    """只接受逐点差值、有效掩码及一致完整计数；缺证不补零。"""
+    if not isinstance(delta,dict): return None
+    keys=('improved','worse','unchanged')
+    if any(type(delta.get(k)) is not int or delta[k]<0 for k in keys): return None
+    values=np.asarray(delta.get('values'),dtype=object)
+    mask=np.asarray(delta.get('valid'),dtype=object)
+    if values.shape!=shape or mask.shape!=shape: return None
+    counts=dict.fromkeys(keys,0)
+    for index in np.ndindex(shape):
+        valid=mask[index]; value=values[index]
+        if type(valid) is not bool: return None
+        if not valid:
+            if value is not None: return None
+            continue
+        if isinstance(value,bool) or not isinstance(value,(int,float,np.number)) or not math.isfinite(value): return None
+        key='improved' if value < -1e-7 else 'worse' if value > 1e-7 else 'unchanged'
+        counts[key]+=1
+    if any(counts[k]!=delta[k] for k in keys): return None
+    return counts
+
+
+def _comparison_metadata_matches(metrics, provenance):
+    if not isinstance(metrics,dict): return False
+    for key in ('offsets_hz','port_pairs','amplitude_floor'):
+        if key not in metrics: return False
+        try:
+            actual=json.loads(json.dumps(metrics[key],allow_nan=False))
+        except (TypeError,ValueError): return False
+        if actual!=provenance[key]: return False
+    return True
+
+
 def _summary(plan, candidate, frames, provenance):
     offsets = provenance['offsets_hz']; pairs = provenance['port_pairs']
     points = {'matrix_nmse':[], 'phase_error_deg':[]}
-    missing=[]; taps=[]; changes={}; unverified=[]; exclusions=[]
+    missing=[]; taps=[]; unverified=[]; exclusions=[]
+    changes={m:dict(observed_counts=dict(improved=0,worse=0,unchanged=0),valid=0,covered_frames=[],complete_frames=[]) for m in points}
     applicable=None
     if candidate['strategy']=='existing_asc':
         evidence=provenance.get('existing_asc_reference')
@@ -57,6 +91,8 @@ def _summary(plan, candidate, frames, provenance):
         reasons=[]
         if applicable is not None and frame not in applicable:
             reasons.append('已有ASC缺少本源帧的适用证据')
+        if not _comparison_metadata_matches(row.get('metrics'),provenance):
+            reasons.append('本帧实际频偏、端口对或幅度下限缺证或不符合冻结来源')
         used=row.get('used_taps')
         if not isinstance(used,(list,tuple)) or len(used)!=8 or any(type(v) is not int or not 1<=v<=candidate['requested_taps'] for v in used):
             reasons.append('缺少八路完整有效的正整数抽头证据，或超过声明预算')
@@ -80,12 +116,22 @@ def _summary(plan, candidate, frames, provenance):
                 point=dict(frame_id=frame,offset_hz=offsets[index[-1]],value=float(value))
                 if metric=='phase_error_deg': point['port_pair']=pairs[index[0]]
                 points[metric].append(point)
-            d=row.get('delta',{}).get(metric,{})
-            counts=changes.setdefault(metric,dict(improved=0,worse=0,unchanged=0))
-            for k in counts: counts[k]+=int(d.get(k,0))
+            delta=row.get('delta')
+            counts=_delta_evidence(delta.get(metric) if isinstance(delta,dict) else None,expected)
+            if counts is not None:
+                evidence=changes[metric]
+                if sum(counts.values()): evidence['covered_frames'].append(frame)
+                if sum(counts.values())==int(np.prod(expected)): evidence['complete_frames'].append(frame)
+                evidence['valid']+=sum(counts.values())
+                for k,value in counts.items(): evidence['observed_counts'][k]+=value
     result=dict(frames=list(frames),missing_frames=missing,unverified_frames=unverified,excluded_frame_evidence=exclusions,actual_taps_min=min(taps) if taps else None,actual_taps_max=max(taps) if taps else None,changes_against_same_strategy_baseline=changes)
     for metric,values in points.items():
         total=len(frames)*len(offsets)*(len(pairs) if metric=='phase_error_deg' else 1)
+        evidence=changes[metric]
+        complete=evidence['valid']==total
+        evidence.update(total=total,coverage=evidence['valid']/total,status='verified' if complete else 'unverified',
+                        unverified_frames=[f for f in frames if f not in evidence['complete_frames']])
+        evidence.update({k:v if complete else None for k,v in evidence['observed_counts'].items()})
         worst=max(values,key=lambda x:x['value']) if values else None
         result[metric]=dict(valid=len(values),total=total,coverage=len(values)/total,p95=float(np.percentile([x['value'] for x in values],95)) if values else None,worst=worst)
     result['constraints_met']=bool(not missing and not unverified and candidate['requested_taps']<=plan.budget_limit and all(result[m]['valid']==result[m]['total'] and result[m]['p95']<=limit for m,limit in [('matrix_nmse',plan.matrix_p95_limit),('phase_error_deg',plan.phase_p95_limit_deg)]))

@@ -23,3 +23,11 @@
 所有候选每帧须提供固定4×2八路的 `used_taps`，长度恰好8，每路必须是大于0的整数（不接受布尔值、null或零），同时不超过候选声明预算和冻结计划预算。缺字段、缺路、额外路、无效数值或超预算均将该帧保留为未核验。`unverified_frames` 列出源帧，`excluded_frame_evidence` 逐帧记录原因；这些帧不进入分位数、最差点、抽头范围或改善/变差统计，分母仍保留预定全部帧，因此不能凭缺证获得达标建议。`missing_frames` 单独表示整个帧记录缺失。选择集及所选/人工留出复核均应用相同校验，手动指定不能绕过。
 
 已与 Meta `scripts/mpdb_purpose.py` 核对：实际ASC采用 `existing_asc_reference.applicable_frames`，实际八路数量来自108的 `asc_used_taps` 和109的 `used_taps`；未上传ASC时的 `declared_applicable_frames` 不会让已有ASC候选获得证据。端口对索引限制在0–7。
+
+## PR55：实际比较条件与差值覆盖
+
+每帧metrics必须原样保留实际计算的 `offsets_hz,port_pairs,amplitude_floor`，逐项与冻结来源核对（包含顺序）。缺失、错配列入未核验帧并排除误差统计，不能依据冻结条件补填实际元数据。109的metrics已有这些字段；108的ASC应携带其实际比较返回的字段。
+
+改善/退化汇总的 `improved,worse,unchanged` 允许null。只有全部预定点具有可核对差值时才提供完整总计。逐帧差值要求 `values,valid` 形状与误差相同、有效点为有限差值、无效点为null，三项非负整数计数须与按1e-7容差重新计算的一致。缺失、不全或不一致时保持未知，不补零，不影响独立误差统计本身。
+
+汇总新增 `status,observed_counts,valid,total,coverage,covered_frames,complete_frames,unverified_frames`。observed_counts只统计有证据部分；covered_frames至少有一个有效差值，complete_frames全部点有差值；unverified_frames包括缺证或仅部分覆盖的帧。总计为null时不可将observed_counts当全范围计数。ASC没有同策略未拆簇基线时保持差值未知、覆盖0，不能解释为没有退化。
