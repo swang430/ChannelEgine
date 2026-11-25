@@ -98,6 +98,27 @@ def read_columns(path, *, dynamic=False):
     return result, hashlib.sha256(raw).hexdigest()
 
 
+def port_layout(link):
+    for key in ("TX_ANT", "RX_ANT"):
+        values = link(key)
+        if values.dtype.kind not in "iu" or np.any(values < 0):
+            raise ValueError("收发端口编号必须为非负整数")
+    tx_ports = sorted(set(map(int, link("TX_ANT"))))
+    rx_ports = sorted(set(map(int, link("RX_ANT"))))
+    if not tx_ports or not rx_ports:
+        raise ValueError("源文件缺少收发端口")
+    reference_rx = rx_ports[0]
+    observed = set(zip(link("FRAME_ID"), link("TX_ANT"), link("RX_ANT"), strict=True))
+    for frame in np.unique(link("FRAME_ID")):
+        for tx in tx_ports:
+            for rx in rx_ports:
+                if (frame, tx, rx) not in observed:
+                    raise ValueError(f"源帧 {frame} 缺少发射端口 {tx} 到接收端口 {rx} 的链路")
+    if len(observed) != len(link("LINK_ID")):
+        raise ValueError("源帧存在重复的收发端口对")
+    return tx_ports, rx_ports
+
+
 def run(archive, geometry, output, rate):
     if output.exists() or not np.isfinite(rate) or rate <= 0:
         raise ValueError("需要新的输出目录和正的源帧更新率")
@@ -133,18 +154,16 @@ def run(archive, geometry, output, rate):
     def rays(k):
         return data["CHANNEL", k]
 
-    if (
-        set(link("TX_ANT")) != set(range(4))
-        or set(link("RX_ANT")) != {0, 1}
-        or len(np.unique(link("LINK_ID"))) != len(link("LINK_ID"))
-        or not np.isin(rays("LINK_ID"), link("LINK_ID")).all()
-    ):
-        raise ValueError("源文件必须为四发两收且路径与链路逐项对应")
+    tx_ports, rx_ports = port_layout(link)
+    reference_rx = rx_ports[0]
+    if (len(np.unique(link("LINK_ID"))) != len(link("LINK_ID"))
+            or not np.isin(rays("LINK_ID"), link("LINK_ID")).all()):
+        raise ValueError("源路径与链路编号不符")
     if np.any(rays("DELAY") < 0) or np.any((rays("ZOA") < 0) | (rays("ZOA") > 180)):
         raise ValueError("源路径的时延或天顶角越界")
     az, zen = ports.T
     nf = len(ports) * 2
-    if 4 * nf > 128:
+    if len(tx_ports) * nf > 128:
         raise ValueError("超过 128 个逻辑通道")
     (freq,) = np.unique(link("FREQUENCY"))
     freq = float(freq)
@@ -162,17 +181,17 @@ def run(archive, geometry, output, rate):
     if not np.array_equal(frames, np.arange(len(frames))):
         raise ValueError("源帧不连续")
     taps = 24
-    weights = np.zeros((len(frames), 4, nf, taps), complex)
-    delays = np.empty((len(frames), 4, taps))
+    weights = np.zeros((len(frames), len(tx_ports), nf, taps), complex)
+    delays = np.empty((len(frames), len(tx_ports), taps))
     links = rays("LINK_ID").ravel()
     offsets = (-50e6, 0.0, 50e6)
     targets = {}
     for fi in frames:
-        for tx in range(4):
+        for index, tx in enumerate(tx_ports):
             (lid,) = link("LINK_ID")[
                 (link("FRAME_ID") == fi)
                 & (link("TX_ANT") == tx)
-                & (link("RX_ANT") == 0)
+                & (link("RX_ANT") == reference_rx)
             ]
             mask = links == lid
             e = (rays("POLAR")[mask] @ rays("JONES_T")[mask]).reshape(-1, 2)
@@ -207,8 +226,8 @@ def run(archive, geometry, output, rate):
             clusters = [(item[0], w) for item, w in zip(clusters, solved)]
             while len(clusters) < taps:
                 clusters.append((clusters[-1][0], np.zeros(nf)))
-            delays[fi, tx] = [d for d, w in clusters]
-            weights[fi, tx] = np.stack([w for d, w in clusters], axis=1)
+            delays[fi, index] = [d for d, w in clusters]
+            weights[fi, index] = np.stack([w for d, w in clusters], axis=1)
             for off in offsets:
                 targets[fi, tx, off] = field(
                     check,
@@ -222,13 +241,13 @@ def run(archive, geometry, output, rate):
         stage.mkdir()
         files = []
         metrics = []
-        for tx in range(4):
-            recovered = np.empty_like(weights[:, tx])
+        for index, tx in enumerate(tx_ports):
+            recovered = np.empty_like(weights[:, index])
             for feed in range(nf):
                 name = f"TX{tx}_PROBE{feed // 2:02d}_{('theta', 'phi')[feed % 2]}.asc"
                 file = stage / name
-                v = weights[:, tx, feed]
-                values = np.stack([delays[:, tx] * 1e9, v.real, v.imag], axis=-1)
+                v = weights[:, index, feed]
+                values = np.stack([delays[:, index] * 1e9, v.real, v.imag], axis=-1)
                 header = (
                     f"***** Header *****\n{len(frames)} CIRs\n{taps} Taps/CIR\n{freq} Carrier_Frequency\nRoute_Open\nCIRUpdateRate_Locked\nCarrierFrequency_Locked\n5 Delay_Resolution\n2 Sample_Density\n{rate} CIR_Update_Rate\n***** Tap data *****\n"
                     + "\t".join(["Delay\tRe\tIm"] * taps)
@@ -257,7 +276,7 @@ def run(archive, geometry, output, rate):
                 for off in offsets:
                     ref = targets[fi, tx, off]
                     est = basis(check, freq + off) @ (
-                        recovered[fi] @ np.exp(-2j * np.pi * off * delays[fi, tx])
+                        recovered[fi] @ np.exp(-2j * np.pi * off * delays[fi, index])
                     )
                     power = np.vdot(ref, ref).real
                     metrics.append(
@@ -286,7 +305,7 @@ def run(archive, geometry, output, rate):
             ),
             source_frames_only=True,
             tx_mode="+45",
-            reference_rx=0,
+            reference_rx=reference_rx, tx_ports=tx_ports, rx_ports=rx_ports,
             rate_source="operator_supplied",
             delay_compression="power_quantiles_sorted_by_delay",
             links=files,

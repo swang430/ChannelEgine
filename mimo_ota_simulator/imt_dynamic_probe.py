@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .imt_probe_bundle import C, directions, polar_basis, read_columns
+from .imt_probe_bundle import C, port_layout, directions, polar_basis, read_columns
 
 
 def generate(archive, geometry, baseline, output, speed, rate):
@@ -25,6 +25,8 @@ def generate(archive, geometry, baseline, output, speed, rate):
         raise ValueError("源帧基线与输入或几何不匹配")
     link = {k: v for (t, k), v in raw.items() if t == "LINK"}
     rays = {k: v for (t, k), v in raw.items() if t == "CHANNEL"}
+    tx_ports, rx_ports = port_layout(lambda k: link[k].ravel())
+    reference_rx = rx_ports[0]
     frames = np.unique(link["FRAME_ID"])
     (fc,) = np.unique(link["FREQUENCY"])
 
@@ -32,12 +34,12 @@ def generate(archive, geometry, baseline, output, speed, rate):
         (i,) = np.flatnonzero(
             (link["FRAME_ID"].ravel() == frame)
             & (link["TX_ANT"].ravel() == tx)
-            & (link["RX_ANT"].ravel() == 0)
+            & (link["RX_ANT"].ravel() == reference_rx)
         )
         return i
 
     positions = (
-        link["RX_ANT_POSITION"][[link_index(f, 0) for f in frames]]
+        link["RX_ANT_POSITION"][[link_index(f, tx_ports[0]) for f in frames]]
         .reshape(-1, 3)
         .astype(float)
     )
@@ -95,7 +97,7 @@ def generate(archive, geometry, baseline, output, speed, rate):
         smu_built=False,
         geometry=g,
         tx_mode=manifest["tx_mode"],
-        reference_rx=0,
+        reference_rx=reference_rx, tx_ports=tx_ports, rx_ports=rx_ports,
         source_frames_only=False,
         header=dict(cir_count=len(grid), taps=24, carrier_hz=float(fc), rate_hz=rate),
         source_sha256=digest,
@@ -113,7 +115,7 @@ def generate(archive, geometry, baseline, output, speed, rate):
         stage.mkdir()
         expected = []
         observed = []
-        for tx in range(4):
+        for tx in tx_ports:
             recovered_fields = []
             anchors = [anchor(f, tx) for f in frames]
             paths = [
@@ -221,9 +223,9 @@ def generate(archive, geometry, baseline, output, speed, rate):
             valid[:, 1:] & valid[:, :-1],
         )
         report["port_phase"] = {}
-        for a in range(4):
-            for b in range(a + 1, 4):
-                report["port_phase"][f"{a}-{b}"] = difference(
+        for a in range(len(tx_ports)):
+            for b in range(a + 1, len(tx_ports)):
+                report["port_phase"][f"{tx_ports[a]}-{tx_ports[b]}"] = difference(
                     readback[a] * readback[b].conj(),
                     model[a] * model[b].conj(),
                     valid[a] & valid[b],
